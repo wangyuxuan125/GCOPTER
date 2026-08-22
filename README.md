@@ -107,3 +107,31 @@ The angle between the arrow of 2D Nav Goal and positive x-axis (red axis) decide
 - [SDLP: Seidel's Algorithm](https://github.com/ZJU-FAST-Lab/SDLP) on Linear-Complexity Linear Programming for Computational Geometry.
 - [VertexEnumeration3D](https://github.com/ZJU-FAST-Lab/VertexEnumeration3D): Highly Efficient Vertex Enumeration for 3D Convex Polytopes (Outperforms [cddlib](https://github.com/cddlib/cddlib) in 3D).
 - [LBFGS-Lite](https://github.com/ZJU-FAST-Lab/LBFGS-Lite): An Easy-to-Use Header-Only L-BFGS Solver.
+
+## Experimental TF-SFC MVP
+
+`gcopter/include/gcopter/traj_favorable_sfc.hpp` provides a standalone,
+header-only baseline for trajectory-favorable, face-bounded corridor experiments.
+It supports Frenet, trajectory-sample PCA, and externally supplied sensitivity
+Gramian directions; a missing or invalid Gramian is explicitly recorded as a
+fallback. The current MVP produces a conservative six-face oriented box, preserves
+`firi.hpp` unchanged as a baseline, and reports face count, generation time,
+weighted directional width, and trajectory-sample slack.
+
+This is an integration and OBB-baseline milestone, not the complete proposed
+TF-SFC method. Obstacle cutting planes, utility-based face pruning, and overlap
+refinement remain future work. Do not report sensitivity mode as the main method
+unless a valid per-piece MINCO sensitivity Gramian is supplied.
+
+Minimal usage:
+
+```cpp
+#include "gcopter/traj_favorable_sfc.hpp"
+
+tf_sfc::Parameters param;
+param.direction_mode = tf_sfc::DirectionMode::PCA;
+tf_sfc::Corridor corridor;
+const bool ok = tf_sfc::generateCorridor(
+    boundary, obstacle_points, trajectory_samples,
+    tangent, lateral, corridor, param);
+```
