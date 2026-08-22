@@ -135,3 +135,6 @@ const bool ok = tf_sfc::generateCorridor(
     boundary, obstacle_points, trajectory_samples,
     tangent, lateral, corridor, param);
 ```
+
+See the Chinese [TF-SFC experiment guide](TF_SFC_EXPERIMENT_GUIDE.md) for the
+catkin workspace layout, launch commands, CSV fields, and comparison protocol.

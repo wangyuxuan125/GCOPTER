@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <launch>
+  <arg name="experiment_log_enabled" default="true"/>
+  <arg name="experiment_log_directory" default="$(env HOME)/tf_sfc_results/gcopter"/>
+  <arg name="experiment_tag" default="default"/>
 
    <node name="rviz" pkg="rviz" type="rviz" output="screen"
     args="-d $(find gcopter)/config/global_planning.rviz"> 
@@ -26,6 +29,9 @@
   
   <node pkg="gcopter" type="global_planning" name="global_planning_node" output="screen">
   <rosparam file="$(find gcopter)/config/global_planning.yaml" command="load" />
+  <param name="Experiment/LogEnabled" value="$(arg experiment_log_enabled)" type="bool"/>
+  <param name="Experiment/LogDirectory" value="$(arg experiment_log_directory)" type="string"/>
+  <param name="Experiment/Tag" value="$(arg experiment_tag)" type="string"/>
   </node>
 
 </launch>

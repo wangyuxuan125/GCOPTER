@@ -41,3 +41,8 @@ SmoothingEps:               1.0e-2
 IntegralIntervs:            16
 
 RelCostTol:                 1.0e-5
+
+Experiment:
+  LogEnabled:              true
+  LogDirectory:            '/tmp/tf_sfc_results/gcopter'
+  Tag:                     'default'

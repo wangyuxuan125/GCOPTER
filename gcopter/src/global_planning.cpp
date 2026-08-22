@@ -1,6 +1,7 @@
 #include "misc/visualizer.hpp"
 #include "gcopter/trajectory.hpp"
 #include "gcopter/gcopter.hpp"
+#include "gcopter/experiment_logger.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
@@ -12,6 +13,7 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/PointCloud2.h>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -44,6 +46,9 @@ struct Config
     double smoothingEps;
     int integralIntervs;
     double relCostTol;
+    bool experimentLogEnabled;
+    std::string experimentLogDirectory;
+    std::string experimentTag;
 
     Config(const ros::NodeHandle &nh_priv)
     {
@@ -69,6 +74,10 @@ struct Config
         nh_priv.getParam("SmoothingEps", smoothingEps);
         nh_priv.getParam("IntegralIntervs", integralIntervs);
         nh_priv.getParam("RelCostTol", relCostTol);
+        nh_priv.param("Experiment/LogEnabled", experimentLogEnabled, true);
+        nh_priv.param<std::string>("Experiment/LogDirectory", experimentLogDirectory,
+                                   "/tmp/tf_sfc_results/gcopter");
+        nh_priv.param<std::string>("Experiment/Tag", experimentTag, "default");
     }
 };
 
@@ -88,6 +97,7 @@ private:
 
     Trajectory<5> traj;
     double trajStamp;
+    gcopter_experiment::CsvLogger experimentLogger;
 
 public:
     GlobalPlanner(const Config &conf,
@@ -95,7 +105,10 @@ public:
         : config(conf),
           nh(nh_),
           mapInitialized(false),
-          visualizer(nh)
+          visualizer(nh),
+          experimentLogger(config.experimentLogEnabled,
+                           config.experimentLogDirectory,
+                           config.experimentTag)
     {
         const Eigen::Vector3i xyz((config.mapBound[1] - config.mapBound[0]) / config.voxelWidth,
                                   (config.mapBound[3] - config.mapBound[2]) / config.voxelWidth,
@@ -144,17 +157,45 @@ public:
     {
         if (startGoal.size() == 2)
         {
+            const auto totalStarted = std::chrono::steady_clock::now();
+            gcopter_experiment::RunRecord record;
+            record.run_id = experimentLogger.makeRunId();
+            record.experiment_tag = experimentLogger.experimentTag();
+            record.timestamp_s = ros::Time::now().toSec();
+            auto finishRecord = [&](const std::string &status, const bool success)
+            {
+                record.status = status;
+                record.success = success;
+                record.total_planning_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - totalStarted)
+                        .count();
+                if (!experimentLogger.log(record))
+                {
+                    ROS_ERROR_THROTTLE(1.0, "Failed to append GCOPTER experiment CSV in %s",
+                                       config.experimentLogDirectory.c_str());
+                }
+            };
+
             std::vector<Eigen::Vector3d> route;
+            const auto pathStarted = std::chrono::steady_clock::now();
             sfc_gen::planPath<voxel_map::VoxelMap>(startGoal[0],
                                                    startGoal[1],
                                                    voxelMap.getOrigin(),
                                                    voxelMap.getCorner(),
                                                    &voxelMap, 0.01,
                                                    route);
+            record.path_search_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - pathStarted)
+                    .count();
+            record.route_point_count = static_cast<int>(route.size());
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
             voxelMap.getSurf(pc);
+            record.map_point_count = static_cast<int>(pc.size());
 
+            const auto corridorStarted = std::chrono::steady_clock::now();
             sfc_gen::convexCover(route,
                                  pc,
                                  voxelMap.getOrigin(),
@@ -163,6 +204,19 @@ public:
                                  3.0,
                                  hPolys);
             sfc_gen::shortCut(hPolys);
+            record.corridor_generation_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - corridorStarted)
+                    .count();
+            record.corridor_count = static_cast<int>(hPolys.size());
+            for (const Eigen::MatrixX4d &hPoly : hPolys)
+            {
+                record.total_faces += static_cast<int>(hPoly.rows());
+            }
+            record.mean_faces = hPolys.empty()
+                                    ? 0.0
+                                    : static_cast<double>(record.total_faces) /
+                                          static_cast<double>(hPolys.size());
 
             if (route.size() > 1)
             {
@@ -203,6 +257,7 @@ public:
 
                 traj.clear();
 
+                const auto setupStarted = std::chrono::steady_clock::now();
                 if (!gcopter.setup(config.weightT,
                                    iniState, finState,
                                    hPolys, INFINITY,
@@ -212,20 +267,53 @@ public:
                                    penaltyWeights,
                                    physicalParams))
                 {
+                    record.optimizer_setup_ms =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - setupStarted)
+                            .count();
+                    finishRecord("setup_failure", false);
                     return;
                 }
+                record.optimizer_setup_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - setupStarted)
+                        .count();
 
-                if (std::isinf(gcopter.optimize(traj, config.relCostTol)))
+                const auto optimizerStarted = std::chrono::steady_clock::now();
+                record.final_cost = gcopter.optimize(traj, config.relCostTol);
+                record.optimizer_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - optimizerStarted)
+                        .count();
+                if (!std::isfinite(record.final_cost))
                 {
+                    finishRecord("optimizer_failure", false);
                     return;
                 }
 
                 if (traj.getPieceNum() > 0)
                 {
+                    record.trajectory_piece_count = traj.getPieceNum();
+                    record.trajectory_duration_s = traj.getTotalDuration();
+                    const int lengthSamples = std::max(20, 20 * traj.getPieceNum());
+                    Eigen::Vector3d previous = traj.getPos(0.0);
+                    for (int i = 1; i <= lengthSamples; ++i)
+                    {
+                        const Eigen::Vector3d current = traj.getPos(
+                            record.trajectory_duration_s * static_cast<double>(i) /
+                            static_cast<double>(lengthSamples));
+                        record.trajectory_length_m += (current - previous).norm();
+                        previous = current;
+                    }
                     trajStamp = ros::Time::now().toSec();
                     visualizer.visualize(traj, route);
+                    finishRecord("success", true);
+                    return;
                 }
+                finishRecord("empty_trajectory", false);
+                return;
             }
+            finishRecord("path_search_failure", false);
         }
     }
 
