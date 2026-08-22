@@ -46,3 +46,16 @@ Experiment:
   LogEnabled:              true
   LogDirectory:            '/tmp/tf_sfc_results/gcopter'
   Tag:                     'default'
+
+Corridor:
+  Method:                  'firi'
+  AllowFallback:           false
+
+TfSfc:
+  DirectionMode:           1
+  SamplesPerSegment:       5
+  SafetyMargin:            0.05
+  MaxInflationDistance:    1.0
+  InflationStep:           0.10
+  MinOverlapRadius:        0.04
+  MaxSegmentLength:        1.0

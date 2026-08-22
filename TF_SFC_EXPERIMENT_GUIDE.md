@@ -1,6 +1,6 @@
 # GCOPTER 编译、运行与实验数据记录指南
 
-本文档对应 `feat/tf-sfc-mvp` 分支。GCOPTER 当前 `global_planning.launch` 运行仓库原有 FIRI-style corridor 管线，可作为 TF-SFC 的 standalone baseline；新增 TF-SFC 六面 OBB 生成器位于 `gcopter/include/gcopter/traj_favorable_sfc.hpp`，但本阶段尚未替换全局规划示例中的 FIRI 管线。
+本文档对应 `feat/tf-sfc-mvp` 分支。`global_planning.launch` 已支持 `corridor_method:=firi|tf_sfc`；两种方法生成的 H-polytope 都会进入同一个 GCOPTER 优化器和 RViz 可视化流程。
 
 ## 1. 建立 catkin 工作空间
 
@@ -33,11 +33,30 @@ source devel/setup.bash
 
 ```bash
 roslaunch gcopter global_planning.launch \
+  map_seed:=42 \
+  corridor_method:=firi \
   experiment_tag:=gcopter_firi \
   experiment_log_directory:=$HOME/tf_sfc_results/gcopter
 ```
 
 启动后，在 RViz 中连续两次使用 `2D Nav Goal` 选择起点和终点，第二次选择后触发规划。箭头方向决定相对高度，行为与原 GCOPTER 示例一致。
+
+TF-SFC 六面 OBB（严格禁止回退）：
+
+```bash
+roslaunch gcopter global_planning.launch \
+  map_seed:=42 \
+  corridor_method:=tf_sfc \
+  allow_corridor_fallback:=false \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_max_segment_length:=1.0 \
+  tf_sfc_safety_margin:=0.05 \
+  tf_sfc_min_overlap_radius:=0.04 \
+  experiment_tag:=gcopter_tf_sfc \
+  experiment_log_directory:=$HOME/tf_sfc_results/gcopter
+```
+
+TF-SFC 会把过长 RRT 路段细分后逐段生成 OBB。如果生成失败且禁止回退，本次请求以 `tf_sfc_generation_failure` 写入 CSV，不会运行 FIRI 冒充成功。
 
 关闭日志：
 
@@ -50,13 +69,14 @@ roslaunch gcopter global_planning.launch experiment_log_enabled:=false
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/gcopter/gcopter_runs.csv
+$HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
+$HOME/tf_sfc_results/gcopter/gcopter_corridors_v2.csv
 ```
 
 每次有效的起终点规划请求写入一行，包含：
 
 ```text
-experiment_tag, method, status, success,
+experiment_tag, requested_method, method, fallback_used, status, success,
 map_point_count, route_point_count,
 corridor_count, total_faces, mean_faces,
 path_search_ms, corridor_generation_ms,
@@ -65,12 +85,12 @@ final_cost, trajectory_piece_count,
 trajectory_duration_s, trajectory_length_m
 ```
 
-`method` 当前固定为 `gcopter_firi`，防止把 FIRI 基线误标成 TF-SFC。文件使用追加模式；不同地图、seed 或参数应使用不同实验标签或日志目录。
+`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。文件使用追加模式。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs.csv
+head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
 ```
 
 ## 4. 与 EGO/TF-SFC 对比时的口径
@@ -79,12 +99,12 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs.csv
 - 正式实验使用 Release 编译，并先完成预热运行。
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。
-- 当前 GCOPTER 日志是 old-FIRI baseline；TF-SFC OBB 的加权方向宽度、重叠半径和回退指标由 EGO 的分段 CSV 记录。后续把 TF-SFC 正式接入 GCOPTER 全局示例后，再使用同一套运行级 schema 扩展 corridor-level CSV。
+- 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi` 和 `method=tf_sfc`；失败请求也必须保留在成功率分母中。
 
 ## 5. 快速统计
 
 ```bash
-python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs.csv <<'PY'
+python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

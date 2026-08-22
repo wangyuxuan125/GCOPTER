@@ -3,6 +3,16 @@
   <arg name="experiment_log_enabled" default="true"/>
   <arg name="experiment_log_directory" default="$(env HOME)/tf_sfc_results/gcopter"/>
   <arg name="experiment_tag" default="default"/>
+  <arg name="map_seed" default="1024"/>
+  <arg name="corridor_method" default="firi"/>
+  <arg name="allow_corridor_fallback" default="false"/>
+  <arg name="tf_sfc_direction_mode" default="1"/>
+  <arg name="tf_sfc_samples_per_segment" default="5"/>
+  <arg name="tf_sfc_safety_margin" default="0.05"/>
+  <arg name="tf_sfc_max_inflation_distance" default="1.0"/>
+  <arg name="tf_sfc_inflation_step" default="0.10"/>
+  <arg name="tf_sfc_min_overlap_radius" default="0.04"/>
+  <arg name="tf_sfc_max_segment_length" default="1.0"/>
 
    <node name="rviz" pkg="rviz" type="rviz" output="screen"
     args="-d $(find gcopter)/config/global_planning.rviz"> 
@@ -13,7 +23,7 @@
   </node>
 
   <node pkg="mockamap" type="mockamap_node" name="mockamap_node" output="screen">
-  <param name="seed" type="int" value="1024"/>
+  <param name="seed" type="int" value="$(arg map_seed)"/>
   <param name="update_freq" type="double" value="1.0"/>
   <param name="resolution" type="double" value="0.25"/>
   <param name="x_length" type="int" value="50"/>
@@ -32,6 +42,15 @@
   <param name="Experiment/LogEnabled" value="$(arg experiment_log_enabled)" type="bool"/>
   <param name="Experiment/LogDirectory" value="$(arg experiment_log_directory)" type="string"/>
   <param name="Experiment/Tag" value="$(arg experiment_tag)" type="string"/>
+  <param name="Corridor/Method" value="$(arg corridor_method)" type="string"/>
+  <param name="Corridor/AllowFallback" value="$(arg allow_corridor_fallback)" type="bool"/>
+  <param name="TfSfc/DirectionMode" value="$(arg tf_sfc_direction_mode)" type="int"/>
+  <param name="TfSfc/SamplesPerSegment" value="$(arg tf_sfc_samples_per_segment)" type="int"/>
+  <param name="TfSfc/SafetyMargin" value="$(arg tf_sfc_safety_margin)" type="double"/>
+  <param name="TfSfc/MaxInflationDistance" value="$(arg tf_sfc_max_inflation_distance)" type="double"/>
+  <param name="TfSfc/InflationStep" value="$(arg tf_sfc_inflation_step)" type="double"/>
+  <param name="TfSfc/MinOverlapRadius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
+  <param name="TfSfc/MaxSegmentLength" value="$(arg tf_sfc_max_segment_length)" type="double"/>
   </node>
 
 </launch>

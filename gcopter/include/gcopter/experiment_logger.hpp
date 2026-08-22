@@ -9,6 +9,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -20,7 +21,9 @@ namespace gcopter_experiment
     {
         std::string run_id;
         std::string experiment_tag;
-        std::string method = "gcopter_firi";
+        std::string requested_method = "firi";
+        std::string method = "firi";
+        bool fallback_used = false;
         std::string status;
         double timestamp_s = 0.0;
         bool success = false;
@@ -38,6 +41,19 @@ namespace gcopter_experiment
         int trajectory_piece_count = 0;
         double trajectory_duration_s = 0.0;
         double trajectory_length_m = 0.0;
+    };
+
+    struct CorridorRecord
+    {
+        int piece_id = -1;
+        int face_count = 0;
+        double generation_time_ms = 0.0;
+        double weighted_width = 0.0;
+        double min_sample_slack = 0.0;
+        double overlap_radius_to_next = -1.0;
+        bool valid = false;
+        bool direction_fallback = false;
+        std::string failure_reason = "none";
     };
 
     class CsvLogger
@@ -77,7 +93,8 @@ namespace gcopter_experiment
             return stream.str();
         }
 
-        inline bool log(const RunRecord &record)
+        inline bool log(const RunRecord &record,
+                        const std::vector<CorridorRecord> &corridors = {})
         {
             if (!enabled_)
             {
@@ -89,7 +106,7 @@ namespace gcopter_experiment
                 return false;
             }
 
-            const std::string path = directory_ + "/gcopter_runs.csv";
+            const std::string path = directory_ + "/gcopter_runs_v2.csv";
             const bool header = fileNeedsHeader(path);
             std::ofstream output(path, std::ios::out | std::ios::app);
             if (!output)
@@ -98,15 +115,17 @@ namespace gcopter_experiment
             }
             if (header)
             {
-                output << "schema_version,run_id,timestamp_s,experiment_tag,method,status,success,"
+                output << "schema_version,run_id,timestamp_s,experiment_tag,requested_method,method,"
+                          "fallback_used,status,success,"
                           "map_point_count,route_point_count,corridor_count,total_faces,mean_faces,"
                           "path_search_ms,corridor_generation_ms,optimizer_setup_ms,optimizer_ms,"
                           "total_planning_ms,final_cost,trajectory_piece_count,trajectory_duration_s,"
                           "trajectory_length_m\n";
             }
             output << std::setprecision(17)
-                   << 1 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
-                   << csv(record.experiment_tag) << ',' << csv(record.method) << ','
+                   << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                   << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
+                   << csv(record.method) << ',' << record.fallback_used << ','
                    << csv(record.status) << ',' << record.success << ','
                    << record.map_point_count << ',' << record.route_point_count << ','
                    << record.corridor_count << ',' << record.total_faces << ','
@@ -115,7 +134,41 @@ namespace gcopter_experiment
                    << record.optimizer_ms << ',' << record.total_planning_ms << ','
                    << record.final_cost << ',' << record.trajectory_piece_count << ','
                    << record.trajectory_duration_s << ',' << record.trajectory_length_m << '\n';
-            return static_cast<bool>(output);
+            if (!output)
+            {
+                return false;
+            }
+            if (corridors.empty())
+            {
+                return true;
+            }
+
+            const std::string corridorPath = directory_ + "/gcopter_corridors_v2.csv";
+            const bool corridorHeader = fileNeedsHeader(corridorPath);
+            std::ofstream corridorOutput(corridorPath, std::ios::out | std::ios::app);
+            if (!corridorOutput)
+            {
+                return false;
+            }
+            if (corridorHeader)
+            {
+                corridorOutput << "schema_version,run_id,timestamp_s,experiment_tag,requested_method,"
+                                  "method,piece_id,face_count,generation_time_ms,weighted_width,"
+                                  "min_sample_slack,overlap_radius_to_next,valid,direction_fallback,"
+                                  "failure_reason\n";
+            }
+            corridorOutput << std::setprecision(17);
+            for (const CorridorRecord &corridor : corridors)
+            {
+                corridorOutput << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                               << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
+                               << csv(record.method) << ',' << corridor.piece_id << ','
+                               << corridor.face_count << ',' << corridor.generation_time_ms << ','
+                               << corridor.weighted_width << ',' << corridor.min_sample_slack << ','
+                               << corridor.overlap_radius_to_next << ',' << corridor.valid << ','
+                               << corridor.direction_fallback << ',' << csv(corridor.failure_reason) << '\n';
+            }
+            return static_cast<bool>(corridorOutput);
         }
 
     private:

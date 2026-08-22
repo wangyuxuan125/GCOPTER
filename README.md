@@ -118,6 +118,11 @@ fallback. The current MVP produces a conservative six-face oriented box, preserv
 `firi.hpp` unchanged as a baseline, and reports face count, generation time,
 weighted directional width, and trajectory-sample slack.
 
+The global-planning demo now selects the actual corridor generator with
+`corridor_method:=firi|tf_sfc`. TF-SFC segments are passed to the same GCOPTER
+optimizer and RViz visualization path; strict runs disable fallback so a FIRI
+result cannot be counted as TF-SFC success.
+
 This is an integration and OBB-baseline milestone, not the complete proposed
 TF-SFC method. Obstacle cutting planes, utility-based face pruning, and overlap
 refinement remain future work. Do not report sensitivity mode as the main method

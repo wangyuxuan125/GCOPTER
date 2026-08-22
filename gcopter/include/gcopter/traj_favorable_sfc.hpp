@@ -44,6 +44,28 @@ namespace tf_sfc
         SENSITIVITY = 2
     };
 
+    enum class FailureReason
+    {
+        NONE = 0,
+        INVALID_INPUT = 1,
+        DIRECTION_FAILURE = 2,
+        OUTSIDE_BOUNDARY = 3,
+        INITIAL_OBB_OCCUPIED = 4
+    };
+
+    inline const char *failureReasonName(const FailureReason reason)
+    {
+        switch (reason)
+        {
+        case FailureReason::NONE: return "none";
+        case FailureReason::INVALID_INPUT: return "invalid_input";
+        case FailureReason::DIRECTION_FAILURE: return "direction_failure";
+        case FailureReason::OUTSIDE_BOUNDARY: return "outside_boundary";
+        case FailureReason::INITIAL_OBB_OCCUPIED: return "initial_obb_occupied";
+        }
+        return "unknown";
+    }
+
     struct Parameters
     {
         int max_faces = 12;
@@ -72,6 +94,7 @@ namespace tf_sfc
         double min_sample_slack = -std::numeric_limits<double>::infinity();
         bool valid = false;
         bool direction_fallback = false;
+        FailureReason failure_reason = FailureReason::NONE;
 
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     };
@@ -353,6 +376,7 @@ namespace tf_sfc
             param.safety_margin < 0.0 || param.inflation_step <= 0.0 ||
             param.max_inflation_distance < 0.0)
         {
+            corridor.failure_reason = FailureReason::INVALID_INPUT;
             return false;
         }
 
@@ -363,6 +387,7 @@ namespace tf_sfc
                                        sensitivityGramian, frame, utility,
                                        usedFallback))
         {
+            corridor.failure_reason = FailureReason::DIRECTION_FAILURE;
             return false;
         }
 
@@ -375,9 +400,14 @@ namespace tf_sfc
         upper.array() += param.safety_margin;
 
         Eigen::MatrixX4d hpoly = detail::boundsToHPoly(anchor, frame, lower, upper);
-        if (!detail::insideBoundary(boundary, anchor, frame, lower, upper) ||
-            !detail::excludesObstacles(hpoly, obstaclePoints))
+        if (!detail::insideBoundary(boundary, anchor, frame, lower, upper))
         {
+            corridor.failure_reason = FailureReason::OUTSIDE_BOUNDARY;
+            return false;
+        }
+        if (!detail::excludesObstacles(hpoly, obstaclePoints))
+        {
+            corridor.failure_reason = FailureReason::INITIAL_OBB_OCCUPIED;
             return false;
         }
 
@@ -437,6 +467,7 @@ namespace tf_sfc
         }
         corridor.direction_fallback = usedFallback;
         corridor.valid = true;
+        corridor.failure_reason = FailureReason::NONE;
         corridor.generation_time_ms =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - started)

@@ -6,12 +6,14 @@
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
 #include "gcopter/sfc_gen.hpp"
+#include "gcopter/traj_favorable_sfc.hpp"
 
 #include <ros/ros.h>
 #include <ros/console.h>
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <Eigen/StdVector>
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +51,15 @@ struct Config
     bool experimentLogEnabled;
     std::string experimentLogDirectory;
     std::string experimentTag;
+    std::string corridorMethod;
+    bool allowCorridorFallback;
+    int tfSfcDirectionMode;
+    int tfSfcSamplesPerSegment;
+    double tfSfcSafetyMargin;
+    double tfSfcMaxInflationDistance;
+    double tfSfcInflationStep;
+    double tfSfcMinOverlapRadius;
+    double tfSfcMaxSegmentLength;
 
     Config(const ros::NodeHandle &nh_priv)
     {
@@ -78,6 +89,15 @@ struct Config
         nh_priv.param<std::string>("Experiment/LogDirectory", experimentLogDirectory,
                                    "/tmp/tf_sfc_results/gcopter");
         nh_priv.param<std::string>("Experiment/Tag", experimentTag, "default");
+        nh_priv.param<std::string>("Corridor/Method", corridorMethod, "firi");
+        nh_priv.param("Corridor/AllowFallback", allowCorridorFallback, false);
+        nh_priv.param("TfSfc/DirectionMode", tfSfcDirectionMode, 1);
+        nh_priv.param("TfSfc/SamplesPerSegment", tfSfcSamplesPerSegment, 5);
+        nh_priv.param("TfSfc/SafetyMargin", tfSfcSafetyMargin, 0.05);
+        nh_priv.param("TfSfc/MaxInflationDistance", tfSfcMaxInflationDistance, 1.0);
+        nh_priv.param("TfSfc/InflationStep", tfSfcInflationStep, 0.10);
+        nh_priv.param("TfSfc/MinOverlapRadius", tfSfcMinOverlapRadius, 0.04);
+        nh_priv.param("TfSfc/MaxSegmentLength", tfSfcMaxSegmentLength, 1.0);
     }
 };
 
@@ -159,8 +179,11 @@ public:
         {
             const auto totalStarted = std::chrono::steady_clock::now();
             gcopter_experiment::RunRecord record;
+            std::vector<gcopter_experiment::CorridorRecord> corridorRecords;
             record.run_id = experimentLogger.makeRunId();
             record.experiment_tag = experimentLogger.experimentTag();
+            record.requested_method = config.corridorMethod;
+            record.method = config.corridorMethod;
             record.timestamp_s = ros::Time::now().toSec();
             auto finishRecord = [&](const std::string &status, const bool success)
             {
@@ -170,7 +193,7 @@ public:
                     std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - totalStarted)
                         .count();
-                if (!experimentLogger.log(record))
+                if (!experimentLogger.log(record, corridorRecords))
                 {
                     ROS_ERROR_THROTTLE(1.0, "Failed to append GCOPTER experiment CSV in %s",
                                        config.experimentLogDirectory.c_str());
@@ -190,20 +213,192 @@ public:
                     std::chrono::steady_clock::now() - pathStarted)
                     .count();
             record.route_point_count = static_cast<int>(route.size());
+            if (route.size() <= 1)
+            {
+                finishRecord("path_search_failure", false);
+                return;
+            }
+
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
             voxelMap.getSurf(pc);
             record.map_point_count = static_cast<int>(pc.size());
 
             const auto corridorStarted = std::chrono::steady_clock::now();
-            sfc_gen::convexCover(route,
-                                 pc,
-                                 voxelMap.getOrigin(),
-                                 voxelMap.getCorner(),
-                                 7.0,
-                                 3.0,
-                                 hPolys);
-            sfc_gen::shortCut(hPolys);
+            auto buildFiriCorridors = [&]()
+            {
+                sfc_gen::convexCover(route,
+                                     pc,
+                                     voxelMap.getOrigin(),
+                                     voxelMap.getCorner(),
+                                     7.0,
+                                     3.0,
+                                     hPolys);
+                sfc_gen::shortCut(hPolys);
+                corridorRecords.clear();
+                for (int i = 0; i < static_cast<int>(hPolys.size()); ++i)
+                {
+                    gcopter_experiment::CorridorRecord corridorRecord;
+                    corridorRecord.piece_id = i;
+                    corridorRecord.face_count = hPolys[i].rows();
+                    corridorRecord.valid = true;
+                    corridorRecords.push_back(corridorRecord);
+                }
+            };
+
+            bool corridorOk = true;
+            if (config.corridorMethod == "firi")
+            {
+                record.method = "firi";
+                buildFiriCorridors();
+            }
+            else if (config.corridorMethod == "tf_sfc")
+            {
+                record.method = "tf_sfc";
+                Eigen::Matrix<double, 6, 4> boundary =
+                    Eigen::Matrix<double, 6, 4>::Zero();
+                const Eigen::Vector3d low = voxelMap.getOrigin();
+                const Eigen::Vector3d high = voxelMap.getCorner();
+                boundary(0, 0) = 1.0;  boundary(0, 3) = -high.x();
+                boundary(1, 0) = -1.0; boundary(1, 3) = low.x();
+                boundary(2, 1) = 1.0;  boundary(2, 3) = -high.y();
+                boundary(3, 1) = -1.0; boundary(3, 3) = low.y();
+                boundary(4, 2) = 1.0;  boundary(4, 3) = -high.z();
+                boundary(5, 2) = -1.0; boundary(5, 3) = low.z();
+
+                tf_sfc::Parameters parameters;
+                parameters.direction_mode = static_cast<tf_sfc::DirectionMode>(
+                    std::max(0, std::min(config.tfSfcDirectionMode, 2)));
+                parameters.safety_margin = std::max(config.tfSfcSafetyMargin, 0.0);
+                parameters.max_inflation_distance =
+                    std::max(config.tfSfcMaxInflationDistance, 0.0);
+                parameters.inflation_step = std::max(config.tfSfcInflationStep, 1.0e-3);
+
+                const int sampleCount = std::max(config.tfSfcSamplesPerSegment, 2);
+                const double obstacleRange = parameters.safety_margin +
+                                             parameters.max_inflation_distance +
+                                             config.voxelWidth;
+                std::vector<Eigen::Vector3d> refinedRoute;
+                refinedRoute.push_back(route.front());
+                const double maxSegmentLength = std::max(config.tfSfcMaxSegmentLength,
+                                                         config.voxelWidth);
+                for (int routeId = 0; routeId + 1 < static_cast<int>(route.size()); ++routeId)
+                {
+                    const Eigen::Vector3d delta = route[routeId + 1] - route[routeId];
+                    const int divisions = std::max(
+                        1, static_cast<int>(std::ceil(delta.norm() / maxSegmentLength)));
+                    for (int division = 1; division <= divisions; ++division)
+                    {
+                        refinedRoute.push_back(
+                            route[routeId] + delta * static_cast<double>(division) /
+                                                 static_cast<double>(divisions));
+                    }
+                }
+                std::vector<tf_sfc::Corridor,
+                            Eigen::aligned_allocator<tf_sfc::Corridor>> generatedCorridors;
+                for (int pieceId = 0;
+                     pieceId + 1 < static_cast<int>(refinedRoute.size()); ++pieceId)
+                {
+                    const Eigen::Vector3d a = refinedRoute[pieceId];
+                    const Eigen::Vector3d b = refinedRoute[pieceId + 1];
+                    Eigen::Matrix3Xd samples(3, sampleCount);
+                    for (int sampleId = 0; sampleId < sampleCount; ++sampleId)
+                    {
+                        const double alpha = static_cast<double>(sampleId) /
+                                             static_cast<double>(sampleCount - 1);
+                        samples.col(sampleId) = (1.0 - alpha) * a + alpha * b;
+                    }
+
+                    const Eigen::Vector3d localMin = a.cwiseMin(b).array() - obstacleRange;
+                    const Eigen::Vector3d localMax = a.cwiseMax(b).array() + obstacleRange;
+                    std::vector<Eigen::Vector3d> localPoints;
+                    for (const Eigen::Vector3d &point : pc)
+                    {
+                        if ((point.array() >= localMin.array()).all() &&
+                            (point.array() <= localMax.array()).all())
+                        {
+                            localPoints.push_back(point);
+                        }
+                    }
+                    Eigen::Matrix3Xd obstaclePoints(3, localPoints.size());
+                    for (int pointId = 0; pointId < static_cast<int>(localPoints.size()); ++pointId)
+                    {
+                        obstaclePoints.col(pointId) = localPoints[pointId];
+                    }
+
+                    const Eigen::Vector3d tangent = b - a;
+                    const double verticalAlignment = tangent.norm() > 1.0e-9
+                                                         ? std::abs(tangent.normalized().dot(
+                                                               Eigen::Vector3d::UnitZ()))
+                                                         : 0.0;
+                    const Eigen::Vector3d lateral =
+                        verticalAlignment < 0.9
+                            ? Eigen::Vector3d::UnitZ()
+                            : Eigen::Vector3d::UnitY();
+                    tf_sfc::Corridor corridor;
+                    corridor.piece_id = pieceId;
+                    const auto pieceStarted = std::chrono::steady_clock::now();
+                    const bool generated = tf_sfc::generateCorridor(
+                        boundary, obstaclePoints, samples, tangent, lateral,
+                        corridor, parameters);
+                    corridor.piece_id = pieceId;
+
+                    gcopter_experiment::CorridorRecord corridorRecord;
+                    corridorRecord.piece_id = pieceId;
+                    corridorRecord.face_count = corridor.face_num;
+                    corridorRecord.generation_time_ms =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - pieceStarted)
+                            .count();
+                    corridorRecord.weighted_width = corridor.weighted_width;
+                    corridorRecord.min_sample_slack = corridor.min_sample_slack;
+                    corridorRecord.valid = generated;
+                    corridorRecord.direction_fallback = corridor.direction_fallback;
+                    corridorRecord.failure_reason =
+                        tf_sfc::failureReasonName(corridor.failure_reason);
+                    corridorRecords.push_back(corridorRecord);
+                    if (!generated)
+                    {
+                        corridorOk = false;
+                        break;
+                    }
+
+                    if (!generatedCorridors.empty())
+                    {
+                        const double overlap = tf_sfc::overlapRadiusAtPoint(
+                            generatedCorridors.back(), corridor, a);
+                        corridorRecords[corridorRecords.size() - 2].overlap_radius_to_next = overlap;
+                        if (overlap + 1.0e-9 < config.tfSfcMinOverlapRadius)
+                        {
+                            corridorRecords.back().valid = false;
+                            corridorRecords.back().failure_reason = "overlap_too_small";
+                            corridorOk = false;
+                            break;
+                        }
+                    }
+                    hPolys.push_back(corridor.hpoly);
+                    generatedCorridors.push_back(corridor);
+                }
+                if (corridorOk && hPolys.size() == 1)
+                {
+                    hPolys.push_back(hPolys.front());
+                    corridorRecords.push_back(corridorRecords.front());
+                    corridorRecords.back().piece_id = 1;
+                }
+
+                if (!corridorOk && config.allowCorridorFallback)
+                {
+                    record.fallback_used = true;
+                    record.method = "firi";
+                    hPolys.clear();
+                    buildFiriCorridors();
+                    corridorOk = true;
+                }
+            }
+            else
+            {
+                corridorOk = false;
+            }
             record.corridor_generation_ms =
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - corridorStarted)
@@ -217,8 +412,15 @@ public:
                                     ? 0.0
                                     : static_cast<double>(record.total_faces) /
                                           static_cast<double>(hPolys.size());
+            if (!corridorOk)
+            {
+                finishRecord(config.corridorMethod == "tf_sfc"
+                                 ? "tf_sfc_generation_failure"
+                                 : "invalid_corridor_method",
+                             false);
+                return;
+            }
 
-            if (route.size() > 1)
             {
                 visualizer.visualizePolytope(hPolys);
 
@@ -313,7 +515,6 @@ public:
                 finishRecord("empty_trajectory", false);
                 return;
             }
-            finishRecord("path_search_failure", false);
         }
     }
 
