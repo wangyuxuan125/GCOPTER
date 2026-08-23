@@ -119,9 +119,18 @@ fallback. The current MVP produces a conservative six-face oriented box, preserv
 weighted directional width, and trajectory-sample slack.
 
 The global-planning demo now selects the actual corridor generator with
-`corridor_method:=firi|tf_sfc`. TF-SFC segments are passed to the same GCOPTER
+`corridor_method:=firi|tf_sfc|ellipsoid_decomp`. The third option calls
+DecompUtil's `EllipsoidDecomp3D::dilate`, i.e. the implementation associated
+with Liu et al. (ICRA 2017). All three outputs are passed to the same GCOPTER
 optimizer and RViz visualization path; strict runs disable fallback so a FIRI
-result cannot be counted as TF-SFC success.
+result cannot be counted as another method's success.
+
+GCOPTER's original `convexCover + FIRI` is not the Liu implementation. It
+segments the RRT* route, crops local obstacles, alternates separating-plane
+construction with a maximum-volume-inscribed-ellipsoid update (four iterations
+in the bundled old FIRI), and then shortcuts overlapping regions. DecompUtil
+inflates an ellipsoid around each collision-free line segment and greedily adds
+closest-obstacle separating planes, without that FIRI MVIE alternation.
 
 This is an integration and OBB-baseline milestone, not the complete proposed
 TF-SFC method. Obstacle cutting planes, utility-based face pruning, and overlap

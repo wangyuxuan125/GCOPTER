@@ -8,6 +8,10 @@
 #include "gcopter/sfc_gen.hpp"
 #include "gcopter/traj_favorable_sfc.hpp"
 
+#ifdef GCOPTER_WITH_DECOMP_UTIL
+#include <decomp_util/ellipsoid_decomp.h>
+#endif
+
 #include <ros/ros.h>
 #include <ros/console.h>
 #include <geometry_msgs/Point.h>
@@ -18,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 #include <memory>
@@ -60,6 +65,11 @@ struct Config
     double tfSfcInflationStep;
     double tfSfcMinOverlapRadius;
     double tfSfcMaxSegmentLength;
+    double decompLocalBBoxForward;
+    double decompLocalBBoxLateral;
+    double decompLocalBBoxVertical;
+    double decompMaxSegmentLength;
+    double decompMinOverlapRadius;
 
     Config(const ros::NodeHandle &nh_priv)
     {
@@ -98,6 +108,11 @@ struct Config
         nh_priv.param("TfSfc/InflationStep", tfSfcInflationStep, 0.10);
         nh_priv.param("TfSfc/MinOverlapRadius", tfSfcMinOverlapRadius, 0.04);
         nh_priv.param("TfSfc/MaxSegmentLength", tfSfcMaxSegmentLength, 1.0);
+        nh_priv.param("Decomp/LocalBBoxForward", decompLocalBBoxForward, 0.5);
+        nh_priv.param("Decomp/LocalBBoxLateral", decompLocalBBoxLateral, 3.0);
+        nh_priv.param("Decomp/LocalBBoxVertical", decompLocalBBoxVertical, 3.0);
+        nh_priv.param("Decomp/MaxSegmentLength", decompMaxSegmentLength, 3.0);
+        nh_priv.param("Decomp/MinOverlapRadius", decompMinOverlapRadius, 0.01);
     }
 };
 
@@ -246,11 +261,183 @@ public:
                 }
             };
 
+            auto buildEllipsoidDecompCorridors = [&]() -> bool
+            {
+#ifdef GCOPTER_WITH_DECOMP_UTIL
+                vec_Vec3f decompPath;
+                if (route.empty())
+                {
+                    return false;
+                }
+                decompPath.push_back(route.front());
+                const double maxSegmentLength = std::max(
+                    config.decompMaxSegmentLength, config.voxelWidth);
+                for (int routeId = 0; routeId + 1 < static_cast<int>(route.size()); ++routeId)
+                {
+                    const Eigen::Vector3d delta = route[routeId + 1] - route[routeId];
+                    const int divisions = std::max(
+                        1, static_cast<int>(std::ceil(delta.norm() / maxSegmentLength)));
+                    for (int division = 1; division <= divisions; ++division)
+                    {
+                        const Eigen::Vector3d point =
+                            route[routeId] + delta * static_cast<double>(division) /
+                                                 static_cast<double>(divisions);
+                        if ((point - decompPath.back()).norm() > 1.0e-6)
+                        {
+                            decompPath.push_back(point);
+                        }
+                    }
+                }
+                if (decompPath.size() < 2)
+                {
+                    return false;
+                }
+
+                vec_Vec3f obstacles;
+                obstacles.reserve(pc.size());
+                for (const Eigen::Vector3d &point : pc)
+                {
+                    obstacles.push_back(point);
+                }
+
+                EllipsoidDecomp3D decomp;
+                decomp.set_obs(obstacles);
+                Vec3f localBBox;
+                localBBox << std::max(config.decompLocalBBoxForward, config.voxelWidth),
+                             std::max(config.decompLocalBBoxLateral, config.voxelWidth),
+                             std::max(config.decompLocalBBoxVertical, config.voxelWidth);
+                decomp.set_local_bbox(localBBox);
+                const auto decompStarted = std::chrono::steady_clock::now();
+                decomp.dilate(decompPath);
+                const double decompMs = std::chrono::duration<double, std::milli>(
+                                            std::chrono::steady_clock::now() - decompStarted)
+                                            .count();
+                const vec_E<Polyhedron3D> polyhedrons = decomp.get_polyhedrons();
+                if (polyhedrons.size() + 1 != decompPath.size())
+                {
+                    return false;
+                }
+
+                hPolys.clear();
+                corridorRecords.clear();
+                const Eigen::Vector3d low = voxelMap.getOrigin();
+                const Eigen::Vector3d high = voxelMap.getCorner();
+                for (int pieceId = 0; pieceId < static_cast<int>(polyhedrons.size()); ++pieceId)
+                {
+                    const vec_E<Hyperplane3D> planes = polyhedrons[pieceId].hyperplanes();
+                    Eigen::MatrixX4d hpoly(planes.size() + 6, 4);
+                    int row = 0;
+                    for (const Hyperplane3D &plane : planes)
+                    {
+                        Eigen::Vector3d normal = plane.n_;
+                        const double norm = normal.norm();
+                        if (!normal.allFinite() || norm <= 1.0e-9)
+                        {
+                            return false;
+                        }
+                        normal /= norm;
+                        hpoly.row(row).head<3>() = normal.transpose();
+                        hpoly(row++, 3) = -normal.dot(plane.p_);
+                    }
+                    hpoly.row(row++) << 1.0, 0.0, 0.0, -high.x();
+                    hpoly.row(row++) << -1.0, 0.0, 0.0, low.x();
+                    hpoly.row(row++) << 0.0, 1.0, 0.0, -high.y();
+                    hpoly.row(row++) << 0.0, -1.0, 0.0, low.y();
+                    hpoly.row(row++) << 0.0, 0.0, 1.0, -high.z();
+                    hpoly.row(row++) << 0.0, 0.0, -1.0, low.z();
+
+                    const Eigen::Vector4d ah(decompPath[pieceId].x(),
+                                             decompPath[pieceId].y(),
+                                             decompPath[pieceId].z(), 1.0);
+                    const Eigen::Vector4d bh(decompPath[pieceId + 1].x(),
+                                             decompPath[pieceId + 1].y(),
+                                             decompPath[pieceId + 1].z(), 1.0);
+                    const bool valid = hpoly.allFinite() &&
+                                       (hpoly * ah).maxCoeff() <= 1.0e-6 &&
+                                       (hpoly * bh).maxCoeff() <= 1.0e-6;
+                    gcopter_experiment::CorridorRecord corridorRecord;
+                    corridorRecord.piece_id = pieceId;
+                    corridorRecord.face_count = hpoly.rows();
+                    corridorRecord.generation_time_ms =
+                        decompMs / static_cast<double>(polyhedrons.size());
+                    auto pointSlack = [](const Eigen::MatrixX4d &poly,
+                                         const Eigen::Vector3d &point)
+                    {
+                        double slack = std::numeric_limits<double>::infinity();
+                        for (int faceId = 0; faceId < poly.rows(); ++faceId)
+                        {
+                            const double norm = poly.row(faceId).head<3>().norm();
+                            slack = std::min(slack,
+                                             -(poly.row(faceId).head<3>().dot(point) +
+                                               poly(faceId, 3)) /
+                                                 norm);
+                        }
+                        return slack;
+                    };
+                    const Eigen::Vector3d midpoint =
+                        0.5 * (decompPath[pieceId] + decompPath[pieceId + 1]);
+                    corridorRecord.min_sample_slack = std::min(
+                        pointSlack(hpoly, decompPath[pieceId]),
+                        std::min(pointSlack(hpoly, midpoint),
+                                 pointSlack(hpoly, decompPath[pieceId + 1])));
+                    corridorRecord.weighted_width =
+                        2.0 * corridorRecord.min_sample_slack;
+                    corridorRecord.valid = valid;
+                    corridorRecord.failure_reason = valid ? "none" : "seed_outside_corridor";
+                    corridorRecords.push_back(corridorRecord);
+                    if (!valid)
+                    {
+                        return false;
+                    }
+                    if (!hPolys.empty())
+                    {
+                        const double overlap = std::min(
+                            pointSlack(hPolys.back(), decompPath[pieceId]),
+                            pointSlack(hpoly, decompPath[pieceId]));
+                        corridorRecords[corridorRecords.size() - 2]
+                            .overlap_radius_to_next = overlap;
+                        if (overlap + 1.0e-9 < config.decompMinOverlapRadius)
+                        {
+                            corridorRecords.back().valid = false;
+                            corridorRecords.back().failure_reason = "overlap_too_small";
+                            return false;
+                        }
+                    }
+                    hPolys.push_back(hpoly);
+                }
+                if (hPolys.size() == 1)
+                {
+                    hPolys.push_back(hPolys.front());
+                    corridorRecords.push_back(corridorRecords.front());
+                    corridorRecords.back().piece_id = 1;
+                }
+                return !hPolys.empty();
+#else
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "Corridor/Method=ellipsoid_decomp requested, but DecompUtil was not found at build time.");
+                return false;
+#endif
+            };
+
             bool corridorOk = true;
             if (config.corridorMethod == "firi")
             {
                 record.method = "firi";
                 buildFiriCorridors();
+            }
+            else if (config.corridorMethod == "ellipsoid_decomp")
+            {
+                record.method = "ellipsoid_decomp";
+                corridorOk = buildEllipsoidDecompCorridors();
+                if (!corridorOk && config.allowCorridorFallback)
+                {
+                    record.fallback_used = true;
+                    record.method = "firi";
+                    hPolys.clear();
+                    buildFiriCorridors();
+                    corridorOk = true;
+                }
             }
             else if (config.corridorMethod == "tf_sfc")
             {
@@ -416,7 +603,9 @@ public:
             {
                 finishRecord(config.corridorMethod == "tf_sfc"
                                  ? "tf_sfc_generation_failure"
-                                 : "invalid_corridor_method",
+                                 : (config.corridorMethod == "ellipsoid_decomp"
+                                      ? "ellipsoid_decomp_generation_failure"
+                                      : "invalid_corridor_method"),
                              false);
                 return;
             }

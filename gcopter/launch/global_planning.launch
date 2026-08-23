@@ -13,6 +13,11 @@
   <arg name="tf_sfc_inflation_step" default="0.10"/>
   <arg name="tf_sfc_min_overlap_radius" default="0.04"/>
   <arg name="tf_sfc_max_segment_length" default="1.0"/>
+  <arg name="decomp_local_bbox_forward" default="0.5"/>
+  <arg name="decomp_local_bbox_lateral" default="3.0"/>
+  <arg name="decomp_local_bbox_vertical" default="3.0"/>
+  <arg name="decomp_max_segment_length" default="3.0"/>
+  <arg name="decomp_min_overlap_radius" default="0.01"/>
 
    <node name="rviz" pkg="rviz" type="rviz" output="screen"
     args="-d $(find gcopter)/config/global_planning.rviz"> 
@@ -51,6 +56,11 @@
   <param name="TfSfc/InflationStep" value="$(arg tf_sfc_inflation_step)" type="double"/>
   <param name="TfSfc/MinOverlapRadius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
   <param name="TfSfc/MaxSegmentLength" value="$(arg tf_sfc_max_segment_length)" type="double"/>
+  <param name="Decomp/LocalBBoxForward" value="$(arg decomp_local_bbox_forward)" type="double"/>
+  <param name="Decomp/LocalBBoxLateral" value="$(arg decomp_local_bbox_lateral)" type="double"/>
+  <param name="Decomp/LocalBBoxVertical" value="$(arg decomp_local_bbox_vertical)" type="double"/>
+  <param name="Decomp/MaxSegmentLength" value="$(arg decomp_max_segment_length)" type="double"/>
+  <param name="Decomp/MinOverlapRadius" value="$(arg decomp_min_overlap_radius)" type="double"/>
   </node>
 
 </launch>

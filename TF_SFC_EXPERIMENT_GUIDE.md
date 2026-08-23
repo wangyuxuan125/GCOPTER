@@ -1,6 +1,6 @@
 # GCOPTER 编译、运行与实验数据记录指南
 
-本文档对应 `feat/tf-sfc-mvp` 分支。`global_planning.launch` 已支持 `corridor_method:=firi|tf_sfc`；两种方法生成的 H-polytope 都会进入同一个 GCOPTER 优化器和 RViz 可视化流程。
+本文档对应 `feat/tf-sfc-mvp` 分支。`global_planning.launch` 已支持 `corridor_method:=firi|tf_sfc|ellipsoid_decomp`；三种方法生成的 H-polytope 都会进入同一个 GCOPTER 优化器和 RViz 可视化流程。
 
 ## 1. 建立 catkin 工作空间
 
@@ -19,6 +19,25 @@ cd $HOME/gcopter_ws
 catkin_make -DCMAKE_BUILD_TYPE=Release
 source devel/setup.bash
 ```
+
+如需 Liu et al. (ICRA 2017) 基线，还要先安装 DecompUtil。推荐通过 DecompROS 的递归子模块在独立工作空间编译：
+
+```bash
+sudo apt install python3-catkin-tools ros-noetic-catkin-simple
+mkdir -p $HOME/decomp_ws/src
+cd $HOME/decomp_ws/src
+git clone --recursive https://github.com/sikang/DecompROS.git
+cd $HOME/decomp_ws
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+catkin build
+source devel/setup.bash
+
+cd $HOME/gcopter_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+编译输出出现 `gcopter: Liu/DecompUtil corridor baseline enabled` 才能运行 `ellipsoid_decomp`。以后新终端要先 source `$HOME/decomp_ws/devel/setup.bash`，再 source GCOPTER 工作空间。
 
 如果仓库已经下载到其他目录，可以把整个仓库复制或链接到 `$HOME/gcopter_ws/src/GCOPTER`，然后回到 `$HOME/gcopter_ws` 执行 `catkin_make`。
 
@@ -57,6 +76,24 @@ roslaunch gcopter global_planning.launch \
 ```
 
 TF-SFC 会把过长 RRT 路段细分后逐段生成 OBB。如果生成失败且禁止回退，本次请求以 `tf_sfc_generation_failure` 写入 CSV，不会运行 FIRI 冒充成功。
+
+Liu et al. / DecompUtil 椭球分解（严格禁止回退）：
+
+```bash
+roslaunch gcopter global_planning.launch \
+  map_seed:=42 \
+  corridor_method:=ellipsoid_decomp \
+  allow_corridor_fallback:=false \
+  decomp_local_bbox_forward:=0.5 \
+  decomp_local_bbox_lateral:=3.0 \
+  decomp_local_bbox_vertical:=3.0 \
+  decomp_max_segment_length:=3.0 \
+  decomp_min_overlap_radius:=0.01 \
+  experiment_tag:=gcopter_liu_decomp \
+  experiment_log_directory:=$HOME/tf_sfc_results/gcopter
+```
+
+该方法直接对同一条 RRT* 无碰撞路线调用 DecompUtil；若依赖未编译或分解认证失败，会记录 `ellipsoid_decomp_generation_failure`。
 
 关闭日志：
 
@@ -99,9 +136,18 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
 - 正式实验使用 Release 编译，并先完成预热运行。
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。
-- 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi` 和 `method=tf_sfc`；失败请求也必须保留在成功率分母中。
+- 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi`、`method=tf_sfc` 和 `method=ellipsoid_decomp`；失败请求也必须保留在成功率分母中。
 
-## 5. 快速统计
+## 5. 原始 FIRI 与 Liu et al. 的关系
+
+两者都使用椭球几何，但不是同一算法：
+
+- GCOPTER `convexCover`：按 `progress` 切分 RRT* 路径，用 `range` 裁剪局部点云，建立地图边界盒；`firi()` 反复生成障碍分离面并求当前多面体的最大体积内接椭球，默认 4 次；最后 `shortCut()` 根据多面体交叠删除冗余走廊。
+- Liu/DecompUtil：对无碰撞折线的每条线段构造椭球，依照椭球度量选择最近障碍并添加切平面，再附加局部边界；没有 GCOPTER FIRI 的 MVIE 交替优化和 `shortCut`。
+
+因此论文中可以将其作为独立的 `GCOPTER + EllipsoidDecomp SFC (Liu et al., ICRA 2017)` 基线。三组实验必须固定 RRT* 路线搜索参数、地图、起终点、动力学约束和失败统计口径。
+
+## 6. 快速统计
 
 ```bash
 python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv <<'PY'

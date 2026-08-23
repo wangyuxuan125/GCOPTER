@@ -59,3 +59,12 @@ TfSfc:
   InflationStep:           0.10
   MinOverlapRadius:        0.04
   MaxSegmentLength:        1.0
+
+# Liu et al. (ICRA 2017) / DecompUtil baseline. The three local-bbox values
+# follow DecompUtil's segment frame: forward extension, lateral and vertical.
+Decomp:
+  LocalBBoxForward:        0.5
+  LocalBBoxLateral:        3.0
+  LocalBBoxVertical:       3.0
+  MaxSegmentLength:        3.0
+  MinOverlapRadius:        0.01
