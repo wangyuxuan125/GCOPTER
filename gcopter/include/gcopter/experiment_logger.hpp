@@ -38,6 +38,11 @@ namespace gcopter_experiment
         double optimizer_ms = 0.0;
         double total_planning_ms = 0.0;
         double final_cost = 0.0;
+        int corridor_constrained_piece_count = 0;
+        double corridor_penalty_cost_initial = 0.0;
+        double corridor_penalty_cost_final = 0.0;
+        double max_corridor_violation_initial_m = 0.0;
+        double max_corridor_violation_final_m = 0.0;
         int trajectory_piece_count = 0;
         double trajectory_duration_s = 0.0;
         double trajectory_length_m = 0.0;
@@ -106,7 +111,7 @@ namespace gcopter_experiment
                 return false;
             }
 
-            const std::string path = directory_ + "/gcopter_runs_v2.csv";
+            const std::string path = directory_ + "/gcopter_runs_v3.csv";
             const bool header = fileNeedsHeader(path);
             std::ofstream output(path, std::ios::out | std::ios::app);
             if (!output)
@@ -120,10 +125,12 @@ namespace gcopter_experiment
                           "map_point_count,route_point_count,corridor_count,total_faces,mean_faces,"
                           "path_search_ms,corridor_generation_ms,optimizer_setup_ms,optimizer_ms,"
                           "total_planning_ms,final_cost,trajectory_piece_count,trajectory_duration_s,"
-                          "trajectory_length_m\n";
+                          "trajectory_length_m,corridor_constrained_piece_count,"
+                          "corridor_penalty_cost_initial,corridor_penalty_cost_final,"
+                          "max_corridor_violation_initial_m,max_corridor_violation_final_m\n";
             }
             output << std::setprecision(17)
-                   << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                   << 3 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                    << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                    << csv(record.method) << ',' << record.fallback_used << ','
                    << csv(record.status) << ',' << record.success << ','
@@ -133,7 +140,12 @@ namespace gcopter_experiment
                    << record.corridor_generation_ms << ',' << record.optimizer_setup_ms << ','
                    << record.optimizer_ms << ',' << record.total_planning_ms << ','
                    << record.final_cost << ',' << record.trajectory_piece_count << ','
-                   << record.trajectory_duration_s << ',' << record.trajectory_length_m << '\n';
+                   << record.trajectory_duration_s << ',' << record.trajectory_length_m << ','
+                   << record.corridor_constrained_piece_count << ','
+                   << record.corridor_penalty_cost_initial << ','
+                   << record.corridor_penalty_cost_final << ','
+                   << record.max_corridor_violation_initial_m << ','
+                   << record.max_corridor_violation_final_m << '\n';
             if (!output)
             {
                 return false;
@@ -143,7 +155,7 @@ namespace gcopter_experiment
                 return true;
             }
 
-            const std::string corridorPath = directory_ + "/gcopter_corridors_v2.csv";
+            const std::string corridorPath = directory_ + "/gcopter_corridors_v3.csv";
             const bool corridorHeader = fileNeedsHeader(corridorPath);
             std::ofstream corridorOutput(corridorPath, std::ios::out | std::ios::app);
             if (!corridorOutput)
@@ -160,7 +172,7 @@ namespace gcopter_experiment
             corridorOutput << std::setprecision(17);
             for (const CorridorRecord &corridor : corridors)
             {
-                corridorOutput << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                corridorOutput << 3 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                                << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                                << csv(record.method) << ',' << corridor.piece_id << ','
                                << corridor.face_count << ',' << corridor.generation_time_ms << ','

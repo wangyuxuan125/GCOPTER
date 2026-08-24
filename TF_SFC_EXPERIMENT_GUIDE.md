@@ -106,8 +106,8 @@ roslaunch gcopter global_planning.launch experiment_log_enabled:=false
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
-$HOME/tf_sfc_results/gcopter/gcopter_corridors_v2.csv
+$HOME/tf_sfc_results/gcopter/gcopter_runs_v3.csv
+$HOME/tf_sfc_results/gcopter/gcopter_corridors_v3.csv
 ```
 
 每次有效的起终点规划请求写入一行，包含：
@@ -119,7 +119,10 @@ corridor_count, total_faces, mean_faces,
 path_search_ms, corridor_generation_ms,
 optimizer_setup_ms, optimizer_ms, total_planning_ms,
 final_cost, trajectory_piece_count,
-trajectory_duration_s, trajectory_length_m
+trajectory_duration_s, trajectory_length_m,
+corridor_constrained_piece_count,
+corridor_penalty_cost_initial, corridor_penalty_cost_final,
+max_corridor_violation_initial_m, max_corridor_violation_final_m
 ```
 
 `requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。文件使用追加模式。
@@ -127,7 +130,7 @@ trajectory_duration_s, trajectory_length_m
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
+head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v3.csv
 ```
 
 ## 4. 与 EGO/TF-SFC 对比时的口径
@@ -137,6 +140,10 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。
 - 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi`、`method=tf_sfc` 和 `method=ellipsoid_decomp`；失败请求也必须保留在成功率分母中。
+- v3 日志新增走廊约束 piece 数、优化前后走廊惩罚和最大走廊越界量，用于证明 H-polytope 不只是 RViz 可视化，而是实际参与 GCOPTER 优化。
+- GCOPTER 当前的 `success=1` 表示优化器返回有限目标值和非空轨迹；它不是飞行器实际到达目标的 mission success，也不是连续时间无碰撞证书。
+
+论文最终实验前还需要完成的项目见 [ICRA_EXPERIMENT_READINESS.md](ICRA_EXPERIMENT_READINESS.md)。
 
 ## 5. 原始 FIRI 与 Liu et al. 的关系
 
@@ -150,7 +157,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv
 ## 6. 快速统计
 
 ```bash
-python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v2.csv <<'PY'
+python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v3.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

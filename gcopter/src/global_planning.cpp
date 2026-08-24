@@ -672,12 +672,28 @@ public:
 
                 const auto optimizerStarted = std::chrono::steady_clock::now();
                 record.final_cost = gcopter.optimize(traj, config.relCostTol);
+                const gcopter::GCOPTER_PolytopeSFC::CorridorDiagnostics &initialDiagnostics =
+                    gcopter.getInitialCorridorDiagnostics();
+                const gcopter::GCOPTER_PolytopeSFC::CorridorDiagnostics &finalDiagnostics =
+                    gcopter.getFinalCorridorDiagnostics();
+                record.corridor_constrained_piece_count =
+                    initialDiagnostics.constrainedPieceCount;
+                record.corridor_penalty_cost_initial = initialDiagnostics.penaltyCost;
+                record.corridor_penalty_cost_final = finalDiagnostics.penaltyCost;
+                record.max_corridor_violation_initial_m =
+                    initialDiagnostics.maxViolationM;
+                record.max_corridor_violation_final_m =
+                    finalDiagnostics.maxViolationM;
                 record.optimizer_ms =
                     std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - optimizerStarted)
                         .count();
                 if (!std::isfinite(record.final_cost))
                 {
+                    record.corridor_penalty_cost_final =
+                        std::numeric_limits<double>::quiet_NaN();
+                    record.max_corridor_violation_final_m =
+                        std::numeric_limits<double>::quiet_NaN();
                     finishRecord("optimizer_failure", false);
                     return;
                 }

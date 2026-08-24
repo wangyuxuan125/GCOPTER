@@ -152,3 +152,6 @@ const bool ok = tf_sfc::generateCorridor(
 
 See the Chinese [TF-SFC experiment guide](TF_SFC_EXPERIMENT_GUIDE.md) for the
 catkin workspace layout, launch commands, CSV fields, and comparison protocol.
+The [ICRA experiment readiness checklist](ICRA_EXPERIMENT_READINESS.md) separates
+the current reproducible baselines from the work still required before freezing
+paper statistics.

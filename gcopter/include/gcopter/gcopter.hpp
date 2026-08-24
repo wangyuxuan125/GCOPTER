@@ -31,6 +31,7 @@
 
 #include <Eigen/Eigen>
 
+#include <algorithm>
 #include <cmath>
 #include <cfloat>
 #include <iostream>
@@ -46,6 +47,13 @@ namespace gcopter
         typedef Eigen::MatrixX4d PolyhedronH;
         typedef std::vector<PolyhedronV> PolyhedraV;
         typedef std::vector<PolyhedronH> PolyhedraH;
+
+        struct CorridorDiagnostics
+        {
+            int constrainedPieceCount = 0;
+            double penaltyCost = 0.0;
+            double maxViolationM = 0.0;
+        };
 
     private:
         minco::MINCO_S3NU minco;
@@ -84,8 +92,64 @@ namespace gcopter
         Eigen::VectorXd gradByTimes;
         Eigen::MatrixX3d partialGradByCoeffs;
         Eigen::VectorXd partialGradByTimes;
+        CorridorDiagnostics initialCorridorDiagnostics;
+        CorridorDiagnostics finalCorridorDiagnostics;
 
     private:
+        inline CorridorDiagnostics evaluateCorridorDiagnostics(
+            const Trajectory<5> &trajectory) const
+        {
+            CorridorDiagnostics diagnostics;
+            const int sampleCount = std::max(integralRes, 1);
+            const int count = std::min(
+                trajectory.getPieceNum(), static_cast<int>(hPolyIdx.size()));
+            for (int pieceId = 0; pieceId < count; ++pieceId)
+            {
+                const int corridorId = hPolyIdx(pieceId);
+                if (corridorId < 0 || corridorId >= static_cast<int>(hPolytopes.size()))
+                {
+                    continue;
+                }
+                ++diagnostics.constrainedPieceCount;
+                const Piece<5> &piece = trajectory[pieceId];
+                const double step = piece.getDuration() /
+                                    static_cast<double>(sampleCount);
+                for (int sampleId = 0; sampleId <= sampleCount; ++sampleId)
+                {
+                    const Eigen::Vector3d position =
+                        piece.getPos(step * static_cast<double>(sampleId));
+                    double samplePenalty = 0.0;
+                    for (int faceId = 0;
+                         faceId < hPolytopes[corridorId].rows(); ++faceId)
+                    {
+                        const Eigen::Vector3d normal =
+                            hPolytopes[corridorId].row(faceId).head<3>().transpose();
+                        const double normalNorm = normal.norm();
+                        if (normalNorm <= 1.0e-12)
+                        {
+                            continue;
+                        }
+                        const double violation =
+                            normal.dot(position) + hPolytopes[corridorId](faceId, 3);
+                        diagnostics.maxViolationM = std::max(
+                            diagnostics.maxViolationM, violation / normalNorm);
+                        double smoothedPenalty = 0.0;
+                        double smoothedPenaltyDerivative = 0.0;
+                        if (smoothedL1(violation, smoothEps, smoothedPenalty,
+                                       smoothedPenaltyDerivative))
+                        {
+                            samplePenalty += penaltyWt(0) * smoothedPenalty;
+                        }
+                    }
+                    const double quadratureWeight =
+                        (sampleId == 0 || sampleId == sampleCount) ? 0.5 : 1.0;
+                    diagnostics.penaltyCost +=
+                        quadratureWeight * step * samplePenalty;
+                }
+            }
+            return diagnostics;
+        }
+
         static inline void forwardT(const Eigen::VectorXd &tau,
                                     Eigen::VectorXd &T)
         {
@@ -814,6 +878,12 @@ namespace gcopter
             Eigen::Map<Eigen::VectorXd> xi(x.data() + temporalDim, spatialDim);
 
             setInitial(shortPath, allocSpeed, pieceIdx, points, times);
+            minco.setParameters(points, times);
+            Trajectory<5> initialTrajectory;
+            minco.getTrajectory(initialTrajectory);
+            initialCorridorDiagnostics =
+                evaluateCorridorDiagnostics(initialTrajectory);
+            finalCorridorDiagnostics = CorridorDiagnostics();
             backwardT(times, tau);
             backwardP(points, vPolyIdx, vPolytopes, xi);
 
@@ -838,6 +908,7 @@ namespace gcopter
                 forwardP(xi, vPolyIdx, vPolytopes, points);
                 minco.setParameters(points, times);
                 minco.getTrajectory(traj);
+                finalCorridorDiagnostics = evaluateCorridorDiagnostics(traj);
             }
             else
             {
@@ -849,6 +920,16 @@ namespace gcopter
             }
 
             return minCostFunctional;
+        }
+
+        inline const CorridorDiagnostics &getInitialCorridorDiagnostics() const
+        {
+            return initialCorridorDiagnostics;
+        }
+
+        inline const CorridorDiagnostics &getFinalCorridorDiagnostics() const
+        {
+            return finalCorridorDiagnostics;
         }
     };
 
