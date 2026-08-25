@@ -48,12 +48,15 @@ Experiment:
   Tag:                     'default'
 
 Corridor:
+  # firi | ellipsoid_decomp | obb | tf_sfc
   Method:                  'firi'
   AllowFallback:           false
 
 TfSfc:
   DirectionMode:           1
   SamplesPerSegment:       5
+  MaxFaces:                12
+  MaxObsFaces:             6
   SafetyMargin:            0.05
   MaxInflationDistance:    1.0
   InflationStep:           0.10
