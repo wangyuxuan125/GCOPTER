@@ -47,6 +47,7 @@
   <param name="Experiment/LogEnabled" value="$(arg experiment_log_enabled)" type="bool"/>
   <param name="Experiment/LogDirectory" value="$(arg experiment_log_directory)" type="string"/>
   <param name="Experiment/Tag" value="$(arg experiment_tag)" type="string"/>
+  <param name="Experiment/MapSeed" value="$(arg map_seed)" type="int"/>
   <param name="Corridor/Method" value="$(arg corridor_method)" type="string"/>
   <param name="Corridor/AllowFallback" value="$(arg allow_corridor_fallback)" type="bool"/>
   <param name="TfSfc/DirectionMode" value="$(arg tf_sfc_direction_mode)" type="int"/>

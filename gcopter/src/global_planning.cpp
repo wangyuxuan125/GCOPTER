@@ -56,6 +56,7 @@ struct Config
     bool experimentLogEnabled;
     std::string experimentLogDirectory;
     std::string experimentTag;
+    int mapSeed;
     std::string corridorMethod;
     bool allowCorridorFallback;
     int tfSfcDirectionMode;
@@ -99,6 +100,7 @@ struct Config
         nh_priv.param<std::string>("Experiment/LogDirectory", experimentLogDirectory,
                                    "/tmp/tf_sfc_results/gcopter");
         nh_priv.param<std::string>("Experiment/Tag", experimentTag, "default");
+        nh_priv.param("Experiment/MapSeed", mapSeed, 1024);
         nh_priv.param<std::string>("Corridor/Method", corridorMethod, "firi");
         nh_priv.param("Corridor/AllowFallback", allowCorridorFallback, false);
         nh_priv.param("TfSfc/DirectionMode", tfSfcDirectionMode, 1);
@@ -200,6 +202,21 @@ public:
             record.requested_method = config.corridorMethod;
             record.method = config.corridorMethod;
             record.timestamp_s = ros::Time::now().toSec();
+            record.map_seed = config.mapSeed;
+            record.start_x = startGoal[0].x();
+            record.start_y = startGoal[0].y();
+            record.start_z = startGoal[0].z();
+            record.goal_x = startGoal[1].x();
+            record.goal_y = startGoal[1].y();
+            record.goal_z = startGoal[1].z();
+            record.voxel_width_m = config.voxelWidth;
+            record.dilate_radius_m = config.dilateRadius;
+            record.route_timeout_s = config.timeoutRRT;
+            record.max_velocity_mps = config.maxVelMag;
+            record.max_body_rate_radps = config.maxBdrMag;
+            record.max_tilt_rad = config.maxTiltAngle;
+            record.min_thrust = config.minThrust;
+            record.max_thrust = config.maxThrust;
             auto finishRecord = [&](const std::string &status, const bool success)
             {
                 record.status = status;

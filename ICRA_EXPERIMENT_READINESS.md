@@ -6,7 +6,7 @@ The GCOPTER branch is ready for controlled baseline development, but not yet for
 
 - FIRI, PCA/Frenet OBB-SFC, and Liu/DecompUtil EllipsoidDecomp all feed their H-polytopes into the same `GCOPTER_PolytopeSFC` setup and optimizer.
 - Strict runs disable FIRI fallback and log generation/setup/optimization failures.
-- Schema v3 records timing, geometry, trajectory results, constrained piece count, and sampled corridor penalty/violation before and after optimization.
+- Schema v4 records timing, geometry, trajectory results, constrained piece count, sampled corridor penalty/violation before and after optimization, plus map seed, exact endpoints and key map/dynamics parameters needed to audit fair comparisons.
 
 ## Still required
 
