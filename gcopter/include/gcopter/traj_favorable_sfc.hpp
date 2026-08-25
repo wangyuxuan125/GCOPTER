@@ -50,7 +50,9 @@ namespace tf_sfc
         INVALID_INPUT = 1,
         DIRECTION_FAILURE = 2,
         OUTSIDE_BOUNDARY = 3,
-        INITIAL_OBB_OCCUPIED = 4
+        INITIAL_OBB_OCCUPIED = 4,
+        FACE_BUDGET_EXHAUSTED = 5,
+        OBSTACLE_SEPARATION_FAILURE = 6
     };
 
     inline const char *failureReasonName(const FailureReason reason)
@@ -62,6 +64,8 @@ namespace tf_sfc
         case FailureReason::DIRECTION_FAILURE: return "direction_failure";
         case FailureReason::OUTSIDE_BOUNDARY: return "outside_boundary";
         case FailureReason::INITIAL_OBB_OCCUPIED: return "initial_obb_occupied";
+        case FailureReason::FACE_BUDGET_EXHAUSTED: return "face_budget_exhausted";
+        case FailureReason::OBSTACLE_SEPARATION_FAILURE: return "obstacle_separation_failure";
         }
         return "unknown";
     }
@@ -69,7 +73,8 @@ namespace tf_sfc
     struct Parameters
     {
         int max_faces = 12;
-        int max_obs_faces = 6; // Reserved for the obstacle-cutting extension.
+        int max_obs_faces = 6;
+        bool enable_obstacle_planes = true;
         double safety_margin = 0.25;
         double min_overlap_radius = 0.15;
         double max_inflation_distance = 1.0;
@@ -89,9 +94,13 @@ namespace tf_sfc
         Eigen::Vector3d utility = Eigen::Vector3d::Ones();
         int piece_id = -1;
         int face_num = 0;
+        int obstacle_face_num = 0;
+        int obstacle_point_num = 0;
+        bool face_budget_saturated = false;
         double generation_time_ms = 0.0;
         double weighted_width = 0.0;
         double min_sample_slack = -std::numeric_limits<double>::infinity();
+        double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
         bool valid = false;
         bool direction_fallback = false;
         FailureReason failure_reason = FailureReason::NONE;
@@ -319,6 +328,246 @@ namespace tf_sfc
             return slack;
         }
 
+
+        inline bool buildFaceBoundedCandidate(
+            const Eigen::MatrixX4d &boundary,
+            const Eigen::Matrix3Xd &obstaclePoints,
+            const Eigen::Matrix3Xd &trajSamples,
+            const Eigen::Vector3d &anchor,
+            const Eigen::Matrix3d &frame,
+            const Eigen::Vector3d &lower,
+            const Eigen::Vector3d &upper,
+            const Parameters &param,
+            Eigen::MatrixX4d &hpoly,
+            int &obstacleFaceNum,
+            int &obstaclePointNum,
+            bool &faceBudgetSaturated,
+            FailureReason &failureReason)
+        {
+            hpoly = boundsToHPoly(anchor, frame, lower, upper);
+            obstacleFaceNum = 0;
+            obstaclePointNum = 0;
+            faceBudgetSaturated = false;
+            failureReason = FailureReason::NONE;
+
+            if (!insideBoundary(boundary, anchor, frame, lower, upper))
+            {
+                failureReason = FailureReason::OUTSIDE_BOUNDARY;
+                return false;
+            }
+
+            std::vector<int> candidateObstacleIds;
+            candidateObstacleIds.reserve(obstaclePoints.cols());
+            for (int i = 0; i < obstaclePoints.cols(); ++i)
+            {
+                if ((hpoly.leftCols<3>() * obstaclePoints.col(i) +
+                     hpoly.rightCols<1>()).maxCoeff() <= 1.0e-9)
+                {
+                    candidateObstacleIds.push_back(i);
+                }
+            }
+            obstaclePointNum = static_cast<int>(candidateObstacleIds.size());
+            if (candidateObstacleIds.empty())
+            {
+                return true;
+            }
+            if (!param.enable_obstacle_planes)
+            {
+                failureReason = FailureReason::INITIAL_OBB_OCCUPIED;
+                return false;
+            }
+
+            const int faceCapacity =
+                std::max(0, std::min(param.max_obs_faces,
+                                     param.max_faces - 6));
+            if (faceCapacity == 0)
+            {
+                faceBudgetSaturated = true;
+                failureReason = FailureReason::FACE_BUDGET_EXHAUSTED;
+                return false;
+            }
+
+            std::sort(candidateObstacleIds.begin(), candidateObstacleIds.end(),
+                      [&obstaclePoints, &trajSamples](const int lhs, const int rhs)
+                      {
+                          double lhsDistance =
+                              std::numeric_limits<double>::infinity();
+                          double rhsDistance =
+                              std::numeric_limits<double>::infinity();
+                          for (int j = 0; j < trajSamples.cols(); ++j)
+                          {
+                              lhsDistance = std::min(
+                                  lhsDistance,
+                                  (obstaclePoints.col(lhs) -
+                                   trajSamples.col(j)).squaredNorm());
+                              rhsDistance = std::min(
+                                  rhsDistance,
+                                  (obstaclePoints.col(rhs) -
+                                   trajSamples.col(j)).squaredNorm());
+                          }
+                          return lhsDistance < rhsDistance;
+                      });
+
+            std::vector<Eigen::Vector3d,
+                        Eigen::aligned_allocator<Eigen::Vector3d>> cutNormals;
+            std::vector<double> cutOffsets;
+            const double requiredSampleSlack =
+                std::max(param.min_overlap_radius,
+                         0.5 * param.safety_margin);
+            constexpr double kNormalMergeCosine = 0.985;
+            constexpr double kTolerance = 1.0e-9;
+
+            for (const int obstacleId : candidateObstacleIds)
+            {
+                const Eigen::Vector3d obstacle =
+                    obstaclePoints.col(obstacleId);
+                bool alreadyExcluded = false;
+                for (size_t faceId = 0; faceId < cutNormals.size(); ++faceId)
+                {
+                    if (cutNormals[faceId].dot(obstacle) >
+                        cutOffsets[faceId] + kTolerance)
+                    {
+                        alreadyExcluded = true;
+                        break;
+                    }
+                }
+                if (alreadyExcluded)
+                {
+                    continue;
+                }
+
+                int nearestSampleId = -1;
+                double nearestDistance =
+                    std::numeric_limits<double>::infinity();
+                for (int sampleId = 0; sampleId < trajSamples.cols();
+                     ++sampleId)
+                {
+                    const double distance =
+                        (obstacle - trajSamples.col(sampleId)).squaredNorm();
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        nearestSampleId = sampleId;
+                    }
+                }
+                if (nearestSampleId < 0 || nearestDistance <= 1.0e-12)
+                {
+                    failureReason =
+                        FailureReason::OBSTACLE_SEPARATION_FAILURE;
+                    return false;
+                }
+
+                const Eigen::Vector3d normal =
+                    (obstacle - trajSamples.col(nearestSampleId)).normalized();
+                const double offset =
+                    normal.dot(obstacle) - param.safety_margin;
+                double sampleSupport =
+                    -std::numeric_limits<double>::infinity();
+                for (int sampleId = 0; sampleId < trajSamples.cols();
+                     ++sampleId)
+                {
+                    sampleSupport = std::max(
+                        sampleSupport,
+                        normal.dot(trajSamples.col(sampleId)));
+                }
+                if (sampleSupport + requiredSampleSlack >
+                    offset + kTolerance)
+                {
+                    failureReason =
+                        FailureReason::OBSTACLE_SEPARATION_FAILURE;
+                    return false;
+                }
+
+                int mergeId = -1;
+                for (size_t faceId = 0; faceId < cutNormals.size(); ++faceId)
+                {
+                    if (cutNormals[faceId].dot(normal) >=
+                        kNormalMergeCosine)
+                    {
+                        mergeId = static_cast<int>(faceId);
+                        break;
+                    }
+                }
+                if (mergeId >= 0)
+                {
+                    const double mergedOffset =
+                        std::min(cutOffsets[mergeId], offset);
+                    double mergedSupport =
+                        -std::numeric_limits<double>::infinity();
+                    for (int sampleId = 0;
+                         sampleId < trajSamples.cols(); ++sampleId)
+                    {
+                        mergedSupport = std::max(
+                            mergedSupport,
+                            cutNormals[mergeId].dot(
+                                trajSamples.col(sampleId)));
+                    }
+                    if (mergedSupport + requiredSampleSlack >
+                        mergedOffset + kTolerance)
+                    {
+                        failureReason =
+                            FailureReason::OBSTACLE_SEPARATION_FAILURE;
+                        return false;
+                    }
+                    cutOffsets[mergeId] = mergedOffset;
+                }
+                else
+                {
+                    if (static_cast<int>(cutNormals.size()) >=
+                        faceCapacity)
+                    {
+                        faceBudgetSaturated = true;
+                        failureReason =
+                            FailureReason::FACE_BUDGET_EXHAUSTED;
+                        return false;
+                    }
+                    cutNormals.push_back(normal);
+                    cutOffsets.push_back(offset);
+                }
+            }
+
+            hpoly.conservativeResize(
+                6 + static_cast<int>(cutNormals.size()), 4);
+            for (size_t faceId = 0; faceId < cutNormals.size(); ++faceId)
+            {
+                hpoly.row(6 + static_cast<int>(faceId)).head<3>() =
+                    cutNormals[faceId].transpose();
+                hpoly(6 + static_cast<int>(faceId), 3) =
+                    -cutOffsets[faceId];
+            }
+
+            for (int sampleId = 0; sampleId < trajSamples.cols();
+                 ++sampleId)
+            {
+                if ((hpoly.leftCols<3>() * trajSamples.col(sampleId) +
+                     hpoly.rightCols<1>()).maxCoeff() > kTolerance)
+                {
+                    failureReason =
+                        FailureReason::OBSTACLE_SEPARATION_FAILURE;
+                    return false;
+                }
+            }
+            for (const int obstacleId : candidateObstacleIds)
+            {
+                if ((hpoly.leftCols<3>() *
+                         obstaclePoints.col(obstacleId) +
+                     hpoly.rightCols<1>()).maxCoeff() <= kTolerance)
+                {
+                    faceBudgetSaturated =
+                        static_cast<int>(cutNormals.size()) >=
+                        faceCapacity;
+                    failureReason = faceBudgetSaturated
+                                        ? FailureReason::FACE_BUDGET_EXHAUSTED
+                                        : FailureReason::OBSTACLE_SEPARATION_FAILURE;
+                    return false;
+                }
+            }
+
+            obstacleFaceNum = static_cast<int>(cutNormals.size());
+            faceBudgetSaturated = obstacleFaceNum >= faceCapacity;
+            return true;
+        }
+
     } // namespace detail
 
     inline bool contains(const Eigen::MatrixX4d &hpoly,
@@ -373,7 +622,8 @@ namespace tf_sfc
         const auto started = std::chrono::steady_clock::now();
         corridor = Corridor();
         if (trajSamples.cols() < 2 || param.max_faces < 6 ||
-            param.safety_margin < 0.0 || param.inflation_step <= 0.0 ||
+            param.max_obs_faces < 0 || param.safety_margin < 0.0 ||
+            param.inflation_step <= 0.0 ||
             param.max_inflation_distance < 0.0)
         {
             corridor.failure_reason = FailureReason::INVALID_INPUT;
@@ -393,21 +643,25 @@ namespace tf_sfc
 
         const Eigen::Vector3d anchor = trajSamples.rowwise().mean();
         const Eigen::Matrix3Xd localSamples =
-            (frame.transpose() * trajSamples).colwise() - frame.transpose() * anchor;
+            (frame.transpose() * trajSamples).colwise() -
+            frame.transpose() * anchor;
         Eigen::Vector3d lower = localSamples.rowwise().minCoeff();
         Eigen::Vector3d upper = localSamples.rowwise().maxCoeff();
         lower.array() -= param.safety_margin;
         upper.array() += param.safety_margin;
 
-        Eigen::MatrixX4d hpoly = detail::boundsToHPoly(anchor, frame, lower, upper);
-        if (!detail::insideBoundary(boundary, anchor, frame, lower, upper))
+        Eigen::MatrixX4d acceptedHpoly;
+        int acceptedObstacleFaces = 0;
+        int acceptedObstaclePoints = 0;
+        bool acceptedBudgetSaturated = false;
+        FailureReason candidateFailure = FailureReason::NONE;
+        if (!detail::buildFaceBoundedCandidate(
+                boundary, obstaclePoints, trajSamples, anchor, frame,
+                lower, upper, param, acceptedHpoly,
+                acceptedObstacleFaces, acceptedObstaclePoints,
+                acceptedBudgetSaturated, candidateFailure))
         {
-            corridor.failure_reason = FailureReason::OUTSIDE_BOUNDARY;
-            return false;
-        }
-        if (!detail::excludesObstacles(hpoly, obstaclePoints))
-        {
-            corridor.failure_reason = FailureReason::INITIAL_OBB_OCCUPIED;
+            corridor.failure_reason = candidateFailure;
             return false;
         }
 
@@ -434,37 +688,58 @@ namespace tf_sfc
                     {
                         candidateUpper(axis) += param.inflation_step;
                     }
-                    const Eigen::MatrixX4d candidate =
-                        detail::boundsToHPoly(anchor, frame,
-                                              candidateLower, candidateUpper);
-                    if (!detail::insideBoundary(boundary, anchor, frame,
-                                                candidateLower, candidateUpper) ||
-                        !detail::excludesObstacles(candidate, obstaclePoints))
+
+                    Eigen::MatrixX4d candidateHpoly;
+                    int candidateObstacleFaces = 0;
+                    int candidateObstaclePoints = 0;
+                    bool candidateBudgetSaturated = false;
+                    FailureReason expansionFailure =
+                        FailureReason::NONE;
+                    if (!detail::buildFaceBoundedCandidate(
+                            boundary, obstaclePoints, trajSamples,
+                            anchor, frame, candidateLower,
+                            candidateUpper, param, candidateHpoly,
+                            candidateObstacleFaces,
+                            candidateObstaclePoints,
+                            candidateBudgetSaturated,
+                            expansionFailure))
                     {
                         break;
                     }
+
                     lower = candidateLower;
                     upper = candidateUpper;
-                    hpoly = candidate;
+                    acceptedHpoly = candidateHpoly;
+                    acceptedObstacleFaces = candidateObstacleFaces;
+                    acceptedObstaclePoints = candidateObstaclePoints;
+                    acceptedBudgetSaturated =
+                        candidateBudgetSaturated;
                     expanded += param.inflation_step;
                 }
             }
         }
 
-        corridor.hpoly = hpoly;
+        corridor.hpoly = acceptedHpoly;
         corridor.center = anchor + frame * (0.5 * (lower + upper));
         corridor.frame = frame;
         corridor.utility = utility;
-        corridor.face_num = hpoly.rows();
+        corridor.face_num = acceptedHpoly.rows();
+        corridor.obstacle_face_num = acceptedObstacleFaces;
+        corridor.obstacle_point_num = acceptedObstaclePoints;
+        corridor.face_budget_saturated = acceptedBudgetSaturated;
         corridor.weighted_width =
             utility.dot((upper - lower).array().square().matrix());
-        corridor.min_sample_slack = std::numeric_limits<double>::infinity();
+        corridor.min_sample_slack =
+            std::numeric_limits<double>::infinity();
         for (int i = 0; i < trajSamples.cols(); ++i)
         {
             corridor.min_sample_slack =
                 std::min(corridor.min_sample_slack,
-                         detail::pointSlack(hpoly, trajSamples.col(i)));
+                         detail::pointSlack(acceptedHpoly,
+                                            trajSamples.col(i)));
         }
+        corridor.anchor_clearance_radius =
+            detail::pointSlack(acceptedHpoly, anchor);
         corridor.direction_fallback = usedFallback;
         corridor.valid = true;
         corridor.failure_reason = FailureReason::NONE;
