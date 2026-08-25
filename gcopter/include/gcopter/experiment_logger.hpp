@@ -130,7 +130,7 @@ namespace gcopter_experiment
                 return false;
             }
 
-            const std::string path = directory_ + "/gcopter_runs_v5.csv";
+            const std::string path = directory_ + "/gcopter_runs_v6.csv";
             const bool header = fileNeedsHeader(path);
             std::ofstream output(path, std::ios::out | std::ios::app);
             if (!output)
@@ -152,7 +152,7 @@ namespace gcopter_experiment
                           "max_corridor_violation_initial_m,max_corridor_violation_final_m\n";
             }
             output << std::setprecision(17)
-                   << 5 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                   << 6 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                    << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                    << csv(record.method) << ',' << record.fallback_used << ','
                    << csv(record.status) << ',' << record.success << ','
@@ -184,7 +184,7 @@ namespace gcopter_experiment
                 return true;
             }
 
-            const std::string corridorPath = directory_ + "/gcopter_corridors_v5.csv";
+            const std::string corridorPath = directory_ + "/gcopter_corridors_v6.csv";
             const bool corridorHeader = fileNeedsHeader(corridorPath);
             std::ofstream corridorOutput(corridorPath, std::ios::out | std::ios::app);
             if (!corridorOutput)
@@ -194,18 +194,23 @@ namespace gcopter_experiment
             if (corridorHeader)
             {
                 corridorOutput << "schema_version,run_id,timestamp_s,experiment_tag,requested_method,"
-                                  "method,piece_id,face_count,generation_time_ms,weighted_width,"
-                                  "min_sample_slack,overlap_radius_to_next,valid,direction_fallback,"
-                                  "failure_reason\n";
+                                  "method,piece_id,face_count,obstacle_face_count,obstacle_point_count,"
+                                  "face_budget_saturated,generation_time_ms,weighted_width,"
+                                  "min_sample_slack,anchor_clearance_radius,overlap_radius_to_next,"
+                                  "valid,direction_fallback,failure_reason\n";
             }
             corridorOutput << std::setprecision(17);
             for (const CorridorRecord &corridor : corridors)
             {
-                corridorOutput << 5 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                corridorOutput << 6 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                                << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                                << csv(record.method) << ',' << corridor.piece_id << ','
-                               << corridor.face_count << ',' << corridor.generation_time_ms << ','
+                               << corridor.face_count << ',' << corridor.obstacle_face_count << ','
+                               << corridor.obstacle_point_count << ','
+                               << corridor.face_budget_saturated << ','
+                               << corridor.generation_time_ms << ','
                                << corridor.weighted_width << ',' << corridor.min_sample_slack << ','
+                               << corridor.anchor_clearance_radius << ','
                                << corridor.overlap_radius_to_next << ',' << corridor.valid << ','
                                << corridor.direction_fallback << ',' << csv(corridor.failure_reason) << '\n';
             }
