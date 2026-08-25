@@ -27,6 +27,7 @@
 
 #include <Eigen/Eigen>
 #include <Eigen/Eigenvalues>
+#include <Eigen/StdVector>
 
 #include <algorithm>
 #include <array>
