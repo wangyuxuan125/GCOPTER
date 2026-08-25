@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace tf_sfc
 {
