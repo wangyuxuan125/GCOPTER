@@ -8,6 +8,8 @@
   <arg name="allow_corridor_fallback" default="false"/>
   <arg name="tf_sfc_direction_mode" default="1"/>
   <arg name="tf_sfc_samples_per_segment" default="5"/>
+  <arg name="tf_sfc_max_faces" default="12"/>
+  <arg name="tf_sfc_max_obs_faces" default="6"/>
   <arg name="tf_sfc_safety_margin" default="0.05"/>
   <arg name="tf_sfc_max_inflation_distance" default="1.0"/>
   <arg name="tf_sfc_inflation_step" default="0.10"/>
@@ -52,6 +54,8 @@
   <param name="Corridor/AllowFallback" value="$(arg allow_corridor_fallback)" type="bool"/>
   <param name="TfSfc/DirectionMode" value="$(arg tf_sfc_direction_mode)" type="int"/>
   <param name="TfSfc/SamplesPerSegment" value="$(arg tf_sfc_samples_per_segment)" type="int"/>
+  <param name="TfSfc/MaxFaces" value="$(arg tf_sfc_max_faces)" type="int"/>
+  <param name="TfSfc/MaxObsFaces" value="$(arg tf_sfc_max_obs_faces)" type="int"/>
   <param name="TfSfc/SafetyMargin" value="$(arg tf_sfc_safety_margin)" type="double"/>
   <param name="TfSfc/MaxInflationDistance" value="$(arg tf_sfc_max_inflation_distance)" type="double"/>
   <param name="TfSfc/InflationStep" value="$(arg tf_sfc_inflation_step)" type="double"/>
