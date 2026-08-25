@@ -45,8 +45,8 @@ roslaunch gcopter global_planning.launch \
   allow_corridor_fallback:=false experiment_tag:=liu_seed42
 ```
 
-Schema v5 writes `gcopter_runs_v5.csv` and
-`gcopter_corridors_v5.csv`. It records obstacle-plane count, obstacle points
+Schema v6 writes `gcopter_runs_v6.csv` and
+`gcopter_corridors_v6.csv`. It records obstacle-plane count, obstacle points
 considered, face-budget saturation and anchor clearance in addition to timing,
 face count, overlap and optimizer diagnostics.
 
@@ -60,3 +60,11 @@ Do not directly compare EGO and GCOPTER success rates while they use different
 map generators or start/goal sets. Cross-planner tables require a shared
 point-cloud/route replay dataset; until that replay path is implemented, report
 within-planner results and use GCOPTER only for corridor/optimizer ablations.
+
+
+## v6 logging correction
+
+The first v5 run proved the geometry and optimization path succeeded, but its
+corridor CSV retained the old column layout. Schema v6 writes the already
+computed `obstacle_face_count`, `obstacle_point_count`,
+`face_budget_saturated` and `anchor_clearance_radius` fields explicitly.
