@@ -67,9 +67,13 @@ namespace gcopter_experiment
     {
         int piece_id = -1;
         int face_count = 0;
+        int obstacle_face_count = 0;
+        int obstacle_point_count = 0;
+        bool face_budget_saturated = false;
         double generation_time_ms = 0.0;
         double weighted_width = 0.0;
         double min_sample_slack = 0.0;
+        double anchor_clearance_radius = 0.0;
         double overlap_radius_to_next = -1.0;
         bool valid = false;
         bool direction_fallback = false;
@@ -126,7 +130,7 @@ namespace gcopter_experiment
                 return false;
             }
 
-            const std::string path = directory_ + "/gcopter_runs_v4.csv";
+            const std::string path = directory_ + "/gcopter_runs_v5.csv";
             const bool header = fileNeedsHeader(path);
             std::ofstream output(path, std::ios::out | std::ios::app);
             if (!output)
@@ -148,7 +152,7 @@ namespace gcopter_experiment
                           "max_corridor_violation_initial_m,max_corridor_violation_final_m\n";
             }
             output << std::setprecision(17)
-                   << 4 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                   << 5 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                    << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                    << csv(record.method) << ',' << record.fallback_used << ','
                    << csv(record.status) << ',' << record.success << ','
@@ -180,7 +184,7 @@ namespace gcopter_experiment
                 return true;
             }
 
-            const std::string corridorPath = directory_ + "/gcopter_corridors_v4.csv";
+            const std::string corridorPath = directory_ + "/gcopter_corridors_v5.csv";
             const bool corridorHeader = fileNeedsHeader(corridorPath);
             std::ofstream corridorOutput(corridorPath, std::ios::out | std::ios::app);
             if (!corridorOutput)
@@ -197,7 +201,7 @@ namespace gcopter_experiment
             corridorOutput << std::setprecision(17);
             for (const CorridorRecord &corridor : corridors)
             {
-                corridorOutput << 4 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                corridorOutput << 5 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                                << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                                << csv(record.method) << ',' << corridor.piece_id << ','
                                << corridor.face_count << ',' << corridor.generation_time_ms << ','
