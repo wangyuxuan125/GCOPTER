@@ -61,6 +61,8 @@ struct Config
     bool allowCorridorFallback;
     int tfSfcDirectionMode;
     int tfSfcSamplesPerSegment;
+    int tfSfcMaxFaces;
+    int tfSfcMaxObsFaces;
     double tfSfcSafetyMargin;
     double tfSfcMaxInflationDistance;
     double tfSfcInflationStep;
@@ -105,6 +107,8 @@ struct Config
         nh_priv.param("Corridor/AllowFallback", allowCorridorFallback, false);
         nh_priv.param("TfSfc/DirectionMode", tfSfcDirectionMode, 1);
         nh_priv.param("TfSfc/SamplesPerSegment", tfSfcSamplesPerSegment, 5);
+        nh_priv.param("TfSfc/MaxFaces", tfSfcMaxFaces, 12);
+        nh_priv.param("TfSfc/MaxObsFaces", tfSfcMaxObsFaces, 6);
         nh_priv.param("TfSfc/SafetyMargin", tfSfcSafetyMargin, 0.05);
         nh_priv.param("TfSfc/MaxInflationDistance", tfSfcMaxInflationDistance, 1.0);
         nh_priv.param("TfSfc/InflationStep", tfSfcInflationStep, 0.10);
@@ -456,9 +460,10 @@ public:
                     corridorOk = true;
                 }
             }
-            else if (config.corridorMethod == "tf_sfc")
+            else if (config.corridorMethod == "tf_sfc" ||
+                     config.corridorMethod == "obb")
             {
-                record.method = "tf_sfc";
+                record.method = config.corridorMethod;
                 Eigen::Matrix<double, 6, 4> boundary =
                     Eigen::Matrix<double, 6, 4>::Zero();
                 const Eigen::Vector3d low = voxelMap.getOrigin();
@@ -473,10 +478,18 @@ public:
                 tf_sfc::Parameters parameters;
                 parameters.direction_mode = static_cast<tf_sfc::DirectionMode>(
                     std::max(0, std::min(config.tfSfcDirectionMode, 2)));
+                parameters.max_faces = std::max(config.tfSfcMaxFaces, 6);
+                parameters.max_obs_faces =
+                    std::max(0, std::min(config.tfSfcMaxObsFaces,
+                                         parameters.max_faces - 6));
+                parameters.enable_obstacle_planes =
+                    config.corridorMethod == "tf_sfc";
                 parameters.safety_margin = std::max(config.tfSfcSafetyMargin, 0.0);
                 parameters.max_inflation_distance =
                     std::max(config.tfSfcMaxInflationDistance, 0.0);
                 parameters.inflation_step = std::max(config.tfSfcInflationStep, 1.0e-3);
+                parameters.min_overlap_radius =
+                    std::max(config.tfSfcMinOverlapRadius, 0.0);
 
                 const int sampleCount = std::max(config.tfSfcSamplesPerSegment, 2);
                 const double obstacleRange = parameters.safety_margin +
@@ -550,12 +563,20 @@ public:
                     gcopter_experiment::CorridorRecord corridorRecord;
                     corridorRecord.piece_id = pieceId;
                     corridorRecord.face_count = corridor.face_num;
+                    corridorRecord.obstacle_face_count =
+                        corridor.obstacle_face_num;
+                    corridorRecord.obstacle_point_count =
+                        corridor.obstacle_point_num;
+                    corridorRecord.face_budget_saturated =
+                        corridor.face_budget_saturated;
                     corridorRecord.generation_time_ms =
                         std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - pieceStarted)
                             .count();
                     corridorRecord.weighted_width = corridor.weighted_width;
                     corridorRecord.min_sample_slack = corridor.min_sample_slack;
+                    corridorRecord.anchor_clearance_radius =
+                        corridor.anchor_clearance_radius;
                     corridorRecord.valid = generated;
                     corridorRecord.direction_fallback = corridor.direction_fallback;
                     corridorRecord.failure_reason =
@@ -618,7 +639,8 @@ public:
                                           static_cast<double>(hPolys.size());
             if (!corridorOk)
             {
-                finishRecord(config.corridorMethod == "tf_sfc"
+                finishRecord((config.corridorMethod == "tf_sfc" ||
+                              config.corridorMethod == "obb")
                                  ? "tf_sfc_generation_failure"
                                  : (config.corridorMethod == "ellipsoid_decomp"
                                       ? "ellipsoid_decomp_generation_failure"
