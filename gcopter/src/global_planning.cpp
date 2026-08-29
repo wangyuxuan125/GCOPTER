@@ -27,6 +27,7 @@
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <cstdint>
 #include <random>
 
 struct Config
@@ -57,6 +58,14 @@ struct Config
     std::string experimentLogDirectory;
     std::string experimentTag;
     int mapSeed;
+    int routeSeed;
+    bool fixedStartGoalEnabled;
+    double fixedStartX;
+    double fixedStartY;
+    double fixedStartZ;
+    double fixedGoalX;
+    double fixedGoalY;
+    double fixedGoalZ;
     std::string corridorMethod;
     bool allowCorridorFallback;
     int tfSfcDirectionMode;
@@ -108,6 +117,14 @@ struct Config
                                    "/tmp/tf_sfc_results/gcopter");
         nh_priv.param<std::string>("Experiment/Tag", experimentTag, "default");
         nh_priv.param("Experiment/MapSeed", mapSeed, 1024);
+        nh_priv.param("Experiment/RouteSeed", routeSeed, 0);
+        nh_priv.param("Experiment/FixedStartGoalEnabled", fixedStartGoalEnabled, false);
+        nh_priv.param("Experiment/FixedStartX", fixedStartX, -15.0);
+        nh_priv.param("Experiment/FixedStartY", fixedStartY, -9.0);
+        nh_priv.param("Experiment/FixedStartZ", fixedStartZ, 0.5);
+        nh_priv.param("Experiment/FixedGoalX", fixedGoalX, 15.0);
+        nh_priv.param("Experiment/FixedGoalY", fixedGoalY, 9.0);
+        nh_priv.param("Experiment/FixedGoalZ", fixedGoalZ, 1.0);
         nh_priv.param<std::string>("Corridor/Method", corridorMethod, "firi");
         nh_priv.param("Corridor/AllowFallback", allowCorridorFallback, false);
         nh_priv.param("TfSfc/DirectionMode", tfSfcDirectionMode, 1);
@@ -142,6 +159,7 @@ private:
     ros::Subscriber targetSub;
 
     bool mapInitialized;
+    bool fixedPlanTriggered;
     voxel_map::VoxelMap voxelMap;
     Visualizer visualizer;
     std::vector<Eigen::Vector3d> startGoal;
@@ -156,6 +174,7 @@ public:
         : config(conf),
           nh(nh_),
           mapInitialized(false),
+          fixedPlanTriggered(false),
           visualizer(nh),
           experimentLogger(config.experimentLogEnabled,
                            config.experimentLogDirectory,
@@ -201,6 +220,27 @@ public:
             voxelMap.dilate(std::ceil(config.dilateRadius / voxelMap.getScale()));
 
             mapInitialized = true;
+            if (config.fixedStartGoalEnabled && !fixedPlanTriggered)
+            {
+                fixedPlanTriggered = true;
+                const Eigen::Vector3d start(config.fixedStartX,
+                                            config.fixedStartY,
+                                            config.fixedStartZ);
+                const Eigen::Vector3d goal(config.fixedGoalX,
+                                           config.fixedGoalY,
+                                           config.fixedGoalZ);
+                if (voxelMap.query(start) != 0 || voxelMap.query(goal) != 0)
+                {
+                    ROS_ERROR("Fixed experiment start or goal is occupied after dilation.");
+                    return;
+                }
+                startGoal.clear();
+                startGoal.push_back(start);
+                startGoal.push_back(goal);
+                visualizer.visualizeStartGoal(start, 0.5, 0);
+                visualizer.visualizeStartGoal(goal, 0.5, 1);
+                plan();
+            }
         }
     }
 
@@ -217,6 +257,8 @@ public:
             record.method = config.corridorMethod;
             record.timestamp_s = ros::Time::now().toSec();
             record.map_seed = config.mapSeed;
+            record.route_seed = config.routeSeed;
+            record.fixed_start_goal = config.fixedStartGoalEnabled;
             record.start_x = startGoal[0].x();
             record.start_y = startGoal[0].y();
             record.start_z = startGoal[0].z();
@@ -252,8 +294,10 @@ public:
                                                    startGoal[1],
                                                    voxelMap.getOrigin(),
                                                    voxelMap.getCorner(),
-                                                   &voxelMap, 0.01,
-                                                   route);
+                                                   &voxelMap, config.timeoutRRT,
+                                                   route,
+                                                   static_cast<std::uint_fast32_t>(
+                                                       std::max(config.routeSeed, 0)));
             record.path_search_ms =
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - pathStarted)
@@ -324,6 +368,8 @@ public:
                         corridorRecord.face_count = failure.face_count;
                         corridorRecord.face_budget_saturated =
                             failure.face_budget_saturated;
+                        corridorRecord.face_budget_excess =
+                            std::max(0, failure.face_count - options.max_faces);
                         corridorRecord.directional_radius_m =
                             failure.directional_radius;
                         corridorRecord.directional_width_weight =
@@ -350,6 +396,8 @@ public:
                     corridorRecord.face_count = hPolys[i].rows();
                     corridorRecord.face_budget_saturated =
                         infos[i].face_budget_saturated;
+                    corridorRecord.face_budget_excess =
+                        std::max(0, hPolys[i].rows() - options.max_faces);
                     corridorRecord.generation_time_ms =
                         generationMs / static_cast<double>(hPolys.size());
                     corridorRecord.weighted_width =
@@ -885,6 +933,10 @@ public:
 
     inline void targetCallBack(const geometry_msgs::PoseStamped::ConstPtr &msg)
     {
+        if (config.fixedStartGoalEnabled)
+        {
+            return;
+        }
         if (mapInitialized)
         {
             if (startGoal.size() >= 2)

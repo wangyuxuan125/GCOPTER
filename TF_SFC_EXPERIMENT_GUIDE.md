@@ -65,6 +65,10 @@ TF-FIRI 核心第一阶段（严格禁止回退）：
 ```bash
 roslaunch gcopter global_planning.launch \
   map_seed:=42 \
+  route_seed:=42 \
+  fixed_start_goal_enabled:=true \
+  fixed_start_x:=-15 fixed_start_y:=-9 fixed_start_z:=0.5 \
+  fixed_goal_x:=15 fixed_goal_y:=9 fixed_goal_z:=1.0 \
   corridor_method:=tf_firi \
   allow_corridor_fallback:=false \
   tf_firi_max_faces:=12 \
@@ -74,7 +78,7 @@ roslaunch gcopter global_planning.launch \
   experiment_log_directory:=$HOME/tf_sfc_results/gcopter
 ```
 
-这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。
+这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。GCOPTER 默认膨胀半径为 0.5 m，因此固定场景起点 z 使用 0.5 m；EGO 的 z=0.1 m 在该地图边界下无效。
 
 TF-SFC 六面 OBB（严格禁止回退）：
 
@@ -122,8 +126,8 @@ roslaunch gcopter global_planning.launch experiment_log_enabled:=false
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/gcopter/gcopter_runs_v7.csv
-$HOME/tf_sfc_results/gcopter/gcopter_corridors_v7.csv
+$HOME/tf_sfc_results/gcopter/gcopter_runs_v8.csv
+$HOME/tf_sfc_results/gcopter/gcopter_corridors_v8.csv
 ```
 
 每次有效的起终点规划请求写入一行，包含：
@@ -144,12 +148,12 @@ corridor_penalty_cost_initial, corridor_penalty_cost_final,
 max_corridor_violation_initial_m, max_corridor_violation_final_m
 ```
 
-`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v7 还记录 `directional_radius_m`、`directional_width_weight` 与 `face_count_weight`。文件使用追加模式。
+`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v8 还记录 `route_seed`、`fixed_start_goal`、`directional_radius_m`、`directional_width_weight`、`face_count_weight` 与 `face_budget_excess`。预算失败时 `face_count` 是完整安全候选实际所需面数，不再固定显示为 13。文件使用追加模式。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v7.csv
+head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v8.csv
 ```
 
 ## 4. 与 EGO/TF-SFC 对比时的口径
@@ -159,7 +163,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v7.csv
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。
 - 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi`、`method=tf_firi`、`method=tf_sfc` 和 `method=ellipsoid_decomp`；失败请求也必须保留在成功率分母中。
-- v7 日志保留走廊约束 piece 数、优化前后走廊惩罚和最大走廊越界量，并记录地图 seed、精确起终点、地图分辨率/膨胀、关键动力学参数及 TF-FIRI 质量权重。它们用于证明 H-polytope 实际参与 GCOPTER 优化，并检查跨方法样本是否使用相同实验条件。
+- v8 日志保留走廊约束 piece 数、优化前后走廊惩罚和最大走廊越界量，并记录地图/路径 seed、精确起终点、地图分辨率/膨胀、关键动力学参数及 TF-FIRI 质量权重。它们用于证明 H-polytope 实际参与 GCOPTER 优化，并检查跨方法样本是否使用相同实验条件。
 - GCOPTER 当前的 `success=1` 表示优化器返回有限目标值和非空轨迹；它不是飞行器实际到达目标的 mission success，也不是连续时间无碰撞证书。
 
 论文最终实验前还需要完成的项目见 [ICRA_EXPERIMENT_READINESS.md](ICRA_EXPERIMENT_READINESS.md)。
@@ -176,7 +180,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v7.csv
 ## 6. 快速统计
 
 ```bash
-python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v7.csv <<'PY'
+python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v8.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

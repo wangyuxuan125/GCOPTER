@@ -57,8 +57,8 @@ roslaunch gcopter global_planning.launch \
   allow_corridor_fallback:=false experiment_tag:=liu_seed42
 ```
 
-Schema v7 writes `gcopter_runs_v7.csv` and
-`gcopter_corridors_v7.csv`. It records obstacle-plane count, obstacle points
+Schema v8 writes `gcopter_runs_v8.csv` and
+`gcopter_corridors_v8.csv`. It records obstacle-plane count, obstacle points
 considered, face-budget saturation and anchor clearance in addition to timing,
 face count, overlap and optimizer diagnostics. For `tf_firi`, it additionally
 records the achieved directional ellipsoid radius, its configured weight, and
@@ -69,6 +69,21 @@ proxy. It directly addresses FIRI's high-velocity/perpendicular-inflation failur
 mode, but it must not be described as MINCO sensitivity. A later bounded second
 pass will replace this proxy with directions computed from the initialized MINCO
 trajectory while retaining the same route and optimizer.
+
+For paired runs, enable the fixed start/goal interface and use the same map and
+OMPL route seeds. The default GCOPTER dilation is 0.5 m, so the paper scenario
+uses start z=0.5 m rather than EGO's z=0.1 m:
+
+```bash
+fixed_start_goal_enabled:=true map_seed:=42 route_seed:=42 \
+fixed_start_x:=-15 fixed_start_y:=-9 fixed_start_z:=0.5 \
+fixed_goal_x:=15 fixed_goal_y:=9 fixed_goal_z:=1.0
+```
+
+Schema v8 completes a safe TF-FIRI polytope before enforcing `MaxFaces`.
+On failure, `face_count` is therefore the actual required count and
+`face_budget_excess` is its excess over the requested cap, rather than the
+constant first rejected value (`13`) produced by schema v7.
 
 Use the same 30 fixed seeds, start/goal pairs, map resolution, dilation,
 dynamics and timeout for every method. Run the 6/0, 8/2, 10/4 and 12/6

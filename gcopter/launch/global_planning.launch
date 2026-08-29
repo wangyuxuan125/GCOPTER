@@ -4,6 +4,14 @@
   <arg name="experiment_log_directory" default="$(env HOME)/tf_sfc_results/gcopter"/>
   <arg name="experiment_tag" default="default"/>
   <arg name="map_seed" default="1024"/>
+  <arg name="route_seed" default="0"/>
+  <arg name="fixed_start_goal_enabled" default="false"/>
+  <arg name="fixed_start_x" default="-15.0"/>
+  <arg name="fixed_start_y" default="-9.0"/>
+  <arg name="fixed_start_z" default="0.5"/>
+  <arg name="fixed_goal_x" default="15.0"/>
+  <arg name="fixed_goal_y" default="9.0"/>
+  <arg name="fixed_goal_z" default="1.0"/>
   <arg name="corridor_method" default="firi"/>
   <arg name="allow_corridor_fallback" default="false"/>
   <arg name="tf_sfc_direction_mode" default="1"/>
@@ -55,6 +63,14 @@
   <param name="Experiment/LogDirectory" value="$(arg experiment_log_directory)" type="string"/>
   <param name="Experiment/Tag" value="$(arg experiment_tag)" type="string"/>
   <param name="Experiment/MapSeed" value="$(arg map_seed)" type="int"/>
+  <param name="Experiment/RouteSeed" value="$(arg route_seed)" type="int"/>
+  <param name="Experiment/FixedStartGoalEnabled" value="$(arg fixed_start_goal_enabled)" type="bool"/>
+  <param name="Experiment/FixedStartX" value="$(arg fixed_start_x)" type="double"/>
+  <param name="Experiment/FixedStartY" value="$(arg fixed_start_y)" type="double"/>
+  <param name="Experiment/FixedStartZ" value="$(arg fixed_start_z)" type="double"/>
+  <param name="Experiment/FixedGoalX" value="$(arg fixed_goal_x)" type="double"/>
+  <param name="Experiment/FixedGoalY" value="$(arg fixed_goal_y)" type="double"/>
+  <param name="Experiment/FixedGoalZ" value="$(arg fixed_goal_z)" type="double"/>
   <param name="Corridor/Method" value="$(arg corridor_method)" type="string"/>
   <param name="Corridor/AllowFallback" value="$(arg allow_corridor_fallback)" type="bool"/>
   <param name="TfSfc/DirectionMode" value="$(arg tf_sfc_direction_mode)" type="int"/>

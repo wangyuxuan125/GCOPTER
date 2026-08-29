@@ -29,6 +29,7 @@
 #include "firi.hpp"
 
 #include <ompl/util/Console.h>
+#include <ompl/util/RandomNumbers.h>
 #include <ompl/base/SpaceInformation.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/geometric/planners/rrt/InformedRRTstar.h>
@@ -36,6 +37,7 @@
 #include <ompl/base/DiscreteMotionValidator.h>
 
 #include <deque>
+#include <cstdint>
 #include <memory>
 #include <Eigen/Eigen>
 
@@ -57,8 +59,13 @@ namespace sfc_gen
                            const Eigen::Vector3d &hb,
                            const Map *mapPtr,
                            const double &timeout,
-                           std::vector<Eigen::Vector3d> &p)
+                           std::vector<Eigen::Vector3d> &p,
+                           const std::uint_fast32_t routeSeed = 0)
     {
+        if (routeSeed != 0)
+        {
+            ompl::RNG::setSeed(routeSeed);
+        }
         auto space(std::make_shared<ompl::base::RealVectorStateSpace>(3));
 
         ompl::base::RealVectorBounds bounds(3);

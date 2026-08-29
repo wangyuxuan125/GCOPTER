@@ -495,15 +495,6 @@ namespace firi
                 }
                 selectObstaclePlane(pcMinId, minSqrR);
                 ++nH;
-                if (nH > maxFaces)
-                {
-                    if (tfDiagnostics != nullptr)
-                    {
-                        tfDiagnostics->face_count = nH;
-                        tfDiagnostics->face_budget_saturated = true;
-                    }
-                    return false;
-                }
             }
 
             hPoly.resize(nH, 4);
@@ -536,7 +527,10 @@ namespace firi
                                                     : 0.0;
         }
 
-        return true;
+        // Construct the complete safe polytope before enforcing the budget.
+        // Returning at max_faces + 1 hid the actual number of required faces
+        // and made every infeasible trial look identical in schema v7.
+        return hPoly.rows() <= maxFaces;
     }
 
 }

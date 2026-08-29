@@ -46,6 +46,15 @@ Experiment:
   LogEnabled:              true
   LogDirectory:            '/tmp/tf_sfc_results/gcopter'
   Tag:                     'default'
+  RouteSeed:               0
+  FixedStartGoalEnabled:   false
+  FixedStartX:             -15.0
+  FixedStartY:             -9.0
+  # z=0.5 matches the default dilated-map clearance; z=0.1 is invalid here.
+  FixedStartZ:             0.5
+  FixedGoalX:              15.0
+  FixedGoalY:              9.0
+  FixedGoalZ:              1.0
 
 Corridor:
   # firi | tf_firi | ellipsoid_decomp | obb | tf_sfc
