@@ -68,6 +68,11 @@ struct Config
     double tfSfcInflationStep;
     double tfSfcMinOverlapRadius;
     double tfSfcMaxSegmentLength;
+    int tfFiriMaxFaces;
+    double tfFiriDirectionalWidthWeight;
+    double tfFiriFaceCountWeight;
+    double tfFiriProgress;
+    double tfFiriRange;
     double decompLocalBBoxForward;
     double decompLocalBBoxLateral;
     double decompLocalBBoxVertical;
@@ -114,6 +119,11 @@ struct Config
         nh_priv.param("TfSfc/InflationStep", tfSfcInflationStep, 0.10);
         nh_priv.param("TfSfc/MinOverlapRadius", tfSfcMinOverlapRadius, 0.04);
         nh_priv.param("TfSfc/MaxSegmentLength", tfSfcMaxSegmentLength, 1.0);
+        nh_priv.param("TfFiri/MaxFaces", tfFiriMaxFaces, 12);
+        nh_priv.param("TfFiri/DirectionalWidthWeight", tfFiriDirectionalWidthWeight, 1.0);
+        nh_priv.param("TfFiri/FaceCountWeight", tfFiriFaceCountWeight, 0.25);
+        nh_priv.param("TfFiri/Progress", tfFiriProgress, 7.0);
+        nh_priv.param("TfFiri/Range", tfFiriRange, 3.0);
         nh_priv.param("Decomp/LocalBBoxForward", decompLocalBBoxForward, 0.5);
         nh_priv.param("Decomp/LocalBBoxLateral", decompLocalBBoxLateral, 3.0);
         nh_priv.param("Decomp/LocalBBoxVertical", decompLocalBBoxVertical, 3.0);
@@ -282,6 +292,102 @@ public:
                 }
             };
 
+            auto buildTfFiriCorridors = [&]() -> bool
+            {
+                firi::TrajectoryFavorableOptions options;
+                options.enabled = true;
+                options.directional_width_weight =
+                    std::max(0.0, config.tfFiriDirectionalWidthWeight);
+                options.face_count_weight =
+                    std::max(0.0, config.tfFiriFaceCountWeight);
+                options.max_faces = std::max(6, config.tfFiriMaxFaces);
+                std::vector<sfc_gen::TrajectoryFavorableFiriInfo> infos;
+                const auto tfFiriStarted = std::chrono::steady_clock::now();
+                const bool generated = sfc_gen::trajectoryFavorableConvexCover(
+                    route, pc, voxelMap.getOrigin(), voxelMap.getCorner(),
+                    std::max(config.tfFiriProgress, config.voxelWidth),
+                    std::max(config.tfFiriRange, config.voxelWidth),
+                    options, hPolys, infos);
+                const double generationMs =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - tfFiriStarted)
+                        .count();
+                corridorRecords.clear();
+                if (!generated)
+                {
+                    if (!infos.empty())
+                    {
+                        const sfc_gen::TrajectoryFavorableFiriInfo &failure =
+                            infos.back();
+                        gcopter_experiment::CorridorRecord corridorRecord;
+                        corridorRecord.piece_id = static_cast<int>(hPolys.size());
+                        corridorRecord.face_count = failure.face_count;
+                        corridorRecord.face_budget_saturated =
+                            failure.face_budget_saturated;
+                        corridorRecord.directional_radius_m =
+                            failure.directional_radius;
+                        corridorRecord.directional_width_weight =
+                            options.directional_width_weight;
+                        corridorRecord.face_count_weight =
+                            options.face_count_weight;
+                        corridorRecord.valid = false;
+                        corridorRecord.failure_reason =
+                            failure.face_budget_saturated
+                                ? "face_budget_exhausted"
+                                : "tf_firi_generation_failure";
+                        corridorRecords.push_back(corridorRecord);
+                    }
+                    return false;
+                }
+                if (hPolys.size() != infos.size())
+                {
+                    return false;
+                }
+                for (int i = 0; i < static_cast<int>(hPolys.size()); ++i)
+                {
+                    gcopter_experiment::CorridorRecord corridorRecord;
+                    corridorRecord.piece_id = i;
+                    corridorRecord.face_count = hPolys[i].rows();
+                    corridorRecord.face_budget_saturated =
+                        infos[i].face_budget_saturated;
+                    corridorRecord.generation_time_ms =
+                        generationMs / static_cast<double>(hPolys.size());
+                    corridorRecord.weighted_width =
+                        2.0 * infos[i].directional_radius;
+                    corridorRecord.directional_radius_m =
+                        infos[i].directional_radius;
+                    corridorRecord.directional_width_weight =
+                        options.directional_width_weight;
+                    corridorRecord.face_count_weight =
+                        options.face_count_weight;
+                    corridorRecord.valid = hPolys[i].allFinite() &&
+                                           hPolys[i].rows() <= options.max_faces;
+                    corridorRecord.failure_reason =
+                        corridorRecord.valid ? "none" : "face_budget_or_numeric_failure";
+                    if (!corridorRecord.valid)
+                    {
+                        corridorRecords.push_back(corridorRecord);
+                        return false;
+                    }
+                    if (i > 0)
+                    {
+                        const bool overlap = geo_utils::overlap(
+                            hPolys[i - 1], hPolys[i], 0.01);
+                        corridorRecords.back().overlap_radius_to_next =
+                            overlap ? 0.01 : 0.0;
+                        if (!overlap)
+                        {
+                            corridorRecord.valid = false;
+                            corridorRecord.failure_reason = "overlap_failure";
+                            corridorRecords.push_back(corridorRecord);
+                            return false;
+                        }
+                    }
+                    corridorRecords.push_back(corridorRecord);
+                }
+                return !hPolys.empty();
+            };
+
             auto buildEllipsoidDecompCorridors = [&]() -> bool
             {
 #ifdef GCOPTER_WITH_DECOMP_UTIL
@@ -446,6 +552,19 @@ public:
             {
                 record.method = "firi";
                 buildFiriCorridors();
+            }
+            else if (config.corridorMethod == "tf_firi")
+            {
+                record.method = "tf_firi";
+                corridorOk = buildTfFiriCorridors();
+                if (!corridorOk && config.allowCorridorFallback)
+                {
+                    record.fallback_used = true;
+                    record.method = "firi";
+                    hPolys.clear();
+                    buildFiriCorridors();
+                    corridorOk = true;
+                }
             }
             else if (config.corridorMethod == "ellipsoid_decomp")
             {
@@ -642,9 +761,11 @@ public:
                 finishRecord((config.corridorMethod == "tf_sfc" ||
                               config.corridorMethod == "obb")
                                  ? "tf_sfc_generation_failure"
-                                 : (config.corridorMethod == "ellipsoid_decomp"
+                                 : (config.corridorMethod == "tf_firi"
+                                      ? "tf_firi_generation_failure"
+                                      : (config.corridorMethod == "ellipsoid_decomp"
                                       ? "ellipsoid_decomp_generation_failure"
-                                      : "invalid_corridor_method"),
+                                      : "invalid_corridor_method")),
                              false);
                 return;
             }

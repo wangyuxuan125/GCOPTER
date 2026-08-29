@@ -18,6 +18,7 @@ All corridor methods feed the same `GCOPTER_PolytopeSFC` optimizer.
 | `corridor_method` | Meaning |
 |---|---|
 | `firi` | native GCOPTER FIRI |
+| `tf_firi` | native FIRI geometry with a trajectory-directional MVIE term and hard face budget |
 | `ellipsoid_decomp` | Liu et al. / DecompUtil |
 | `obb` | six-face trajectory-aligned OBB baseline |
 | `tf_sfc` | proposed trajectory-favorable, face-bounded obstacle-plane corridor |
@@ -33,6 +34,17 @@ roslaunch gcopter global_planning.launch \
   experiment_tag:=proposed_pca_f12_seed42
 ```
 
+TF-FIRI core-stage example (paired directly with native FIRI):
+
+```bash
+roslaunch gcopter global_planning.launch \
+  map_seed:=42 corridor_method:=tf_firi \
+  tf_firi_max_faces:=12 tf_firi_directional_width_weight:=1.0 \
+  tf_firi_face_count_weight:=0.25 \
+  allow_corridor_fallback:=false \
+  experiment_tag:=tf_firi_route_direction_f12_w1_seed42
+```
+
 OBB and Liu use the same seed and optimizer:
 
 ```bash
@@ -45,10 +57,18 @@ roslaunch gcopter global_planning.launch \
   allow_corridor_fallback:=false experiment_tag:=liu_seed42
 ```
 
-Schema v6 writes `gcopter_runs_v6.csv` and
-`gcopter_corridors_v6.csv`. It records obstacle-plane count, obstacle points
+Schema v7 writes `gcopter_runs_v7.csv` and
+`gcopter_corridors_v7.csv`. It records obstacle-plane count, obstacle points
 considered, face-budget saturation and anchor clearance in addition to timing,
-face count, overlap and optimizer diagnostics.
+face count, overlap and optimizer diagnostics. For `tf_firi`, it additionally
+records the achieved directional ellipsoid radius, its configured weight, and
+the face-count/coverage weight used by the obstacle-plane selector.
+
+The first TF-FIRI stage uses each shared RRT route segment as a velocity-direction
+proxy. It directly addresses FIRI's high-velocity/perpendicular-inflation failure
+mode, but it must not be described as MINCO sensitivity. A later bounded second
+pass will replace this proxy with directions computed from the initialized MINCO
+trajectory while retaining the same route and optimizer.
 
 Use the same 30 fixed seeds, start/goal pairs, map resolution, dilation,
 dynamics and timeout for every method. Run the 6/0, 8/2, 10/4 and 12/6

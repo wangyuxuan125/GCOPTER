@@ -42,6 +42,22 @@
 namespace firi
 {
 
+    struct TrajectoryFavorableOptions
+    {
+        bool enabled = false;
+        Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
+        double directional_width_weight = 0.0;
+        double face_count_weight = 0.0;
+        int max_faces = 0;
+    };
+
+    struct TrajectoryFavorableDiagnostics
+    {
+        int face_count = 0;
+        bool face_budget_saturated = false;
+        double directional_radius = 0.0;
+    };
+
     inline void chol3d(const Eigen::Matrix3d &A,
                        Eigen::Matrix3d &L)
     {
@@ -96,6 +112,8 @@ namespace firi
         const double smoothEps = *pSmoothEps;
         const double penaltyWt = *pPenaltyWt;
         Eigen::Map<const Eigen::MatrixX3d> A(pA, M, 3);
+        Eigen::Map<const Eigen::Vector3d> favorableDirection(pA + 3 * M);
+        const double favorableWeight = *(pA + 3 * M + 3);
         Eigen::Map<const Eigen::Vector3d> p(x.data());
         Eigen::Map<const Eigen::Vector3d> rtd(x.data() + 3);
         Eigen::Map<const Eigen::Vector3d> cde(x.data() + 6);
@@ -149,6 +167,26 @@ namespace firi
         gdrtd(1) -= 1.0 / L(1, 1);
         gdrtd(2) -= 1.0 / L(2, 2);
 
+        // Preserve free space along the application-favorable direction.  The
+        // original MVIE term maximizes volume only; this additional log-radius
+        // term makes two equal-volume ellipsoids distinguishable to the motion
+        // planner while remaining scale invariant.
+        if (favorableWeight > 0.0 && favorableDirection.squaredNorm() > DBL_EPSILON)
+        {
+            const Eigen::Vector3d direction = favorableDirection.normalized();
+            const Eigen::Vector3d projected = L.transpose() * direction;
+            const double squaredRadius = projected.squaredNorm() + DBL_EPSILON;
+            const Eigen::Matrix3d gradL =
+                -favorableWeight * direction * projected.transpose() / squaredRadius;
+            cost -= 0.5 * favorableWeight * log(squaredRadius);
+            gdrtd(0) += gradL(0, 0);
+            gdrtd(1) += gradL(1, 1);
+            gdrtd(2) += gradL(2, 2);
+            gdcde(0) += gradL(1, 0);
+            gdcde(1) += gradL(2, 1);
+            gdcde(2) += gradL(2, 0);
+        }
+
         gdrtd(0) *= 2.0 * rtd(0);
         gdrtd(1) *= 2.0 * rtd(1);
         gdrtd(2) *= 2.0 * rtd(2);
@@ -163,7 +201,9 @@ namespace firi
     inline bool maxVolInsEllipsoid(const Eigen::MatrixX4d &hPoly,
                                    Eigen::Matrix3d &R,
                                    Eigen::Vector3d &p,
-                                   Eigen::Vector3d &r)
+                                   Eigen::Vector3d &r,
+                                   const Eigen::Vector3d &favorableDirection = Eigen::Vector3d::Zero(),
+                                   const double favorableWeight = 0.0)
     {
         // Find the deepest interior point
         const int M = hPoly.rows();
@@ -184,16 +224,21 @@ namespace firi
         const Eigen::Vector3d interior = xlp.head<3>();
 
         // Prepare the data for MVIE optimization
-        uint8_t *optData = new uint8_t[sizeof(int64_t) + (2 + 3 * M) * sizeof(double)];
+        uint8_t *optData = new uint8_t[sizeof(int64_t) + (6 + 3 * M) * sizeof(double)];
         int64_t *pM = (int64_t *)optData;
         double *pSmoothEps = (double *)(pM + 1);
         double *pPenaltyWt = pSmoothEps + 1;
         double *pA = pPenaltyWt + 1;
+        double *pFavorableDirection = pA + 3 * M;
+        double *pFavorableWeight = pFavorableDirection + 3;
 
         *pM = M;
         Eigen::Map<Eigen::MatrixX3d> A(pA, M, 3);
         A = Alp.leftCols<3>().array().colwise() /
             (blp - Alp.leftCols<3>() * interior).array();
+        Eigen::Map<Eigen::Vector3d> favorableDirectionMap(pFavorableDirection);
+        favorableDirectionMap = favorableDirection;
+        *pFavorableWeight = std::max(0.0, favorableWeight);
 
         Eigen::VectorXd x(9);
         const Eigen::Matrix3d Q = R * (r.cwiseProduct(r)).asDiagonal() * R.transpose();
@@ -270,7 +315,9 @@ namespace firi
                      const Eigen::Vector3d &b,
                      Eigen::MatrixX4d &hPoly,
                      const int iterations = 4,
-                     const double epsilon = 1.0e-6)
+                     const double epsilon = 1.0e-6,
+                     const TrajectoryFavorableOptions &tfOptions = TrajectoryFavorableOptions(),
+                     TrajectoryFavorableDiagnostics *tfDiagnostics = nullptr)
     {
         const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
         const Eigen::Vector4d bh(b(0), b(1), b(2), 1.0);
@@ -283,6 +330,25 @@ namespace firi
 
         const int M = bd.rows();
         const int N = pc.cols();
+        const bool trajectoryFavorable =
+            tfOptions.enabled && tfOptions.direction.allFinite() &&
+            tfOptions.direction.norm() > epsilon;
+        const Eigen::Vector3d favorableDirection = trajectoryFavorable
+                                                        ? tfOptions.direction.normalized()
+                                                        : Eigen::Vector3d::Zero();
+        const double favorableWeight = trajectoryFavorable
+                                           ? std::max(0.0, tfOptions.directional_width_weight)
+                                           : 0.0;
+        const double faceCountWeight = trajectoryFavorable
+                                           ? std::max(0.0, tfOptions.face_count_weight)
+                                           : 0.0;
+        const int maxFaces = tfOptions.max_faces > 0
+                                 ? std::max(tfOptions.max_faces, M)
+                                 : M + N;
+        if (tfDiagnostics != nullptr)
+        {
+            *tfDiagnostics = TrajectoryFavorableDiagnostics();
+        }
 
         Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
         Eigen::Vector3d p = 0.5 * (a + b);
@@ -336,16 +402,54 @@ namespace firi
             Eigen::Matrix<uint8_t, -1, 1> bdFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(M, 1);
             Eigen::Matrix<uint8_t, -1, 1> pcFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(N, 1);
 
+            // Select the next obstacle plane by a volume/face-count tradeoff.
+            // With zero face_count_weight this is exactly the native nearest-
+            // obstacle rule.  A positive weight rewards one plane excluding
+            // several still-active obstacle samples, reducing constraints
+            // without changing the hard separation certificate.
+            auto selectObstaclePlane = [&](int &selectedId, double &selectedDistance)
+            {
+                selectedId = -1;
+                selectedDistance = INFINITY;
+                double bestScore = INFINITY;
+                for (int candidate = 0; candidate < N; ++candidate)
+                {
+                    if (!pcFlags(candidate))
+                    {
+                        continue;
+                    }
+                    int coverage = 0;
+                    if (faceCountWeight > 0.0)
+                    {
+                        for (int pointId = 0; pointId < N; ++pointId)
+                        {
+                            if (pcFlags(pointId) &&
+                                tangents.block<1, 3>(candidate, 0).dot(forwardPC.col(pointId)) +
+                                        tangents(candidate, 3) >
+                                    -epsilon)
+                            {
+                                ++coverage;
+                            }
+                        }
+                    }
+                    const double score = std::log(std::max(distRs(candidate), epsilon)) -
+                                         faceCountWeight * std::log1p(static_cast<double>(coverage));
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        selectedId = candidate;
+                        selectedDistance = distRs(candidate);
+                    }
+                }
+            };
+
             nH = 0;
 
             bool completed = false;
             int bdMinId = 0, pcMinId = 0;
             double minSqrD = distDs.minCoeff(&bdMinId);
             double minSqrR = INFINITY;
-            if (distRs.size() != 0)
-            {
-                minSqrR = distRs.minCoeff(&pcMinId);
-            }
+            selectObstaclePlane(pcMinId, minSqrR);
             for (int i = 0; !completed && i < (M + N); ++i)
             {
                 if (minSqrD < minSqrR)
@@ -386,15 +490,20 @@ namespace firi
                         else
                         {
                             completed = false;
-                            if (minSqrR > distRs(j))
-                            {
-                                pcMinId = j;
-                                minSqrR = distRs(j);
-                            }
                         }
                     }
                 }
+                selectObstaclePlane(pcMinId, minSqrR);
                 ++nH;
+                if (nH > maxFaces)
+                {
+                    if (tfDiagnostics != nullptr)
+                    {
+                        tfDiagnostics->face_count = nH;
+                        tfDiagnostics->face_budget_saturated = true;
+                    }
+                    return false;
+                }
             }
 
             hPoly.resize(nH, 4);
@@ -409,7 +518,22 @@ namespace firi
                 break;
             }
 
-            maxVolInsEllipsoid(hPoly, R, p, r);
+            if (!maxVolInsEllipsoid(hPoly, R, p, r,
+                                    favorableDirection, favorableWeight))
+            {
+                return false;
+            }
+        }
+
+        if (tfDiagnostics != nullptr)
+        {
+            tfDiagnostics->face_count = hPoly.rows();
+            tfDiagnostics->face_budget_saturated = hPoly.rows() >= maxFaces;
+            const Eigen::Vector3d projected =
+                r.asDiagonal() * R.transpose() * favorableDirection;
+            tfDiagnostics->directional_radius = trajectoryFavorable
+                                                    ? projected.norm()
+                                                    : 0.0;
         }
 
         return true;

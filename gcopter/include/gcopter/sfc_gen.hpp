@@ -42,6 +42,14 @@
 namespace sfc_gen
 {
 
+    struct TrajectoryFavorableFiriInfo
+    {
+        int face_count = 0;
+        bool face_budget_saturated = false;
+        double directional_radius = 0.0;
+        Eigen::Vector3d direction = Eigen::Vector3d::Zero();
+    };
+
     template <typename Map>
     inline double planPath(const Eigen::Vector3d &s,
                            const Eigen::Vector3d &g,
@@ -183,6 +191,162 @@ namespace sfc_gen
 
             hpolys.emplace_back(hp);
         }
+    }
+
+    // Trajectory-conditioned FIRI.  It deliberately preserves the same path
+    // segmentation, local obstacle crop, boundary and overlap construction as
+    // convexCover(); only the FIRI ellipsoid objective and its hard face budget
+    // are changed.  This makes firi and tf_firi suitable paired baselines.
+    inline bool trajectoryFavorableConvexCover(
+        const std::vector<Eigen::Vector3d> &path,
+        const std::vector<Eigen::Vector3d> &points,
+        const Eigen::Vector3d &lowCorner,
+        const Eigen::Vector3d &highCorner,
+        const double &progress,
+        const double &range,
+        const firi::TrajectoryFavorableOptions &options,
+        std::vector<Eigen::MatrixX4d> &hpolys,
+        std::vector<TrajectoryFavorableFiriInfo> &infos,
+        const double eps = 1.0e-6)
+    {
+        hpolys.clear();
+        infos.clear();
+        if (path.size() < 2)
+        {
+            return false;
+        }
+
+        const int n = static_cast<int>(path.size());
+        Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
+        bd(0, 0) = 1.0;
+        bd(1, 0) = -1.0;
+        bd(2, 1) = 1.0;
+        bd(3, 1) = -1.0;
+        bd(4, 2) = 1.0;
+        bd(5, 2) = -1.0;
+
+        Eigen::MatrixX4d hp, gap;
+        Eigen::Vector3d a, b = path.front();
+        std::vector<Eigen::Vector3d> validPc;
+        validPc.reserve(points.size());
+        for (int i = 1; i < n;)
+        {
+            a = b;
+            if ((a - path[i]).norm() > progress)
+            {
+                b = (path[i] - a).normalized() * progress + a;
+            }
+            else
+            {
+                b = path[i++];
+            }
+
+            bd(0, 3) = -std::min(std::max(a(0), b(0)) + range, highCorner(0));
+            bd(1, 3) = +std::max(std::min(a(0), b(0)) - range, lowCorner(0));
+            bd(2, 3) = -std::min(std::max(a(1), b(1)) + range, highCorner(1));
+            bd(3, 3) = +std::max(std::min(a(1), b(1)) - range, lowCorner(1));
+            bd(4, 3) = -std::min(std::max(a(2), b(2)) + range, highCorner(2));
+            bd(5, 3) = +std::max(std::min(a(2), b(2)) - range, lowCorner(2));
+
+            validPc.clear();
+            for (const Eigen::Vector3d &point : points)
+            {
+                if ((bd.leftCols<3>() * point + bd.rightCols<1>()).maxCoeff() < 0.0)
+                {
+                    validPc.emplace_back(point);
+                }
+            }
+            Eigen::Matrix3Xd pc(3, static_cast<int>(validPc.size()));
+            for (int pointId = 0; pointId < static_cast<int>(validPc.size()); ++pointId)
+            {
+                pc.col(pointId) = validPc[pointId];
+            }
+
+            firi::TrajectoryFavorableOptions segmentOptions = options;
+            segmentOptions.enabled = true;
+            segmentOptions.direction = b - a;
+            firi::TrajectoryFavorableDiagnostics diagnostics;
+            if (!firi::firi(bd, pc, a, b, hp, 4, eps,
+                            segmentOptions, &diagnostics))
+            {
+                infos.push_back({diagnostics.face_count,
+                                 diagnostics.face_budget_saturated,
+                                 diagnostics.directional_radius,
+                                 segmentOptions.direction.normalized()});
+                return false;
+            }
+
+            if (!hpolys.empty())
+            {
+                const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
+                if (3 <= ((hp * ah).array() > -eps).cast<int>().sum() +
+                             ((hpolys.back() * ah).array() > -eps).cast<int>().sum())
+                {
+                    firi::TrajectoryFavorableOptions gapOptions = segmentOptions;
+                    gapOptions.direction = infos.back().direction;
+                    firi::TrajectoryFavorableDiagnostics gapDiagnostics;
+                    if (!firi::firi(bd, pc, a, a, gap, 1, eps,
+                                    gapOptions, &gapDiagnostics))
+                    {
+                        infos.push_back({gapDiagnostics.face_count,
+                                         gapDiagnostics.face_budget_saturated,
+                                         gapDiagnostics.directional_radius,
+                                         gapOptions.direction.normalized()});
+                        return false;
+                    }
+                    hpolys.emplace_back(gap);
+                    infos.push_back({gapDiagnostics.face_count,
+                                     gapDiagnostics.face_budget_saturated,
+                                     gapDiagnostics.directional_radius,
+                                     gapOptions.direction.normalized()});
+                }
+            }
+
+            hpolys.emplace_back(hp);
+            infos.push_back({diagnostics.face_count,
+                             diagnostics.face_budget_saturated,
+                             diagnostics.directional_radius,
+                             segmentOptions.direction.normalized()});
+        }
+        if (hpolys.empty())
+        {
+            return false;
+        }
+
+        // Apply the same overlap shortcut as the native FIRI baseline while
+        // retaining the diagnostics for every selected polytope.
+        std::vector<Eigen::MatrixX4d> htemp = hpolys;
+        std::vector<TrajectoryFavorableFiriInfo> itemp = infos;
+        if (htemp.size() == 1)
+        {
+            htemp.insert(htemp.begin(), htemp.front());
+            itemp.insert(itemp.begin(), itemp.front());
+        }
+        std::deque<int> indices;
+        indices.push_front(static_cast<int>(htemp.size()) - 1);
+        for (int i = static_cast<int>(htemp.size()) - 1; i >= 0; --i)
+        {
+            for (int j = 0; j < i; ++j)
+            {
+                const bool overlap = j < i - 1
+                                         ? geo_utils::overlap(htemp[i], htemp[j], 0.01)
+                                         : true;
+                if (overlap)
+                {
+                    indices.push_front(j);
+                    i = j + 1;
+                    break;
+                }
+            }
+        }
+        hpolys.clear();
+        infos.clear();
+        for (const int index : indices)
+        {
+            hpolys.push_back(htemp[index]);
+            infos.push_back(itemp[index]);
+        }
+        return true;
     }
 
     inline void shortCut(std::vector<Eigen::MatrixX4d> &hpolys)

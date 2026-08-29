@@ -114,14 +114,16 @@ The angle between the arrow of 2D Nav Goal and positive x-axis (red axis) decide
 header-only baseline for trajectory-favorable, face-bounded corridor experiments.
 It supports Frenet, trajectory-sample PCA, and externally supplied sensitivity
 Gramian directions; a missing or invalid Gramian is explicitly recorded as a
-fallback. The current MVP produces a conservative six-face oriented box, preserves
-`firi.hpp` unchanged as a baseline, and reports face count, generation time,
+fallback. The OBB MVP produces a conservative six-face oriented box and reports face count, generation time,
 weighted directional width, and trajectory-sample slack.
 
 The global-planning demo now selects the actual corridor generator with
-`corridor_method:=firi|tf_sfc|ellipsoid_decomp`. The third option calls
+`corridor_method:=firi|tf_firi|tf_sfc|obb|ellipsoid_decomp`. `tf_firi`
+preserves native FIRI's route segmentation, obstacle crop, boundary and shortcut,
+but adds a trajectory-directional MVIE radius term, a volume/face-count plane
+selection score and a hard total-face budget. `ellipsoid_decomp` calls
 DecompUtil's `EllipsoidDecomp3D::dilate`, i.e. the implementation associated
-with Liu et al. (ICRA 2017). All three outputs are passed to the same GCOPTER
+with Liu et al. (ICRA 2017). All outputs are passed to the same GCOPTER
 optimizer and RViz visualization path; strict runs disable fallback so a FIRI
 result cannot be counted as another method's success.
 
@@ -132,10 +134,10 @@ in the bundled old FIRI), and then shortcuts overlapping regions. DecompUtil
 inflates an ellipsoid around each collision-free line segment and greedily adds
 closest-obstacle separating planes, without that FIRI MVIE alternation.
 
-This is an integration and OBB-baseline milestone, not the complete proposed
-TF-SFC method. Obstacle cutting planes, utility-based face pruning, and overlap
-refinement remain future work. Do not report sensitivity mode as the main method
-unless a valid per-piece MINCO sensitivity Gramian is supplied.
+This remains a staged implementation. The first `tf_firi` version uses the
+shared route-segment direction as a high-velocity proxy; it must not be reported
+as MINCO sensitivity. The next bounded pass will condition FIRI on the initialized
+MINCO trajectory without changing the route or downstream optimizer.
 
 Minimal usage:
 

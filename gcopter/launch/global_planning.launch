@@ -15,6 +15,11 @@
   <arg name="tf_sfc_inflation_step" default="0.10"/>
   <arg name="tf_sfc_min_overlap_radius" default="0.04"/>
   <arg name="tf_sfc_max_segment_length" default="1.0"/>
+  <arg name="tf_firi_max_faces" default="12"/>
+  <arg name="tf_firi_directional_width_weight" default="1.0"/>
+  <arg name="tf_firi_face_count_weight" default="0.25"/>
+  <arg name="tf_firi_progress" default="7.0"/>
+  <arg name="tf_firi_range" default="3.0"/>
   <arg name="decomp_local_bbox_forward" default="0.5"/>
   <arg name="decomp_local_bbox_lateral" default="3.0"/>
   <arg name="decomp_local_bbox_vertical" default="3.0"/>
@@ -61,6 +66,11 @@
   <param name="TfSfc/InflationStep" value="$(arg tf_sfc_inflation_step)" type="double"/>
   <param name="TfSfc/MinOverlapRadius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
   <param name="TfSfc/MaxSegmentLength" value="$(arg tf_sfc_max_segment_length)" type="double"/>
+  <param name="TfFiri/MaxFaces" value="$(arg tf_firi_max_faces)" type="int"/>
+  <param name="TfFiri/DirectionalWidthWeight" value="$(arg tf_firi_directional_width_weight)" type="double"/>
+  <param name="TfFiri/FaceCountWeight" value="$(arg tf_firi_face_count_weight)" type="double"/>
+  <param name="TfFiri/Progress" value="$(arg tf_firi_progress)" type="double"/>
+  <param name="TfFiri/Range" value="$(arg tf_firi_range)" type="double"/>
   <param name="Decomp/LocalBBoxForward" value="$(arg decomp_local_bbox_forward)" type="double"/>
   <param name="Decomp/LocalBBoxLateral" value="$(arg decomp_local_bbox_lateral)" type="double"/>
   <param name="Decomp/LocalBBoxVertical" value="$(arg decomp_local_bbox_vertical)" type="double"/>

@@ -48,7 +48,7 @@ Experiment:
   Tag:                     'default'
 
 Corridor:
-  # firi | ellipsoid_decomp | obb | tf_sfc
+  # firi | tf_firi | ellipsoid_decomp | obb | tf_sfc
   Method:                  'firi'
   AllowFallback:           false
 
@@ -62,6 +62,15 @@ TfSfc:
   InflationStep:           0.10
   MinOverlapRadius:        0.04
   MaxSegmentLength:        1.0
+
+TfFiri:
+  # First paper-stage TF-FIRI conditions native FIRI on the route/velocity
+  # direction.  MINCO sensitivity-conditioned refinement is a separate stage.
+  MaxFaces:                12
+  DirectionalWidthWeight: 1.0
+  FaceCountWeight:        0.25
+  Progress:                7.0
+  Range:                   3.0
 
 # Liu et al. (ICRA 2017) / DecompUtil baseline. The three local-bbox values
 # follow DecompUtil's segment frame: forward extension, lateral and vertical.
