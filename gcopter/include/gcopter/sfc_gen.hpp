@@ -49,6 +49,10 @@ namespace sfc_gen
         int face_count = 0;
         bool face_budget_saturated = false;
         int unresolved_constraint_count = 0;
+        int unresolved_boundary_count = 0;
+        int unresolved_obstacle_count = 0;
+        bool budget_exchange_attempted = false;
+        bool budget_exchange_accepted = false;
         double directional_radius = 0.0;
         Eigen::Vector3d direction = Eigen::Vector3d::Zero();
     };
@@ -280,6 +284,10 @@ namespace sfc_gen
                 infos.push_back({diagnostics.face_count,
                                  diagnostics.face_budget_saturated,
                                  diagnostics.unresolved_constraint_count,
+                                 diagnostics.unresolved_boundary_count,
+                                 diagnostics.unresolved_obstacle_count,
+                                 diagnostics.budget_exchange_attempted,
+                                 diagnostics.budget_exchange_accepted,
                                  diagnostics.directional_radius,
                                  segmentOptions.direction.normalized()});
                 return false;
@@ -300,6 +308,10 @@ namespace sfc_gen
                         infos.push_back({gapDiagnostics.face_count,
                                          gapDiagnostics.face_budget_saturated,
                                          gapDiagnostics.unresolved_constraint_count,
+                                         gapDiagnostics.unresolved_boundary_count,
+                                         gapDiagnostics.unresolved_obstacle_count,
+                                         gapDiagnostics.budget_exchange_attempted,
+                                         gapDiagnostics.budget_exchange_accepted,
                                          gapDiagnostics.directional_radius,
                                          gapOptions.direction.normalized()});
                         return false;
@@ -308,6 +320,10 @@ namespace sfc_gen
                     infos.push_back({gapDiagnostics.face_count,
                                      gapDiagnostics.face_budget_saturated,
                                      gapDiagnostics.unresolved_constraint_count,
+                                     gapDiagnostics.unresolved_boundary_count,
+                                     gapDiagnostics.unresolved_obstacle_count,
+                                     gapDiagnostics.budget_exchange_attempted,
+                                     gapDiagnostics.budget_exchange_accepted,
                                      gapDiagnostics.directional_radius,
                                      gapOptions.direction.normalized()});
                 }
@@ -317,6 +333,10 @@ namespace sfc_gen
             infos.push_back({diagnostics.face_count,
                              diagnostics.face_budget_saturated,
                              diagnostics.unresolved_constraint_count,
+                             diagnostics.unresolved_boundary_count,
+                             diagnostics.unresolved_obstacle_count,
+                             diagnostics.budget_exchange_attempted,
+                             diagnostics.budget_exchange_accepted,
                              diagnostics.directional_radius,
                              segmentOptions.direction.normalized()});
         }

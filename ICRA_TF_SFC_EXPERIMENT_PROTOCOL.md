@@ -57,8 +57,8 @@ roslaunch gcopter global_planning.launch \
   allow_corridor_fallback:=false experiment_tag:=liu_seed42
 ```
 
-Schema v9 writes `gcopter_runs_v9.csv` and
-`gcopter_corridors_v9.csv`. It records obstacle-plane count, obstacle points
+Schema v10 writes `gcopter_runs_v10.csv` and
+`gcopter_corridors_v10.csv`. It records obstacle-plane count, obstacle points
 considered, face-budget saturation and anchor clearance in addition to timing,
 face count, overlap and optimizer diagnostics. For `tf_firi`, it additionally
 records the achieved directional ellipsoid radius, its configured weight, and
@@ -80,13 +80,16 @@ fixed_start_x:=<verified_x> fixed_start_y:=<verified_y> fixed_start_z:=<verified
 fixed_goal_x:=<verified_x> fixed_goal_y:=<verified_y> fixed_goal_z:=<verified_z>
 ```
 
-Schema v9 enforces `MaxFaces` during construction. The obstacle selector only
+Schema v10 enforces `MaxFaces` during construction. The obstacle selector only
 scores a fixed-size nearest-candidate pool and uses a budget-aware minimum
-coverage requirement before its trajectory-favorable quality score, so work
+coverage requirement before its trajectory-favorable quality score. Remaining
+slots are reserved for every still-active local boundary plane, so work
 remains bounded by the face budget instead of generating a full native-FIRI
-polytope first. On failure,
+polytope first. At saturation it permits at most one obstacle-plane exchange,
+accepted only after rechecking separation of every local obstacle sample. On failure,
 `unresolved_constraint_count` reports how many local boundary or obstacle
-separation constraints remained when the face budget was exhausted.
+separation constraints remained when the face budget was exhausted; v10 also
+logs the boundary/obstacle split and exchange attempt/acceptance.
 
 Use the same 30 fixed seeds, start/goal pairs, map resolution, dilation,
 dynamics and timeout for every method. Run the 6/0, 8/2, 10/4 and 12/6

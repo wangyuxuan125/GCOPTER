@@ -368,6 +368,51 @@ public:
                 corridorRecords.clear();
                 if (!generated)
                 {
+                    const double perPieceGenerationMs =
+                        generationMs /
+                        static_cast<double>(std::max<std::size_t>(infos.size(), 1));
+                    const std::size_t completedCount =
+                        std::min(hPolys.size(), infos.size());
+                    for (std::size_t i = 0; i < completedCount; ++i)
+                    {
+                        const sfc_gen::TrajectoryFavorableFiriInfo &info = infos[i];
+                        gcopter_experiment::CorridorRecord completedRecord;
+                        completedRecord.piece_id = static_cast<int>(i);
+                        completedRecord.face_count = hPolys[i].rows();
+                        completedRecord.face_budget_saturated =
+                            info.face_budget_saturated;
+                        completedRecord.unresolved_constraint_count =
+                            info.unresolved_constraint_count;
+                        completedRecord.unresolved_boundary_count =
+                            info.unresolved_boundary_count;
+                        completedRecord.unresolved_obstacle_count =
+                            info.unresolved_obstacle_count;
+                        completedRecord.budget_exchange_attempted =
+                            info.budget_exchange_attempted;
+                        completedRecord.budget_exchange_accepted =
+                            info.budget_exchange_accepted;
+                        completedRecord.generation_time_ms = perPieceGenerationMs;
+                        completedRecord.weighted_width =
+                            2.0 * info.directional_radius;
+                        completedRecord.directional_radius_m =
+                            info.directional_radius;
+                        completedRecord.directional_width_weight =
+                            options.directional_width_weight;
+                        completedRecord.face_count_weight =
+                            options.face_count_weight;
+                        completedRecord.valid = hPolys[i].allFinite() &&
+                                                hPolys[i].rows() <= options.max_faces;
+                        completedRecord.failure_reason =
+                            completedRecord.valid ? "none" : "face_budget_or_numeric_failure";
+                        if (i > 0)
+                        {
+                            corridorRecords.back().overlap_radius_to_next =
+                                geo_utils::overlap(hPolys[i - 1], hPolys[i], 0.01)
+                                    ? 0.01
+                                    : 0.0;
+                        }
+                        corridorRecords.push_back(completedRecord);
+                    }
                     if (!infos.empty())
                     {
                         const sfc_gen::TrajectoryFavorableFiriInfo &failure =
@@ -379,6 +424,15 @@ public:
                             failure.face_budget_saturated;
                         corridorRecord.unresolved_constraint_count =
                             failure.unresolved_constraint_count;
+                        corridorRecord.unresolved_boundary_count =
+                            failure.unresolved_boundary_count;
+                        corridorRecord.unresolved_obstacle_count =
+                            failure.unresolved_obstacle_count;
+                        corridorRecord.budget_exchange_attempted =
+                            failure.budget_exchange_attempted;
+                        corridorRecord.budget_exchange_accepted =
+                            failure.budget_exchange_accepted;
+                        corridorRecord.generation_time_ms = perPieceGenerationMs;
                         corridorRecord.directional_radius_m =
                             failure.directional_radius;
                         corridorRecord.directional_width_weight =
@@ -407,6 +461,14 @@ public:
                         infos[i].face_budget_saturated;
                     corridorRecord.unresolved_constraint_count =
                         infos[i].unresolved_constraint_count;
+                    corridorRecord.unresolved_boundary_count =
+                        infos[i].unresolved_boundary_count;
+                    corridorRecord.unresolved_obstacle_count =
+                        infos[i].unresolved_obstacle_count;
+                    corridorRecord.budget_exchange_attempted =
+                        infos[i].budget_exchange_attempted;
+                    corridorRecord.budget_exchange_accepted =
+                        infos[i].budget_exchange_accepted;
                     corridorRecord.generation_time_ms =
                         generationMs / static_cast<double>(hPolys.size());
                     corridorRecord.weighted_width =

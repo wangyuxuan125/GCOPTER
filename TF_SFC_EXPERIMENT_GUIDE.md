@@ -81,7 +81,7 @@ roslaunch gcopter global_planning.launch \
   experiment_log_directory:=$HOME/tf_sfc_results/gcopter
 ```
 
-这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。v9 在剩余面预算变紧时先满足剩余障碍所需的最低平均覆盖量，再比较方向宽度和距离；候选选择仍只检查固定大小的最近候选池，并在达到面预算时立即停止，不会先生成完整 FIRI 再裁剪。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。
+这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。v10 强制为尚未加入的局部边界面保留槽位，再以剩余障碍所需的最低平均覆盖量筛选障碍面；达到硬上限时最多执行一次有完整障碍分离复核的一换一候选面交换。候选选择仍只检查固定大小的最近候选池，不会先生成完整 FIRI 再裁剪，也不会无界回溯。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。
 
 TF-SFC 六面 OBB（严格禁止回退）：
 
@@ -129,8 +129,8 @@ roslaunch gcopter global_planning.launch experiment_log_enabled:=false
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/gcopter/gcopter_runs_v9.csv
-$HOME/tf_sfc_results/gcopter/gcopter_corridors_v9.csv
+$HOME/tf_sfc_results/gcopter/gcopter_runs_v10.csv
+$HOME/tf_sfc_results/gcopter/gcopter_corridors_v10.csv
 ```
 
 每次有效的起终点规划请求写入一行，包含：
@@ -151,12 +151,12 @@ corridor_penalty_cost_initial, corridor_penalty_cost_final,
 max_corridor_violation_initial_m, max_corridor_violation_final_m
 ```
 
-`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v9 还记录 `route_seed`、`fixed_start_goal`、`directional_radius_m`、`directional_width_weight`、`face_count_weight` 与 `unresolved_constraint_count`。预算失败时该字段说明达到面数上限时仍未处理的局部边界或障碍分离约束数。文件使用追加模式。
+`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v10 还记录 `route_seed`、`fixed_start_goal`、`directional_radius_m`、`directional_width_weight`、`face_count_weight`、边界/障碍剩余约束数以及面交换尝试/接受标志。预算失败时可区分面数不足来自边界还是障碍分离。失败运行也保留已完成的部分走廊记录。文件使用追加模式。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v9.csv
+head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v10.csv
 ```
 
 ## 4. 与 EGO/TF-SFC 对比时的口径
@@ -166,7 +166,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v9.csv
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。
 - 正式对比必须使用 `allow_corridor_fallback:=false`，并分别筛选 `method=firi`、`method=tf_firi`、`method=tf_sfc` 和 `method=ellipsoid_decomp`；失败请求也必须保留在成功率分母中。
-- v9 日志保留走廊约束 piece 数、优化前后走廊惩罚和最大走廊越界量，并记录地图/路径 seed、精确起终点、地图分辨率/膨胀、关键动力学参数及 TF-FIRI 质量权重。它们用于证明 H-polytope 实际参与 GCOPTER 优化，并检查跨方法样本是否使用相同实验条件。
+- v10 日志保留走廊约束 piece 数、优化前后走廊惩罚和最大走廊越界量，并记录地图/路径 seed、精确起终点、地图分辨率/膨胀、关键动力学参数及 TF-FIRI 质量权重。它们用于证明 H-polytope 实际参与 GCOPTER 优化，并检查跨方法样本是否使用相同实验条件。
 - GCOPTER 当前的 `success=1` 表示优化器返回有限目标值和非空轨迹；它不是飞行器实际到达目标的 mission success，也不是连续时间无碰撞证书。
 
 论文最终实验前还需要完成的项目见 [ICRA_EXPERIMENT_READINESS.md](ICRA_EXPERIMENT_READINESS.md)。
@@ -183,7 +183,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v9.csv
 ## 6. 快速统计
 
 ```bash
-python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v9.csv <<'PY'
+python3 - $HOME/tf_sfc_results/gcopter/gcopter_runs_v10.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

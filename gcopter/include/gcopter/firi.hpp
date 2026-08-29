@@ -58,6 +58,10 @@ namespace firi
         int face_count = 0;
         bool face_budget_saturated = false;
         int unresolved_constraint_count = 0;
+        int unresolved_boundary_count = 0;
+        int unresolved_obstacle_count = 0;
+        bool budget_exchange_attempted = false;
+        bool budget_exchange_accepted = false;
         double directional_radius = 0.0;
     };
 
@@ -357,7 +361,10 @@ namespace firi
         Eigen::Vector3d p = 0.5 * (a + b);
         Eigen::Vector3d r = Eigen::Vector3d::Ones();
         Eigen::MatrixX4d forwardH(M + N, 4);
+        std::vector<uint8_t> forwardHIsBoundary(M + N, 0);
         int nH = 0;
+        bool budgetExchangeAttempted = false;
+        bool budgetExchangeAccepted = false;
 
         for (int loop = 0; loop < iterations; ++loop)
         {
@@ -519,15 +526,26 @@ namespace firi
             selectObstaclePlane(nH, pcMinId, minSqrR);
             for (int i = 0; !completed && i < (M + N); ++i)
             {
-                if (minSqrD < minSqrR)
+                int activeBoundaryForBudget = 0;
+                for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                {
+                    activeBoundaryForBudget += bdFlags(boundaryId) ? 1 : 0;
+                }
+                const bool mustReserveBoundarySlot =
+                    trajectoryFavorable && faceCountWeight > 0.0 &&
+                    tfOptions.max_faces > 0 && activeBoundaryForBudget > 0 &&
+                    maxFaces - nH <= activeBoundaryForBudget;
+                if (mustReserveBoundarySlot || minSqrD < minSqrR)
                 {
                     forwardH.block<1, 3>(nH, 0) = forwardB.row(bdMinId);
                     forwardH(nH, 3) = forwardD(bdMinId);
+                    forwardHIsBoundary[nH] = 1;
                     bdFlags(bdMinId) = 0;
                 }
                 else
                 {
                     forwardH.row(nH) = tangents.row(pcMinId);
+                    forwardHIsBoundary[nH] = 0;
                     pcFlags(pcMinId) = 0;
                 }
 
@@ -564,20 +582,136 @@ namespace firi
                 ++nH;
                 if (!completed && nH >= maxFaces)
                 {
+                    int unresolvedBoundary = 0;
+                    int unresolvedObstacle = 0;
+                    for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                    {
+                        unresolvedBoundary += bdFlags(boundaryId) ? 1 : 0;
+                    }
+                    for (int obstacleId = 0; obstacleId < N; ++obstacleId)
+                    {
+                        unresolvedObstacle += pcFlags(obstacleId) ? 1 : 0;
+                    }
+
+                    // One bounded exchange is allowed at saturation. Replace
+                    // one selected obstacle plane by one remaining tangent only
+                    // when the resulting fixed-size set still separates every
+                    // local obstacle sample. This is a K*L*N certificate check,
+                    // not full FIRI construction or unbounded backtracking.
+                    bool exchangeAccepted = false;
+                    const bool exchangeAttempted = !budgetExchangeAttempted &&
+                                                   trajectoryFavorable &&
+                                                   unresolvedBoundary == 0 &&
+                                                   unresolvedObstacle > 0;
+                    budgetExchangeAttempted =
+                        budgetExchangeAttempted || exchangeAttempted;
+                    if (exchangeAttempted)
+                    {
+                        const int poolSize = std::max(1, tfOptions.candidate_pool_size);
+                        std::vector<std::pair<double, int>> remainingCandidates;
+                        remainingCandidates.reserve(poolSize);
+                        for (int candidate = 0; candidate < N; ++candidate)
+                        {
+                            if (!pcFlags(candidate))
+                            {
+                                continue;
+                            }
+                            const std::pair<double, int> item(distRs(candidate), candidate);
+                            const auto position = std::lower_bound(
+                                remainingCandidates.begin(), remainingCandidates.end(), item);
+                            remainingCandidates.insert(position, item);
+                            if (static_cast<int>(remainingCandidates.size()) > poolSize)
+                            {
+                                remainingCandidates.pop_back();
+                            }
+                        }
+
+                        double bestExchangeScore = INFINITY;
+                        int bestCandidate = -1;
+                        int bestReplacement = -1;
+                        for (const auto &item : remainingCandidates)
+                        {
+                            const int candidate = item.second;
+                            const Eigen::Vector3d physicalNormal =
+                                forward.transpose() *
+                                tangents.block<1, 3>(candidate, 0).transpose();
+                            const double directionalDamage =
+                                physicalNormal.norm() > epsilon
+                                    ? std::pow(physicalNormal.normalized().dot(
+                                                   favorableDirection),
+                                               2)
+                                    : 0.0;
+                            const double exchangeScore =
+                                std::log(std::max(distRs(candidate), epsilon)) +
+                                favorableWeight * directionalDamage;
+                            for (int replacement = 0; replacement < nH; ++replacement)
+                            {
+                                if (forwardHIsBoundary[replacement])
+                                {
+                                    continue;
+                                }
+                                bool separatesAll = true;
+                                for (int pointId = 0; pointId < N && separatesAll; ++pointId)
+                                {
+                                    bool separated =
+                                        tangents.block<1, 3>(candidate, 0).dot(
+                                            forwardPC.col(pointId)) +
+                                            tangents(candidate, 3) > -epsilon;
+                                    for (int planeId = 0;
+                                         !separated && planeId < nH;
+                                         ++planeId)
+                                    {
+                                        if (planeId != replacement &&
+                                            forwardH.block<1, 3>(planeId, 0).dot(
+                                                    forwardPC.col(pointId)) +
+                                                    forwardH(planeId, 3) >
+                                                -epsilon)
+                                        {
+                                            separated = true;
+                                        }
+                                    }
+                                    separatesAll = separated;
+                                }
+                                if (separatesAll && exchangeScore < bestExchangeScore)
+                                {
+                                    bestExchangeScore = exchangeScore;
+                                    bestCandidate = candidate;
+                                    bestReplacement = replacement;
+                                }
+                            }
+                        }
+
+                        if (bestCandidate >= 0 && bestReplacement >= 0)
+                        {
+                            forwardH.row(bestReplacement) = tangents.row(bestCandidate);
+                            forwardHIsBoundary[bestReplacement] = 0;
+                            pcFlags.setZero();
+                            completed = true;
+                            exchangeAccepted = true;
+                            budgetExchangeAccepted = true;
+                            unresolvedObstacle = 0;
+                        }
+                    }
+
                     if (tfDiagnostics != nullptr)
                     {
-                        int unresolved = 0;
-                        for (int boundaryId = 0; boundaryId < M; ++boundaryId)
-                        {
-                            unresolved += bdFlags(boundaryId) ? 1 : 0;
-                        }
-                        for (int obstacleId = 0; obstacleId < N; ++obstacleId)
-                        {
-                            unresolved += pcFlags(obstacleId) ? 1 : 0;
-                        }
+                        tfDiagnostics->budget_exchange_attempted =
+                            budgetExchangeAttempted;
+                        tfDiagnostics->budget_exchange_accepted =
+                            budgetExchangeAccepted;
+                    }
+                    if (exchangeAccepted)
+                    {
+                        continue;
+                    }
+                    if (tfDiagnostics != nullptr)
+                    {
                         tfDiagnostics->face_count = nH;
                         tfDiagnostics->face_budget_saturated = true;
-                        tfDiagnostics->unresolved_constraint_count = unresolved;
+                        tfDiagnostics->unresolved_boundary_count = unresolvedBoundary;
+                        tfDiagnostics->unresolved_obstacle_count = unresolvedObstacle;
+                        tfDiagnostics->unresolved_constraint_count =
+                            unresolvedBoundary + unresolvedObstacle;
                     }
                     return false;
                 }
