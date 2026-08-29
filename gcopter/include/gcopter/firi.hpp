@@ -38,9 +38,32 @@
 #include <cfloat>
 #include <cmath>
 #include <vector>
+#include <utility>
 
 namespace firi
 {
+
+    struct TrajectoryFavorableOptions
+    {
+        bool enabled = false;
+        Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
+        double directional_width_weight = 0.0;
+        double face_count_weight = 0.0;
+        int candidate_pool_size = 4;
+        int max_faces = 0;
+    };
+
+    struct TrajectoryFavorableDiagnostics
+    {
+        int face_count = 0;
+        bool face_budget_saturated = false;
+        int unresolved_constraint_count = 0;
+        int unresolved_boundary_count = 0;
+        int unresolved_obstacle_count = 0;
+        bool budget_exchange_attempted = false;
+        bool budget_exchange_accepted = false;
+        double directional_radius = 0.0;
+    };
 
     inline void chol3d(const Eigen::Matrix3d &A,
                        Eigen::Matrix3d &L)
@@ -96,6 +119,8 @@ namespace firi
         const double smoothEps = *pSmoothEps;
         const double penaltyWt = *pPenaltyWt;
         Eigen::Map<const Eigen::MatrixX3d> A(pA, M, 3);
+        Eigen::Map<const Eigen::Vector3d> favorableDirection(pA + 3 * M);
+        const double favorableWeight = *(pA + 3 * M + 3);
         Eigen::Map<const Eigen::Vector3d> p(x.data());
         Eigen::Map<const Eigen::Vector3d> rtd(x.data() + 3);
         Eigen::Map<const Eigen::Vector3d> cde(x.data() + 6);
@@ -149,6 +174,26 @@ namespace firi
         gdrtd(1) -= 1.0 / L(1, 1);
         gdrtd(2) -= 1.0 / L(2, 2);
 
+        // Preserve free space along the application-favorable direction.  The
+        // original MVIE term maximizes volume only; this additional log-radius
+        // term makes two equal-volume ellipsoids distinguishable to the motion
+        // planner while remaining scale invariant.
+        if (favorableWeight > 0.0 && favorableDirection.squaredNorm() > DBL_EPSILON)
+        {
+            const Eigen::Vector3d direction = favorableDirection.normalized();
+            const Eigen::Vector3d projected = L.transpose() * direction;
+            const double squaredRadius = projected.squaredNorm() + DBL_EPSILON;
+            const Eigen::Matrix3d gradL =
+                -favorableWeight * direction * projected.transpose() / squaredRadius;
+            cost -= 0.5 * favorableWeight * log(squaredRadius);
+            gdrtd(0) += gradL(0, 0);
+            gdrtd(1) += gradL(1, 1);
+            gdrtd(2) += gradL(2, 2);
+            gdcde(0) += gradL(1, 0);
+            gdcde(1) += gradL(2, 1);
+            gdcde(2) += gradL(2, 0);
+        }
+
         gdrtd(0) *= 2.0 * rtd(0);
         gdrtd(1) *= 2.0 * rtd(1);
         gdrtd(2) *= 2.0 * rtd(2);
@@ -163,7 +208,9 @@ namespace firi
     inline bool maxVolInsEllipsoid(const Eigen::MatrixX4d &hPoly,
                                    Eigen::Matrix3d &R,
                                    Eigen::Vector3d &p,
-                                   Eigen::Vector3d &r)
+                                   Eigen::Vector3d &r,
+                                   const Eigen::Vector3d &favorableDirection = Eigen::Vector3d::Zero(),
+                                   const double favorableWeight = 0.0)
     {
         // Find the deepest interior point
         const int M = hPoly.rows();
@@ -184,16 +231,21 @@ namespace firi
         const Eigen::Vector3d interior = xlp.head<3>();
 
         // Prepare the data for MVIE optimization
-        uint8_t *optData = new uint8_t[sizeof(int64_t) + (2 + 3 * M) * sizeof(double)];
+        uint8_t *optData = new uint8_t[sizeof(int64_t) + (6 + 3 * M) * sizeof(double)];
         int64_t *pM = (int64_t *)optData;
         double *pSmoothEps = (double *)(pM + 1);
         double *pPenaltyWt = pSmoothEps + 1;
         double *pA = pPenaltyWt + 1;
+        double *pFavorableDirection = pA + 3 * M;
+        double *pFavorableWeight = pFavorableDirection + 3;
 
         *pM = M;
         Eigen::Map<Eigen::MatrixX3d> A(pA, M, 3);
         A = Alp.leftCols<3>().array().colwise() /
             (blp - Alp.leftCols<3>() * interior).array();
+        Eigen::Map<Eigen::Vector3d> favorableDirectionMap(pFavorableDirection);
+        favorableDirectionMap = favorableDirection;
+        *pFavorableWeight = std::max(0.0, favorableWeight);
 
         Eigen::VectorXd x(9);
         const Eigen::Matrix3d Q = R * (r.cwiseProduct(r)).asDiagonal() * R.transpose();
@@ -270,7 +322,9 @@ namespace firi
                      const Eigen::Vector3d &b,
                      Eigen::MatrixX4d &hPoly,
                      const int iterations = 4,
-                     const double epsilon = 1.0e-6)
+                     const double epsilon = 1.0e-6,
+                     const TrajectoryFavorableOptions &tfOptions = TrajectoryFavorableOptions(),
+                     TrajectoryFavorableDiagnostics *tfDiagnostics = nullptr)
     {
         const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
         const Eigen::Vector4d bh(b(0), b(1), b(2), 1.0);
@@ -283,12 +337,34 @@ namespace firi
 
         const int M = bd.rows();
         const int N = pc.cols();
+        const bool trajectoryFavorable =
+            tfOptions.enabled && tfOptions.direction.allFinite() &&
+            tfOptions.direction.norm() > epsilon;
+        const Eigen::Vector3d favorableDirection = trajectoryFavorable
+                                                        ? tfOptions.direction.normalized()
+                                                        : Eigen::Vector3d::Zero();
+        const double favorableWeight = trajectoryFavorable
+                                           ? std::max(0.0, tfOptions.directional_width_weight)
+                                           : 0.0;
+        const double faceCountWeight = trajectoryFavorable
+                                           ? std::max(0.0, tfOptions.face_count_weight)
+                                           : 0.0;
+        const int maxFaces = tfOptions.max_faces > 0
+                                 ? std::max(tfOptions.max_faces, M)
+                                 : M + N;
+        if (tfDiagnostics != nullptr)
+        {
+            *tfDiagnostics = TrajectoryFavorableDiagnostics();
+        }
 
         Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
         Eigen::Vector3d p = 0.5 * (a + b);
         Eigen::Vector3d r = Eigen::Vector3d::Ones();
         Eigen::MatrixX4d forwardH(M + N, 4);
+        std::vector<uint8_t> forwardHIsBoundary(M + N, 0);
         int nH = 0;
+        bool budgetExchangeAttempted = false;
+        bool budgetExchangeAccepted = false;
 
         for (int loop = 0; loop < iterations; ++loop)
         {
@@ -336,27 +412,140 @@ namespace firi
             Eigen::Matrix<uint8_t, -1, 1> bdFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(M, 1);
             Eigen::Matrix<uint8_t, -1, 1> pcFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(N, 1);
 
+            // Select the next obstacle plane by a bounded volume/face-count
+            // tradeoff. Under a hard face budget, feasibility is
+            // lexicographic: first prefer candidates that cover the minimum
+            // number of active obstacle samples required by the remaining
+            // obstacle-face slots, then optimize distance and directional
+            // damage. Native FIRI (zero face weight/no budget) keeps its
+            // original nearest-obstacle rule exactly.
+            auto selectObstaclePlane = [&](const int acceptedFaceCount,
+                                           int &selectedId,
+                                           double &selectedDistance)
+            {
+                selectedId = -1;
+                selectedDistance = INFINITY;
+                const int poolSize = faceCountWeight > 0.0
+                                         ? std::max(1, tfOptions.candidate_pool_size)
+                                         : 1;
+                std::vector<std::pair<double, int>> shortlist;
+                shortlist.reserve(poolSize);
+                for (int candidate = 0; candidate < N; ++candidate)
+                {
+                    if (!pcFlags(candidate))
+                    {
+                        continue;
+                    }
+                    const std::pair<double, int> item(distRs(candidate), candidate);
+                    const auto position = std::lower_bound(shortlist.begin(), shortlist.end(), item);
+                    shortlist.insert(position, item);
+                    if (static_cast<int>(shortlist.size()) > poolSize)
+                    {
+                        shortlist.pop_back();
+                    }
+                }
+
+                int activeBoundaryCount = 0;
+                int activeObstacleCount = 0;
+                for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                {
+                    activeBoundaryCount += bdFlags(boundaryId) ? 1 : 0;
+                }
+                for (int obstacleId = 0; obstacleId < N; ++obstacleId)
+                {
+                    activeObstacleCount += pcFlags(obstacleId) ? 1 : 0;
+                }
+                const bool budgetAware = trajectoryFavorable &&
+                                         faceCountWeight > 0.0 &&
+                                         tfOptions.max_faces > 0;
+                const int obstacleFaceSlots =
+                    maxFaces - acceptedFaceCount - activeBoundaryCount;
+                const int coverageDivisor = std::max(obstacleFaceSlots, 1);
+                const int requiredCoverage = budgetAware && activeObstacleCount > 0
+                                                 ? std::max(1,
+                                                            (activeObstacleCount +
+                                                             coverageDivisor - 1) /
+                                                                coverageDivisor)
+                                                 : 1;
+
+                double bestScore = INFINITY;
+                int bestCoverage = -1;
+                bool coverageRequirementMet = false;
+                for (const auto &item : shortlist)
+                {
+                    const int candidate = item.second;
+                    int coverage = 0;
+                    if (faceCountWeight > 0.0)
+                    {
+                        for (int pointId = 0; pointId < N; ++pointId)
+                        {
+                            if (pcFlags(pointId) &&
+                                tangents.block<1, 3>(candidate, 0).dot(forwardPC.col(pointId)) +
+                                        tangents(candidate, 3) >
+                                    -epsilon)
+                            {
+                                ++coverage;
+                            }
+                        }
+                    }
+                    const Eigen::Vector3d physicalNormal =
+                        forward.transpose() * tangents.block<1, 3>(candidate, 0).transpose();
+                    const double directionalDamage =
+                        trajectoryFavorable && physicalNormal.norm() > epsilon
+                            ? std::pow(physicalNormal.normalized().dot(favorableDirection), 2)
+                            : 0.0;
+                    const double score = std::log(std::max(distRs(candidate), epsilon)) -
+                                         faceCountWeight * std::log1p(static_cast<double>(coverage)) +
+                                         favorableWeight * directionalDamage;
+                    const bool meetsCoverage = !budgetAware ||
+                                               coverage >= requiredCoverage;
+                    const bool preferCandidate =
+                        (meetsCoverage && !coverageRequirementMet) ||
+                        (meetsCoverage == coverageRequirementMet &&
+                         ((meetsCoverage && score < bestScore) ||
+                          (!meetsCoverage &&
+                           (coverage > bestCoverage ||
+                            (coverage == bestCoverage && score < bestScore)))));
+                    if (preferCandidate)
+                    {
+                        bestScore = score;
+                        bestCoverage = coverage;
+                        coverageRequirementMet = meetsCoverage;
+                        selectedId = candidate;
+                        selectedDistance = distRs(candidate);
+                    }
+                }
+            };
+
             nH = 0;
 
             bool completed = false;
             int bdMinId = 0, pcMinId = 0;
             double minSqrD = distDs.minCoeff(&bdMinId);
             double minSqrR = INFINITY;
-            if (distRs.size() != 0)
-            {
-                minSqrR = distRs.minCoeff(&pcMinId);
-            }
+            selectObstaclePlane(nH, pcMinId, minSqrR);
             for (int i = 0; !completed && i < (M + N); ++i)
             {
-                if (minSqrD < minSqrR)
+                int activeBoundaryForBudget = 0;
+                for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                {
+                    activeBoundaryForBudget += bdFlags(boundaryId) ? 1 : 0;
+                }
+                const bool mustReserveBoundarySlot =
+                    trajectoryFavorable && faceCountWeight > 0.0 &&
+                    tfOptions.max_faces > 0 && activeBoundaryForBudget > 0 &&
+                    maxFaces - nH <= activeBoundaryForBudget;
+                if (mustReserveBoundarySlot || minSqrD < minSqrR)
                 {
                     forwardH.block<1, 3>(nH, 0) = forwardB.row(bdMinId);
                     forwardH(nH, 3) = forwardD(bdMinId);
+                    forwardHIsBoundary[nH] = 1;
                     bdFlags(bdMinId) = 0;
                 }
                 else
                 {
                     forwardH.row(nH) = tangents.row(pcMinId);
+                    forwardHIsBoundary[nH] = 0;
                     pcFlags(pcMinId) = 0;
                 }
 
@@ -386,15 +575,146 @@ namespace firi
                         else
                         {
                             completed = false;
-                            if (minSqrR > distRs(j))
-                            {
-                                pcMinId = j;
-                                minSqrR = distRs(j);
-                            }
                         }
                     }
                 }
+                selectObstaclePlane(nH + 1, pcMinId, minSqrR);
                 ++nH;
+                if (!completed && nH >= maxFaces)
+                {
+                    int unresolvedBoundary = 0;
+                    int unresolvedObstacle = 0;
+                    for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                    {
+                        unresolvedBoundary += bdFlags(boundaryId) ? 1 : 0;
+                    }
+                    for (int obstacleId = 0; obstacleId < N; ++obstacleId)
+                    {
+                        unresolvedObstacle += pcFlags(obstacleId) ? 1 : 0;
+                    }
+
+                    // One bounded exchange is allowed at saturation. Replace
+                    // one selected obstacle plane by one remaining tangent only
+                    // when the resulting fixed-size set still separates every
+                    // local obstacle sample. This is a K*L*N certificate check,
+                    // not full FIRI construction or unbounded backtracking.
+                    bool exchangeAccepted = false;
+                    const bool exchangeAttempted = !budgetExchangeAttempted &&
+                                                   trajectoryFavorable &&
+                                                   unresolvedBoundary == 0 &&
+                                                   unresolvedObstacle > 0;
+                    budgetExchangeAttempted =
+                        budgetExchangeAttempted || exchangeAttempted;
+                    if (exchangeAttempted)
+                    {
+                        const int poolSize = std::max(1, tfOptions.candidate_pool_size);
+                        std::vector<std::pair<double, int>> remainingCandidates;
+                        remainingCandidates.reserve(poolSize);
+                        for (int candidate = 0; candidate < N; ++candidate)
+                        {
+                            if (!pcFlags(candidate))
+                            {
+                                continue;
+                            }
+                            const std::pair<double, int> item(distRs(candidate), candidate);
+                            const auto position = std::lower_bound(
+                                remainingCandidates.begin(), remainingCandidates.end(), item);
+                            remainingCandidates.insert(position, item);
+                            if (static_cast<int>(remainingCandidates.size()) > poolSize)
+                            {
+                                remainingCandidates.pop_back();
+                            }
+                        }
+
+                        double bestExchangeScore = INFINITY;
+                        int bestCandidate = -1;
+                        int bestReplacement = -1;
+                        for (const auto &item : remainingCandidates)
+                        {
+                            const int candidate = item.second;
+                            const Eigen::Vector3d physicalNormal =
+                                forward.transpose() *
+                                tangents.block<1, 3>(candidate, 0).transpose();
+                            const double directionalDamage =
+                                physicalNormal.norm() > epsilon
+                                    ? std::pow(physicalNormal.normalized().dot(
+                                                   favorableDirection),
+                                               2)
+                                    : 0.0;
+                            const double exchangeScore =
+                                std::log(std::max(distRs(candidate), epsilon)) +
+                                favorableWeight * directionalDamage;
+                            for (int replacement = 0; replacement < nH; ++replacement)
+                            {
+                                if (forwardHIsBoundary[replacement])
+                                {
+                                    continue;
+                                }
+                                bool separatesAll = true;
+                                for (int pointId = 0; pointId < N && separatesAll; ++pointId)
+                                {
+                                    bool separated =
+                                        tangents.block<1, 3>(candidate, 0).dot(
+                                            forwardPC.col(pointId)) +
+                                            tangents(candidate, 3) > -epsilon;
+                                    for (int planeId = 0;
+                                         !separated && planeId < nH;
+                                         ++planeId)
+                                    {
+                                        if (planeId != replacement &&
+                                            forwardH.block<1, 3>(planeId, 0).dot(
+                                                    forwardPC.col(pointId)) +
+                                                    forwardH(planeId, 3) >
+                                                -epsilon)
+                                        {
+                                            separated = true;
+                                        }
+                                    }
+                                    separatesAll = separated;
+                                }
+                                if (separatesAll && exchangeScore < bestExchangeScore)
+                                {
+                                    bestExchangeScore = exchangeScore;
+                                    bestCandidate = candidate;
+                                    bestReplacement = replacement;
+                                }
+                            }
+                        }
+
+                        if (bestCandidate >= 0 && bestReplacement >= 0)
+                        {
+                            forwardH.row(bestReplacement) = tangents.row(bestCandidate);
+                            forwardHIsBoundary[bestReplacement] = 0;
+                            pcFlags.setZero();
+                            completed = true;
+                            exchangeAccepted = true;
+                            budgetExchangeAccepted = true;
+                            unresolvedObstacle = 0;
+                        }
+                    }
+
+                    if (tfDiagnostics != nullptr)
+                    {
+                        tfDiagnostics->budget_exchange_attempted =
+                            budgetExchangeAttempted;
+                        tfDiagnostics->budget_exchange_accepted =
+                            budgetExchangeAccepted;
+                    }
+                    if (exchangeAccepted)
+                    {
+                        continue;
+                    }
+                    if (tfDiagnostics != nullptr)
+                    {
+                        tfDiagnostics->face_count = nH;
+                        tfDiagnostics->face_budget_saturated = true;
+                        tfDiagnostics->unresolved_boundary_count = unresolvedBoundary;
+                        tfDiagnostics->unresolved_obstacle_count = unresolvedObstacle;
+                        tfDiagnostics->unresolved_constraint_count =
+                            unresolvedBoundary + unresolvedObstacle;
+                    }
+                    return false;
+                }
             }
 
             hPoly.resize(nH, 4);
@@ -409,7 +729,22 @@ namespace firi
                 break;
             }
 
-            maxVolInsEllipsoid(hPoly, R, p, r);
+            if (!maxVolInsEllipsoid(hPoly, R, p, r,
+                                    favorableDirection, favorableWeight))
+            {
+                return false;
+            }
+        }
+
+        if (tfDiagnostics != nullptr)
+        {
+            tfDiagnostics->face_count = hPoly.rows();
+            tfDiagnostics->face_budget_saturated = hPoly.rows() >= maxFaces;
+            const Eigen::Vector3d projected =
+                r.asDiagonal() * R.transpose() * favorableDirection;
+            tfDiagnostics->directional_radius = trajectoryFavorable
+                                                    ? projected.norm()
+                                                    : 0.0;
         }
 
         return true;

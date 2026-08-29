@@ -107,3 +107,53 @@ The angle between the arrow of 2D Nav Goal and positive x-axis (red axis) decide
 - [SDLP: Seidel's Algorithm](https://github.com/ZJU-FAST-Lab/SDLP) on Linear-Complexity Linear Programming for Computational Geometry.
 - [VertexEnumeration3D](https://github.com/ZJU-FAST-Lab/VertexEnumeration3D): Highly Efficient Vertex Enumeration for 3D Convex Polytopes (Outperforms [cddlib](https://github.com/cddlib/cddlib) in 3D).
 - [LBFGS-Lite](https://github.com/ZJU-FAST-Lab/LBFGS-Lite): An Easy-to-Use Header-Only L-BFGS Solver.
+
+## Experimental TF-SFC MVP
+
+`gcopter/include/gcopter/traj_favorable_sfc.hpp` provides a standalone,
+header-only baseline for trajectory-favorable, face-bounded corridor experiments.
+It supports Frenet, trajectory-sample PCA, and externally supplied sensitivity
+Gramian directions; a missing or invalid Gramian is explicitly recorded as a
+fallback. The OBB MVP produces a conservative six-face oriented box and reports face count, generation time,
+weighted directional width, and trajectory-sample slack.
+
+The global-planning demo now selects the actual corridor generator with
+`corridor_method:=firi|tf_firi|tf_sfc|obb|ellipsoid_decomp`. `tf_firi`
+preserves native FIRI's route segmentation, obstacle crop, boundary and shortcut,
+but adds a trajectory-directional MVIE radius term, a volume/face-count plane
+selection score and a hard total-face budget. `ellipsoid_decomp` calls
+DecompUtil's `EllipsoidDecomp3D::dilate`, i.e. the implementation associated
+with Liu et al. (ICRA 2017). All outputs are passed to the same GCOPTER
+optimizer and RViz visualization path; strict runs disable fallback so a FIRI
+result cannot be counted as another method's success.
+
+GCOPTER's original `convexCover + FIRI` is not the Liu implementation. It
+segments the RRT* route, crops local obstacles, alternates separating-plane
+construction with a maximum-volume-inscribed-ellipsoid update (four iterations
+in the bundled old FIRI), and then shortcuts overlapping regions. DecompUtil
+inflates an ellipsoid around each collision-free line segment and greedily adds
+closest-obstacle separating planes, without that FIRI MVIE alternation.
+
+This remains a staged implementation. The first `tf_firi` version uses the
+shared route-segment direction as a high-velocity proxy; it must not be reported
+as MINCO sensitivity. The next bounded pass will condition FIRI on the initialized
+MINCO trajectory without changing the route or downstream optimizer.
+
+Minimal usage:
+
+```cpp
+#include "gcopter/traj_favorable_sfc.hpp"
+
+tf_sfc::Parameters param;
+param.direction_mode = tf_sfc::DirectionMode::PCA;
+tf_sfc::Corridor corridor;
+const bool ok = tf_sfc::generateCorridor(
+    boundary, obstacle_points, trajectory_samples,
+    tangent, lateral, corridor, param);
+```
+
+See the Chinese [TF-SFC experiment guide](TF_SFC_EXPERIMENT_GUIDE.md) for the
+catkin workspace layout, launch commands, CSV fields, and comparison protocol.
+The [ICRA experiment readiness checklist](ICRA_EXPERIMENT_READINESS.md) separates
+the current reproducible baselines from the work still required before freezing
+paper statistics.
