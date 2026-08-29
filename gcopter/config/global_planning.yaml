@@ -48,12 +48,12 @@ Experiment:
   Tag:                     'default'
   RouteSeed:               0
   FixedStartGoalEnabled:   false
-  FixedStartX:             -15.0
-  FixedStartY:             -9.0
-  # z=0.5 matches the default dilated-map clearance; z=0.1 is invalid here.
-  FixedStartZ:             0.5
-  FixedGoalX:              15.0
-  FixedGoalY:              9.0
+  # Set these only after confirming both points are free in the GCOPTER map.
+  FixedStartX:             0.0
+  FixedStartY:             0.0
+  FixedStartZ:             1.0
+  FixedGoalX:              0.0
+  FixedGoalY:              0.0
   FixedGoalZ:              1.0
 
 Corridor:
@@ -78,6 +78,7 @@ TfFiri:
   MaxFaces:                12
   DirectionalWidthWeight: 1.0
   FaceCountWeight:        0.25
+  CandidatePoolSize:      4
   Progress:                7.0
   Range:                   3.0
 

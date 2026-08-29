@@ -6,11 +6,11 @@
   <arg name="map_seed" default="1024"/>
   <arg name="route_seed" default="0"/>
   <arg name="fixed_start_goal_enabled" default="false"/>
-  <arg name="fixed_start_x" default="-15.0"/>
-  <arg name="fixed_start_y" default="-9.0"/>
-  <arg name="fixed_start_z" default="0.5"/>
-  <arg name="fixed_goal_x" default="15.0"/>
-  <arg name="fixed_goal_y" default="9.0"/>
+  <arg name="fixed_start_x" default="0.0"/>
+  <arg name="fixed_start_y" default="0.0"/>
+  <arg name="fixed_start_z" default="1.0"/>
+  <arg name="fixed_goal_x" default="0.0"/>
+  <arg name="fixed_goal_y" default="0.0"/>
   <arg name="fixed_goal_z" default="1.0"/>
   <arg name="corridor_method" default="firi"/>
   <arg name="allow_corridor_fallback" default="false"/>
@@ -26,6 +26,7 @@
   <arg name="tf_firi_max_faces" default="12"/>
   <arg name="tf_firi_directional_width_weight" default="1.0"/>
   <arg name="tf_firi_face_count_weight" default="0.25"/>
+  <arg name="tf_firi_candidate_pool_size" default="4"/>
   <arg name="tf_firi_progress" default="7.0"/>
   <arg name="tf_firi_range" default="3.0"/>
   <arg name="decomp_local_bbox_forward" default="0.5"/>
@@ -85,6 +86,7 @@
   <param name="TfFiri/MaxFaces" value="$(arg tf_firi_max_faces)" type="int"/>
   <param name="TfFiri/DirectionalWidthWeight" value="$(arg tf_firi_directional_width_weight)" type="double"/>
   <param name="TfFiri/FaceCountWeight" value="$(arg tf_firi_face_count_weight)" type="double"/>
+  <param name="TfFiri/CandidatePoolSize" value="$(arg tf_firi_candidate_pool_size)" type="int"/>
   <param name="TfFiri/Progress" value="$(arg tf_firi_progress)" type="double"/>
   <param name="TfFiri/Range" value="$(arg tf_firi_range)" type="double"/>
   <param name="Decomp/LocalBBoxForward" value="$(arg decomp_local_bbox_forward)" type="double"/>

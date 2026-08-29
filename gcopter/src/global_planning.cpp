@@ -80,6 +80,7 @@ struct Config
     int tfFiriMaxFaces;
     double tfFiriDirectionalWidthWeight;
     double tfFiriFaceCountWeight;
+    int tfFiriCandidatePoolSize;
     double tfFiriProgress;
     double tfFiriRange;
     double decompLocalBBoxForward;
@@ -119,11 +120,11 @@ struct Config
         nh_priv.param("Experiment/MapSeed", mapSeed, 1024);
         nh_priv.param("Experiment/RouteSeed", routeSeed, 0);
         nh_priv.param("Experiment/FixedStartGoalEnabled", fixedStartGoalEnabled, false);
-        nh_priv.param("Experiment/FixedStartX", fixedStartX, -15.0);
-        nh_priv.param("Experiment/FixedStartY", fixedStartY, -9.0);
-        nh_priv.param("Experiment/FixedStartZ", fixedStartZ, 0.5);
-        nh_priv.param("Experiment/FixedGoalX", fixedGoalX, 15.0);
-        nh_priv.param("Experiment/FixedGoalY", fixedGoalY, 9.0);
+        nh_priv.param("Experiment/FixedStartX", fixedStartX, 0.0);
+        nh_priv.param("Experiment/FixedStartY", fixedStartY, 0.0);
+        nh_priv.param("Experiment/FixedStartZ", fixedStartZ, 1.0);
+        nh_priv.param("Experiment/FixedGoalX", fixedGoalX, 0.0);
+        nh_priv.param("Experiment/FixedGoalY", fixedGoalY, 0.0);
         nh_priv.param("Experiment/FixedGoalZ", fixedGoalZ, 1.0);
         nh_priv.param<std::string>("Corridor/Method", corridorMethod, "firi");
         nh_priv.param("Corridor/AllowFallback", allowCorridorFallback, false);
@@ -139,6 +140,7 @@ struct Config
         nh_priv.param("TfFiri/MaxFaces", tfFiriMaxFaces, 12);
         nh_priv.param("TfFiri/DirectionalWidthWeight", tfFiriDirectionalWidthWeight, 1.0);
         nh_priv.param("TfFiri/FaceCountWeight", tfFiriFaceCountWeight, 0.25);
+        nh_priv.param("TfFiri/CandidatePoolSize", tfFiriCandidatePoolSize, 4);
         nh_priv.param("TfFiri/Progress", tfFiriProgress, 7.0);
         nh_priv.param("TfFiri/Range", tfFiriRange, 3.0);
         nh_priv.param("Decomp/LocalBBoxForward", decompLocalBBoxForward, 0.5);
@@ -232,6 +234,11 @@ public:
                 if (voxelMap.query(start) != 0 || voxelMap.query(goal) != 0)
                 {
                     ROS_ERROR("Fixed experiment start or goal is occupied after dilation.");
+                    return;
+                }
+                if ((goal - start).norm() <= config.voxelWidth)
+                {
+                    ROS_ERROR("Fixed experiment start and goal must be distinct.");
                     return;
                 }
                 startGoal.clear();
@@ -344,6 +351,8 @@ public:
                     std::max(0.0, config.tfFiriDirectionalWidthWeight);
                 options.face_count_weight =
                     std::max(0.0, config.tfFiriFaceCountWeight);
+                options.candidate_pool_size =
+                    std::max(1, config.tfFiriCandidatePoolSize);
                 options.max_faces = std::max(6, config.tfFiriMaxFaces);
                 std::vector<sfc_gen::TrajectoryFavorableFiriInfo> infos;
                 const auto tfFiriStarted = std::chrono::steady_clock::now();
@@ -368,8 +377,8 @@ public:
                         corridorRecord.face_count = failure.face_count;
                         corridorRecord.face_budget_saturated =
                             failure.face_budget_saturated;
-                        corridorRecord.face_budget_excess =
-                            std::max(0, failure.face_count - options.max_faces);
+                        corridorRecord.unresolved_constraint_count =
+                            failure.unresolved_constraint_count;
                         corridorRecord.directional_radius_m =
                             failure.directional_radius;
                         corridorRecord.directional_width_weight =
@@ -396,8 +405,8 @@ public:
                     corridorRecord.face_count = hPolys[i].rows();
                     corridorRecord.face_budget_saturated =
                         infos[i].face_budget_saturated;
-                    corridorRecord.face_budget_excess =
-                        std::max(0, hPolys[i].rows() - options.max_faces);
+                    corridorRecord.unresolved_constraint_count =
+                        infos[i].unresolved_constraint_count;
                     corridorRecord.generation_time_ms =
                         generationMs / static_cast<double>(hPolys.size());
                     corridorRecord.weighted_width =

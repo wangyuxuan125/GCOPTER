@@ -62,23 +62,26 @@ roslaunch gcopter global_planning.launch \
 
 TF-FIRI 核心第一阶段（严格禁止回退）：
 
+先在 GCOPTER 当前地图中交互选择并确认一组无障碍起终点，从 run CSV 复制精确坐标，再将下列占位符替换为该坐标。不要直接复用 EGO 地图的端点。
+
 ```bash
 roslaunch gcopter global_planning.launch \
   map_seed:=42 \
   route_seed:=42 \
   fixed_start_goal_enabled:=true \
-  fixed_start_x:=-15 fixed_start_y:=-9 fixed_start_z:=0.5 \
-  fixed_goal_x:=15 fixed_goal_y:=9 fixed_goal_z:=1.0 \
+  fixed_start_x:=<verified_x> fixed_start_y:=<verified_y> fixed_start_z:=<verified_z> \
+  fixed_goal_x:=<verified_x> fixed_goal_y:=<verified_y> fixed_goal_z:=<verified_z> \
   corridor_method:=tf_firi \
   allow_corridor_fallback:=false \
   tf_firi_max_faces:=12 \
   tf_firi_directional_width_weight:=1.0 \
   tf_firi_face_count_weight:=0.25 \
+  tf_firi_candidate_pool_size:=4 \
   experiment_tag:=gcopter_tf_firi_f12_w1_fw025 \
   experiment_log_directory:=$HOME/tf_sfc_results/gcopter
 ```
 
-这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。GCOPTER 默认膨胀半径为 0.5 m，因此固定场景起点 z 使用 0.5 m；EGO 的 z=0.1 m 在该地图边界下无效。
+这一阶段在原生 FIRI 内部加入沿共享 RRT 路段方向的宽度目标，并以“候选面距离（体积代理）—覆盖点数（面数代理）”选择障碍面，同时施加总面数硬上限。候选选择只检查固定大小的最近候选池，并在达到面预算时立即停止，不会先生成完整 FIRI 再裁剪。它针对高速方向不友好的 FIRI 失效模式，但还不是 MINCO sensitivity 版本。
 
 TF-SFC 六面 OBB（严格禁止回退）：
 
@@ -148,7 +151,7 @@ corridor_penalty_cost_initial, corridor_penalty_cost_final,
 max_corridor_violation_initial_m, max_corridor_violation_final_m
 ```
 
-`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v8 还记录 `route_seed`、`fixed_start_goal`、`directional_radius_m`、`directional_width_weight`、`face_count_weight` 与 `face_budget_excess`。预算失败时 `face_count` 是完整安全候选实际所需面数，不再固定显示为 13。文件使用追加模式。
+`requested_method`、`method` 和 `fallback_used` 分别记录请求方法、实际执行方法和是否回退；分段文件额外记录 TF-SFC 宽度、余量、重叠和失败原因。v8 还记录 `route_seed`、`fixed_start_goal`、`directional_radius_m`、`directional_width_weight`、`face_count_weight` 与 `unresolved_constraint_count`。预算失败时该字段说明达到面数上限时仍未处理的局部边界或障碍分离约束数。文件使用追加模式。
 
 快速查看：
 
@@ -158,7 +161,7 @@ head -n 5 $HOME/tf_sfc_results/gcopter/gcopter_runs_v8.csv
 
 ## 4. 与 EGO/TF-SFC 对比时的口径
 
-- 使用相同地图边界、障碍 seed、起终点和动力学上限。
+- 同一规划器内部使用相同地图、障碍 seed、起终点和动力学上限；EGO 与 GCOPTER 地图不同时不得直接比较跨规划器成功率。
 - 正式实验使用 Release 编译，并先完成预热运行。
 - 重点比较 `corridor_generation_ms`、`total_faces/mean_faces`、`optimizer_ms`、`total_planning_ms`、`success`、轨迹时长和轨迹长度。
 - mean/p95/max 必须由逐次原始记录计算，不要只保存终端平均值。

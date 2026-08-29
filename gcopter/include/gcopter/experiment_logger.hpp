@@ -72,7 +72,7 @@ namespace gcopter_experiment
         int obstacle_face_count = 0;
         int obstacle_point_count = 0;
         bool face_budget_saturated = false;
-        int face_budget_excess = 0;
+        int unresolved_constraint_count = 0;
         double generation_time_ms = 0.0;
         double weighted_width = 0.0;
         double min_sample_slack = 0.0;
@@ -202,7 +202,7 @@ namespace gcopter_experiment
             {
                 corridorOutput << "schema_version,run_id,timestamp_s,experiment_tag,requested_method,"
                                   "method,piece_id,face_count,obstacle_face_count,obstacle_point_count,"
-                                  "face_budget_saturated,face_budget_excess,generation_time_ms,weighted_width,"
+                                  "face_budget_saturated,unresolved_constraint_count,generation_time_ms,weighted_width,"
                                   "min_sample_slack,anchor_clearance_radius,directional_radius_m,"
                                   "directional_width_weight,face_count_weight,overlap_radius_to_next,"
                                   "valid,direction_fallback,failure_reason\n";
@@ -216,7 +216,7 @@ namespace gcopter_experiment
                                << corridor.face_count << ',' << corridor.obstacle_face_count << ','
                                << corridor.obstacle_point_count << ','
                                << corridor.face_budget_saturated << ','
-                               << corridor.face_budget_excess << ','
+                               << corridor.unresolved_constraint_count << ','
                                << corridor.generation_time_ms << ','
                                << corridor.weighted_width << ',' << corridor.min_sample_slack << ','
                                << corridor.anchor_clearance_radius << ','

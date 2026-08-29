@@ -48,6 +48,7 @@ namespace sfc_gen
     {
         int face_count = 0;
         bool face_budget_saturated = false;
+        int unresolved_constraint_count = 0;
         double directional_radius = 0.0;
         Eigen::Vector3d direction = Eigen::Vector3d::Zero();
     };
@@ -278,6 +279,7 @@ namespace sfc_gen
             {
                 infos.push_back({diagnostics.face_count,
                                  diagnostics.face_budget_saturated,
+                                 diagnostics.unresolved_constraint_count,
                                  diagnostics.directional_radius,
                                  segmentOptions.direction.normalized()});
                 return false;
@@ -297,6 +299,7 @@ namespace sfc_gen
                     {
                         infos.push_back({gapDiagnostics.face_count,
                                          gapDiagnostics.face_budget_saturated,
+                                         gapDiagnostics.unresolved_constraint_count,
                                          gapDiagnostics.directional_radius,
                                          gapOptions.direction.normalized()});
                         return false;
@@ -304,6 +307,7 @@ namespace sfc_gen
                     hpolys.emplace_back(gap);
                     infos.push_back({gapDiagnostics.face_count,
                                      gapDiagnostics.face_budget_saturated,
+                                     gapDiagnostics.unresolved_constraint_count,
                                      gapDiagnostics.directional_radius,
                                      gapOptions.direction.normalized()});
                 }
@@ -312,6 +316,7 @@ namespace sfc_gen
             hpolys.emplace_back(hp);
             infos.push_back({diagnostics.face_count,
                              diagnostics.face_budget_saturated,
+                             diagnostics.unresolved_constraint_count,
                              diagnostics.directional_radius,
                              segmentOptions.direction.normalized()});
         }

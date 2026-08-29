@@ -38,6 +38,7 @@
 #include <cfloat>
 #include <cmath>
 #include <vector>
+#include <utility>
 
 namespace firi
 {
@@ -48,6 +49,7 @@ namespace firi
         Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
         double directional_width_weight = 0.0;
         double face_count_weight = 0.0;
+        int candidate_pool_size = 4;
         int max_faces = 0;
     };
 
@@ -55,6 +57,7 @@ namespace firi
     {
         int face_count = 0;
         bool face_budget_saturated = false;
+        int unresolved_constraint_count = 0;
         double directional_radius = 0.0;
     };
 
@@ -411,13 +414,30 @@ namespace firi
             {
                 selectedId = -1;
                 selectedDistance = INFINITY;
-                double bestScore = INFINITY;
+                const int poolSize = faceCountWeight > 0.0
+                                         ? std::max(1, tfOptions.candidate_pool_size)
+                                         : 1;
+                std::vector<std::pair<double, int>> shortlist;
+                shortlist.reserve(poolSize);
                 for (int candidate = 0; candidate < N; ++candidate)
                 {
                     if (!pcFlags(candidate))
                     {
                         continue;
                     }
+                    const std::pair<double, int> item(distRs(candidate), candidate);
+                    const auto position = std::lower_bound(shortlist.begin(), shortlist.end(), item);
+                    shortlist.insert(position, item);
+                    if (static_cast<int>(shortlist.size()) > poolSize)
+                    {
+                        shortlist.pop_back();
+                    }
+                }
+
+                double bestScore = INFINITY;
+                for (const auto &item : shortlist)
+                {
+                    const int candidate = item.second;
                     int coverage = 0;
                     if (faceCountWeight > 0.0)
                     {
@@ -432,8 +452,15 @@ namespace firi
                             }
                         }
                     }
+                    const Eigen::Vector3d physicalNormal =
+                        forward.transpose() * tangents.block<1, 3>(candidate, 0).transpose();
+                    const double directionalDamage =
+                        trajectoryFavorable && physicalNormal.norm() > epsilon
+                            ? std::pow(physicalNormal.normalized().dot(favorableDirection), 2)
+                            : 0.0;
                     const double score = std::log(std::max(distRs(candidate), epsilon)) -
-                                         faceCountWeight * std::log1p(static_cast<double>(coverage));
+                                         faceCountWeight * std::log1p(static_cast<double>(coverage)) +
+                                         favorableWeight * directionalDamage;
                     if (score < bestScore)
                     {
                         bestScore = score;
@@ -495,6 +522,25 @@ namespace firi
                 }
                 selectObstaclePlane(pcMinId, minSqrR);
                 ++nH;
+                if (!completed && nH >= maxFaces)
+                {
+                    if (tfDiagnostics != nullptr)
+                    {
+                        int unresolved = 0;
+                        for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                        {
+                            unresolved += bdFlags(boundaryId) ? 1 : 0;
+                        }
+                        for (int obstacleId = 0; obstacleId < N; ++obstacleId)
+                        {
+                            unresolved += pcFlags(obstacleId) ? 1 : 0;
+                        }
+                        tfDiagnostics->face_count = nH;
+                        tfDiagnostics->face_budget_saturated = true;
+                        tfDiagnostics->unresolved_constraint_count = unresolved;
+                    }
+                    return false;
+                }
             }
 
             hPoly.resize(nH, 4);
@@ -527,10 +573,7 @@ namespace firi
                                                     : 0.0;
         }
 
-        // Construct the complete safe polytope before enforcing the budget.
-        // Returning at max_faces + 1 hid the actual number of required faces
-        // and made every infeasible trial look identical in schema v7.
-        return hPoly.rows() <= maxFaces;
+        return true;
     }
 
 }
