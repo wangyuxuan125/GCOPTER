@@ -75,10 +75,10 @@ TfSfc:
 TfFiri:
   # First paper-stage TF-FIRI conditions native FIRI on the route/velocity
   # direction.  MINCO sensitivity-conditioned refinement is a separate stage.
-  MaxFaces:                12
+  MaxFaces:                24
   DirectionalWidthWeight: 1.0
   FaceCountWeight:        0.25
-  CandidatePoolSize:      4
+  CandidatePoolSize:      8
   Progress:                7.0
   Range:                   3.0
 

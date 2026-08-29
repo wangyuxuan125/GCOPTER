@@ -137,10 +137,10 @@ struct Config
         nh_priv.param("TfSfc/InflationStep", tfSfcInflationStep, 0.10);
         nh_priv.param("TfSfc/MinOverlapRadius", tfSfcMinOverlapRadius, 0.04);
         nh_priv.param("TfSfc/MaxSegmentLength", tfSfcMaxSegmentLength, 1.0);
-        nh_priv.param("TfFiri/MaxFaces", tfFiriMaxFaces, 12);
+        nh_priv.param("TfFiri/MaxFaces", tfFiriMaxFaces, 24);
         nh_priv.param("TfFiri/DirectionalWidthWeight", tfFiriDirectionalWidthWeight, 1.0);
         nh_priv.param("TfFiri/FaceCountWeight", tfFiriFaceCountWeight, 0.25);
-        nh_priv.param("TfFiri/CandidatePoolSize", tfFiriCandidatePoolSize, 4);
+        nh_priv.param("TfFiri/CandidatePoolSize", tfFiriCandidatePoolSize, 8);
         nh_priv.param("TfFiri/Progress", tfFiriProgress, 7.0);
         nh_priv.param("TfFiri/Range", tfFiriRange, 3.0);
         nh_priv.param("Decomp/LocalBBoxForward", decompLocalBBoxForward, 0.5);

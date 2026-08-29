@@ -23,10 +23,10 @@
   <arg name="tf_sfc_inflation_step" default="0.10"/>
   <arg name="tf_sfc_min_overlap_radius" default="0.04"/>
   <arg name="tf_sfc_max_segment_length" default="1.0"/>
-  <arg name="tf_firi_max_faces" default="12"/>
+  <arg name="tf_firi_max_faces" default="24"/>
   <arg name="tf_firi_directional_width_weight" default="1.0"/>
   <arg name="tf_firi_face_count_weight" default="0.25"/>
-  <arg name="tf_firi_candidate_pool_size" default="4"/>
+  <arg name="tf_firi_candidate_pool_size" default="8"/>
   <arg name="tf_firi_progress" default="7.0"/>
   <arg name="tf_firi_range" default="3.0"/>
   <arg name="decomp_local_bbox_forward" default="0.5"/>

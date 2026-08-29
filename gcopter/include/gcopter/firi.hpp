@@ -405,12 +405,16 @@ namespace firi
             Eigen::Matrix<uint8_t, -1, 1> bdFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(M, 1);
             Eigen::Matrix<uint8_t, -1, 1> pcFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(N, 1);
 
-            // Select the next obstacle plane by a volume/face-count tradeoff.
-            // With zero face_count_weight this is exactly the native nearest-
-            // obstacle rule.  A positive weight rewards one plane excluding
-            // several still-active obstacle samples, reducing constraints
-            // without changing the hard separation certificate.
-            auto selectObstaclePlane = [&](int &selectedId, double &selectedDistance)
+            // Select the next obstacle plane by a bounded volume/face-count
+            // tradeoff. Under a hard face budget, feasibility is
+            // lexicographic: first prefer candidates that cover the minimum
+            // number of active obstacle samples required by the remaining
+            // obstacle-face slots, then optimize distance and directional
+            // damage. Native FIRI (zero face weight/no budget) keeps its
+            // original nearest-obstacle rule exactly.
+            auto selectObstaclePlane = [&](const int acceptedFaceCount,
+                                           int &selectedId,
+                                           double &selectedDistance)
             {
                 selectedId = -1;
                 selectedDistance = INFINITY;
@@ -434,7 +438,32 @@ namespace firi
                     }
                 }
 
+                int activeBoundaryCount = 0;
+                int activeObstacleCount = 0;
+                for (int boundaryId = 0; boundaryId < M; ++boundaryId)
+                {
+                    activeBoundaryCount += bdFlags(boundaryId) ? 1 : 0;
+                }
+                for (int obstacleId = 0; obstacleId < N; ++obstacleId)
+                {
+                    activeObstacleCount += pcFlags(obstacleId) ? 1 : 0;
+                }
+                const bool budgetAware = trajectoryFavorable &&
+                                         faceCountWeight > 0.0 &&
+                                         tfOptions.max_faces > 0;
+                const int obstacleFaceSlots =
+                    maxFaces - acceptedFaceCount - activeBoundaryCount;
+                const int coverageDivisor = std::max(obstacleFaceSlots, 1);
+                const int requiredCoverage = budgetAware && activeObstacleCount > 0
+                                                 ? std::max(1,
+                                                            (activeObstacleCount +
+                                                             coverageDivisor - 1) /
+                                                                coverageDivisor)
+                                                 : 1;
+
                 double bestScore = INFINITY;
+                int bestCoverage = -1;
+                bool coverageRequirementMet = false;
                 for (const auto &item : shortlist)
                 {
                     const int candidate = item.second;
@@ -461,9 +490,20 @@ namespace firi
                     const double score = std::log(std::max(distRs(candidate), epsilon)) -
                                          faceCountWeight * std::log1p(static_cast<double>(coverage)) +
                                          favorableWeight * directionalDamage;
-                    if (score < bestScore)
+                    const bool meetsCoverage = !budgetAware ||
+                                               coverage >= requiredCoverage;
+                    const bool preferCandidate =
+                        (meetsCoverage && !coverageRequirementMet) ||
+                        (meetsCoverage == coverageRequirementMet &&
+                         ((meetsCoverage && score < bestScore) ||
+                          (!meetsCoverage &&
+                           (coverage > bestCoverage ||
+                            (coverage == bestCoverage && score < bestScore)))));
+                    if (preferCandidate)
                     {
                         bestScore = score;
+                        bestCoverage = coverage;
+                        coverageRequirementMet = meetsCoverage;
                         selectedId = candidate;
                         selectedDistance = distRs(candidate);
                     }
@@ -476,7 +516,7 @@ namespace firi
             int bdMinId = 0, pcMinId = 0;
             double minSqrD = distDs.minCoeff(&bdMinId);
             double minSqrR = INFINITY;
-            selectObstaclePlane(pcMinId, minSqrR);
+            selectObstaclePlane(nH, pcMinId, minSqrR);
             for (int i = 0; !completed && i < (M + N); ++i)
             {
                 if (minSqrD < minSqrR)
@@ -520,7 +560,7 @@ namespace firi
                         }
                     }
                 }
-                selectObstaclePlane(pcMinId, minSqrR);
+                selectObstaclePlane(nH + 1, pcMinId, minSqrR);
                 ++nH;
                 if (!completed && nH >= maxFaces)
                 {

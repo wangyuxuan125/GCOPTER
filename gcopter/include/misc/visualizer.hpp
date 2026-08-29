@@ -44,12 +44,15 @@ public:
     Visualizer(ros::NodeHandle &nh_)
         : nh(nh_)
     {
-        routePub = nh.advertise<visualization_msgs::Marker>("/visualizer/route", 10);
-        wayPointsPub = nh.advertise<visualization_msgs::Marker>("/visualizer/waypoints", 10);
-        trajectoryPub = nh.advertise<visualization_msgs::Marker>("/visualizer/trajectory", 10);
-        meshPub = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh", 1000);
-        edgePub = nh.advertise<visualization_msgs::Marker>("/visualizer/edge", 1000);
-        spherePub = nh.advertise<visualization_msgs::Marker>("/visualizer/spheres", 1000);
+        // Geometry is static until the next planning request. Fixed-endpoint
+        // experiments can finish before RViz subscribes, so latch these
+        // markers for late subscribers as well as interactive runs.
+        routePub = nh.advertise<visualization_msgs::Marker>("/visualizer/route", 10, true);
+        wayPointsPub = nh.advertise<visualization_msgs::Marker>("/visualizer/waypoints", 10, true);
+        trajectoryPub = nh.advertise<visualization_msgs::Marker>("/visualizer/trajectory", 10, true);
+        meshPub = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh", 1000, true);
+        edgePub = nh.advertise<visualization_msgs::Marker>("/visualizer/edge", 1000, true);
+        spherePub = nh.advertise<visualization_msgs::Marker>("/visualizer/spheres", 1000, true);
         speedPub = nh.advertise<std_msgs::Float64>("/visualizer/speed", 1000);
         thrPub = nh.advertise<std_msgs::Float64>("/visualizer/total_thrust", 1000);
         tiltPub = nh.advertise<std_msgs::Float64>("/visualizer/tilt_angle", 1000);

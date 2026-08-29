@@ -136,7 +136,7 @@ namespace gcopter_experiment
                 return false;
             }
 
-            const std::string path = directory_ + "/gcopter_runs_v8.csv";
+            const std::string path = directory_ + "/gcopter_runs_v9.csv";
             const bool header = fileNeedsHeader(path);
             std::ofstream output(path, std::ios::out | std::ios::app);
             if (!output)
@@ -158,7 +158,7 @@ namespace gcopter_experiment
                           "max_corridor_violation_initial_m,max_corridor_violation_final_m\n";
             }
             output << std::setprecision(17)
-                   << 8 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                   << 9 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                    << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                    << csv(record.method) << ',' << record.fallback_used << ','
                    << csv(record.status) << ',' << record.success << ','
@@ -191,7 +191,7 @@ namespace gcopter_experiment
                 return true;
             }
 
-            const std::string corridorPath = directory_ + "/gcopter_corridors_v8.csv";
+            const std::string corridorPath = directory_ + "/gcopter_corridors_v9.csv";
             const bool corridorHeader = fileNeedsHeader(corridorPath);
             std::ofstream corridorOutput(corridorPath, std::ios::out | std::ios::app);
             if (!corridorOutput)
@@ -210,7 +210,7 @@ namespace gcopter_experiment
             corridorOutput << std::setprecision(17);
             for (const CorridorRecord &corridor : corridors)
             {
-                corridorOutput << 8 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+                corridorOutput << 9 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
                                << csv(record.experiment_tag) << ',' << csv(record.requested_method) << ','
                                << csv(record.method) << ',' << corridor.piece_id << ','
                                << corridor.face_count << ',' << corridor.obstacle_face_count << ','

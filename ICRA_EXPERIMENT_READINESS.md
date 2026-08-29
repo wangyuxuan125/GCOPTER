@@ -6,7 +6,7 @@ The GCOPTER branch is ready for controlled baseline development, but not yet for
 
 - FIRI, PCA/Frenet OBB-SFC, and Liu/DecompUtil EllipsoidDecomp all feed their H-polytopes into the same `GCOPTER_PolytopeSFC` setup and optimizer.
 - Strict runs disable FIRI fallback and log generation/setup/optimization failures.
-- Schema v8 records timing, geometry, trajectory results, constrained piece count, sampled corridor penalty/violation before and after optimization, plus map/route seeds, fixed endpoints and key map/dynamics parameters needed to audit fair comparisons.
+- Schema v9 records timing, geometry, trajectory results, constrained piece count, sampled corridor penalty/violation before and after optimization, plus map/route seeds, fixed endpoints and key map/dynamics parameters needed to audit fair comparisons.
 - `tf_firi` is a paired native-FIRI variant with a route-directional MVIE term and hard face budget. It is the first core-algorithm stage, not yet the final MINCO-sensitivity method.
 
 ## Still required
