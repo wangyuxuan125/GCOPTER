@@ -975,143 +975,99 @@ public:
                 if (config.experimentTag == "debug_metric" &&
                     std::isfinite(record.final_cost))
                 {
-                    // ------------------------------------------------------------
-                    // Finite-difference step sweep for the MINCO deformation metric.
-                    //
-                    // We use exactly the same nominal GCOPTER trajectory and change
-                    // only the Cartesian perturbation magnitude h.
-                    // ------------------------------------------------------------
-                    const double metricSteps[] =
-                    {
-                        0.005,
-                        0.010,
-                        0.020,
-                        0.050
-                    };
+                    gcopter::GCOPTER_PolytopeSFC::
+                        GaussNewtonDeformationMetrics
+                            gnMetrics;
                 
-                    for (const double metricStep : metricSteps)
-                    {
-                        gcopter::GCOPTER_PolytopeSFC::DeformationMetrics
-                            deformationMetrics;
+                    const double gnStep =
+                        0.01;
+                
+                    const double gnRelativeDamping =
+                        1.0e-3;
+                
+                    const auto metricStarted =
+                        std::chrono::steady_clock::now();
+                
+                    const bool success =
+                        gcopter.computeGaussNewtonDeformationMetrics(
+                            gnMetrics,
+                            gnStep,
+                            gnRelativeDamping);
+                        
+                    const double elapsedMs =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::steady_clock::now() -
+                                metricStarted)
+                            .count();
+                            
+                    ROS_INFO_STREAM(
+                        "TF_GN_COMPONENT_END "
+                        << "success=" << success
+                        << " pieces=" << gnMetrics.size()
+                        << " elapsed_ms=" << elapsedMs);
                     
-                        const bool metricSuccess =
-                            gcopter.computeDeformationMetrics(
-                                deformationMetrics,
-                                metricStep,   // 注意：这里必须是 metricStep
-                                1.0e-6,
-                                10.0,
-                                gcopter::GCOPTER_PolytopeSFC::
-                                    DeformationMetricObjective::DYNAMICS_ONLY);
-                            
-                        int validCount = 0;
-                        int significantNegativeCount = 0;
-                        int saturatedCount = 0;
-                            
-                        double sumSymmetryError = 0.0;
-                        double maxSymmetryError = 0.0;
-                            
-                        ROS_INFO_STREAM(
-                            "\n====================================================\n"
-                            << "TF DYNAMICS METRIC STEP SWEEP, h = "
-                            << metricStep
-                            << " m\n"
-                            << "====================================================");
-                        
-                        for (size_t pieceId = 0;
-                             pieceId < deformationMetrics.size();
-                             ++pieceId)
+                    for (size_t pieceId = 0;
+                         pieceId < gnMetrics.size();
+                         ++pieceId)
+                    {
+                        const auto &metric =
+                            gnMetrics[pieceId];
+                    
+                        if (!metric.valid)
                         {
-                            const auto &metric =
-                                deformationMetrics[pieceId];
-                        
-                            if (!metric.valid)
-                            {
-                                ROS_WARN_STREAM(
-                                    "TF_METRIC_SWEEP "
-                                    << "h=" << metricStep
-                                    << " piece=" << pieceId
-                                    << " INVALID reason="
-                                    << metric.failureReason);
-                                
-                                continue;
-                            }
-                        
-                            ++validCount;
-                        
-                            sumSymmetryError +=
-                                metric.symmetryError;
-                        
-                            maxSymmetryError =
-                                std::max(
-                                    maxSymmetryError,
-                                    metric.symmetryError);
-                                
-                            const Eigen::Vector3d rawEig =
-                                metric.rawStiffnessEigenvalues;
-                                
-                            const double spectralScale =
-                                std::max(
-                                    rawEig.cwiseAbs().maxCoeff(),
-                                    1.0);
-                                
-                            // Count only meaningful negative curvature rather than
-                            // tiny floating-point negative values.
-                            if (rawEig.minCoeff() <
-                                -1.0e-6 * spectralScale)
-                            {
-                                ++significantNegativeCount;
-                            }
-                        
-                            if (metric.anisotropy >= 9.999)
-                            {
-                                ++saturatedCount;
-                            }
-                        
-                            double rawSpectrumRatio = -1.0;
-                        
-                            // A positive value is reported only when the raw
-                            // stiffness is already positive definite.
-                            if (rawEig(0) > 1.0e-12)
-                            {
-                                rawSpectrumRatio =
-                                    rawEig(2) / rawEig(0);
-                            }
-                        
-                            ROS_INFO_STREAM(
-                                "TF_SCALAR_SWEEP "
-                                << "h=" << metricStep
-                                << " piece=" << pieceId
-                                << " eig=["
-                                << metric.rawStiffnessEigenvalues(0)
-                                << ", "
-                                << metric.rawStiffnessEigenvalues(1)
-                                << ", "
-                                << metric.rawStiffnessEigenvalues(2)
-                                << "]"
-                                << " grad_scalar_err="
-                                << metric.gradientScalarRelativeError);
+                            ROS_WARN_STREAM(
+                                "TF_GN_COMPONENT "
+                                << "piece=" << pieceId
+                                << " INVALID reason="
+                                << metric.failureReason);
+                            
+                            continue;
                         }
                     
-                        const double meanSymmetryError =
-                            validCount > 0
-                                ? sumSymmetryError /
-                                      static_cast<double>(validCount)
-                                : INFINITY;
+                        const double fractionSum =
+                            metric.velocityTraceFraction +
+                            metric.bodyRateTraceFraction +
+                            metric.tiltTraceFraction +
+                            metric.thrustTraceFraction;
                     
                         ROS_INFO_STREAM(
-                            "TF_METRIC_SWEEP_SUMMARY "
-                            << "h=" << metricStep
-                            << " success=" << metricSuccess
-                            << " valid=" << validCount
-                            << "/" << deformationMetrics.size()
-                            << " mean_sym="
-                            << meanSymmetryError
-                            << " max_sym="
-                            << maxSymmetryError
-                            << " negative="
-                            << significantNegativeCount
-                            << " saturated="
-                            << saturatedCount);
+                            "TF_GN_COMPONENT "
+                            << "piece=" << pieceId
+                        
+                            << " frac_v="
+                            << metric.velocityTraceFraction
+                        
+                            << " frac_omega="
+                            << metric.bodyRateTraceFraction
+                        
+                            << " frac_tilt="
+                            << metric.tiltTraceFraction
+                        
+                            << " frac_thrust="
+                            << metric.thrustTraceFraction
+                        
+                            << " frac_sum="
+                            << fractionSum
+                        
+                            << " dir_v="
+                            << metric.velocityDirectionality
+                        
+                            << " dir_omega="
+                            << metric.bodyRateDirectionality
+                        
+                            << " dir_tilt="
+                            << metric.tiltDirectionality
+                        
+                            << " dir_thrust="
+                            << metric.thrustDirectionality
+                        
+                            << " decomp_err="
+                            << metric.decompositionRelativeError
+                        
+                            << " total_anis="
+                            << metric.anisotropy);
                     }
                 }
 

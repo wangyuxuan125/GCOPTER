@@ -111,6 +111,100 @@ namespace gcopter
             Eigen::aligned_allocator<DeformationMetric>>
             DeformationMetrics;
 
+        struct GaussNewtonDeformationMetric
+        {
+            // J^T J before isotropic damping.
+            Eigen::Matrix3d gram =
+                Eigen::Matrix3d::Zero();
+            
+            // ------------------------------------------------------------
+            // Per-feature Gauss-Newton contributions:
+            //
+            //     G = G_v + G_omega + G_theta + G_thrust
+            //
+            // These matrices are diagnostic for understanding which
+            // physical quantity dominates the deformation metric.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d velocityGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d bodyRateGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d tiltGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d thrustGram =
+                Eigen::Matrix3d::Zero();
+        
+            // Positive-definite deformation stiffness:
+            //
+            //     K = J^T J + lambda I.
+            Eigen::Matrix3d stiffness =
+                Eigen::Matrix3d::Identity();
+        
+            // Determinant-normalized inverse stiffness.
+            //
+            // Large value means easier trajectory deformation.
+            Eigen::Matrix3d utility =
+                Eigen::Matrix3d::Identity();
+        
+            Eigen::Vector3d stiffnessEigenvalues =
+                Eigen::Vector3d::Ones();
+        
+            Eigen::Vector3d utilityEigenvalues =
+                Eigen::Vector3d::Ones();
+        
+            Eigen::Vector3d principalDirection =
+                Eigen::Vector3d::UnitX();
+        
+            double displacementStepUsed = 0.0;
+        
+            double dampingUsed = 0.0;
+        
+            double jacobianFrobeniusNorm = 0.0;
+        
+            // lambda_max(S) / lambda_min(S)
+            double anisotropy = 1.0;
+        
+            // lambda_max(S) / lambda_2(S).
+            // If this is close to 1, the principal direction
+            // should NOT be regarded as unique.
+            double principalGap = 1.0;
+
+            double velocityTraceFraction = 0.0;
+            double bodyRateTraceFraction = 0.0;
+            double tiltTraceFraction = 0.0;
+            double thrustTraceFraction = 0.0;
+
+            // Directionality of each contribution:
+            //
+            //     ||G_q - tr(G_q)/3 I||_F / tr(G_q)
+            //
+            // 0 means perfectly isotropic.
+            // Larger values mean stronger directional structure.
+            double velocityDirectionality = 0.0;
+            double bodyRateDirectionality = 0.0;
+            double tiltDirectionality = 0.0;
+            double thrustDirectionality = 0.0;
+
+            // Should be approximately zero.  Used to verify that the
+            // decomposition exactly reconstructs the full J^T J.
+            double decompositionRelativeError = INFINITY;
+        
+            bool valid = false;
+        
+            std::string failureReason = "none";
+        
+            EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        };
+
+        typedef std::vector<
+            GaussNewtonDeformationMetric,
+            Eigen::aligned_allocator<
+                GaussNewtonDeformationMetric>>
+            GaussNewtonDeformationMetrics;
+
     private:
         minco::MINCO_S3NU minco;
         flatness::FlatnessMap flatmap;
@@ -953,6 +1047,874 @@ namespace gcopter
             }
         
             return deformedPoints.allFinite();
+        }
+
+        inline bool evaluateDynamicsFeatureVector(
+            const Eigen::Matrix3Xd &testPoints,
+            Eigen::VectorXd &featureVector)
+        {
+            featureVector.resize(0);
+        
+            if (!optimizedStateValid)
+            {
+                return false;
+            }
+        
+            if (testPoints.rows() != 3 ||
+                testPoints.cols() != pieceN - 1)
+            {
+                return false;
+            }
+        
+            if (optimizedTimes.size() != pieceN ||
+                pieceN <= 0 ||
+                integralRes <= 0)
+            {
+                return false;
+            }
+        
+            if (magnitudeBd.size() < 5)
+            {
+                return false;
+            }
+        
+            // ------------------------------------------------------------
+            // Dimensionless dynamics scales.
+            // ------------------------------------------------------------
+            const double velocityScale =
+                std::max(
+                    std::abs(magnitudeBd(0)),
+                    1.0e-6);
+                
+            const double bodyRateScale =
+                std::max(
+                    std::abs(magnitudeBd(1)),
+                    1.0e-6);
+                
+            const double thetaMax =
+                std::max(
+                    std::abs(magnitudeBd(2)),
+                    1.0e-6);
+                
+            const double tiltScale =
+                std::max(
+                    std::sin(0.5 * thetaMax),
+                    1.0e-6);
+                
+            const double thrustMean =
+                0.5 *
+                (magnitudeBd(3) +
+                 magnitudeBd(4));
+                
+            const double thrustRadius =
+                std::max(
+                    0.5 *
+                        std::abs(
+                            magnitudeBd(4) -
+                            magnitudeBd(3)),
+                    1.0e-6);
+                        
+            // ------------------------------------------------------------
+            // Reconstruct the MINCO trajectory for the perturbed Cartesian
+            // inner waypoints. Durations remain fixed at T*.
+            // ------------------------------------------------------------
+            minco.setParameters(
+                testPoints,
+                optimizedTimes);
+            
+            Trajectory<5> metricTrajectory;
+            
+            minco.getTrajectory(
+                metricTrajectory);
+            
+            if (metricTrajectory.getPieceNum() != pieceN)
+            {
+                return false;
+            }
+        
+            // Each quadrature node contributes:
+            //
+            //   3 normalized velocity components
+            // + 3 normalized body-rate components
+            // + 2 normalized tilt quaternion components
+            // + 1 normalized thrust component
+            //
+            // = 9 features.
+            constexpr int featurePerNode = 9;
+        
+            const int nodeCount =
+                pieceN *
+                (integralRes + 1);
+        
+            featureVector.resize(
+                featurePerNode *
+                nodeCount);
+            
+            int offset = 0;
+            
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const double duration =
+                    optimizedTimes(pieceId);
+            
+                if (!std::isfinite(duration) ||
+                    duration <= 0.0)
+                {
+                    featureVector.resize(0);
+                    return false;
+                }
+            
+                const double dt =
+                    duration /
+                    static_cast<double>(
+                        integralRes);
+                    
+                const Piece<5> &piece =
+                    metricTrajectory[pieceId];
+                    
+                for (int sampleId = 0;
+                     sampleId <= integralRes;
+                     ++sampleId)
+                {
+                    const double alpha =
+                        static_cast<double>(sampleId) /
+                        static_cast<double>(integralRes);
+                
+                    const double localTime =
+                        alpha * duration;
+                
+                    const double trapezoidWeight =
+                        (sampleId == 0 ||
+                         sampleId == integralRes)
+                            ? 0.5
+                            : 1.0;
+                        
+                    // sqrt(weight * dt) makes J^T J approximate a
+                    // time integral of squared feature sensitivities.
+                    const double featureWeight =
+                        std::sqrt(
+                            trapezoidWeight *
+                            dt);
+                        
+                    const Eigen::Vector3d vel =
+                        piece.getVel(localTime);
+                        
+                    const Eigen::Vector3d acc =
+                        piece.getAcc(localTime);
+                        
+                    const Eigen::Vector3d jer =
+                        piece.getJer(localTime);
+                        
+                    double thrust = 0.0;
+                        
+                    Eigen::Vector4d quat =
+                        Eigen::Vector4d::Zero();
+                        
+                    Eigen::Vector3d bodyRate =
+                        Eigen::Vector3d::Zero();
+                        
+                    flatmap.forward(
+                        vel,
+                        acc,
+                        jer,
+                        0.0,
+                        0.0,
+                        thrust,
+                        quat,
+                        bodyRate);
+                    
+                    if (!vel.allFinite() ||
+                        !acc.allFinite() ||
+                        !jer.allFinite() ||
+                        !std::isfinite(thrust) ||
+                        !quat.allFinite() ||
+                        !bodyRate.allFinite())
+                    {
+                        featureVector.resize(0);
+                        return false;
+                    }
+                
+                    featureVector.segment<3>(
+                        offset) =
+                        featureWeight *
+                        vel /
+                        velocityScale;
+                    
+                    featureVector.segment<3>(
+                        offset + 3) =
+                        featureWeight *
+                        bodyRate /
+                        bodyRateScale;
+                    
+                    featureVector(offset + 6) =
+                        featureWeight *
+                        quat(1) /
+                        tiltScale;
+                    
+                    featureVector(offset + 7) =
+                        featureWeight *
+                        quat(2) /
+                        tiltScale;
+                    
+                    featureVector(offset + 8) =
+                        featureWeight *
+                        (thrust - thrustMean) /
+                        thrustRadius;
+                    
+                    offset +=
+                        featurePerNode;
+                }
+            }
+        
+            return featureVector.allFinite();
+        }
+
+        inline bool computeSingleGaussNewtonDeformationMetric(
+            const int pieceId,
+            GaussNewtonDeformationMetric &metric,
+            const double displacementStep,
+            const double relativeDamping)
+        {
+            metric =
+                GaussNewtonDeformationMetric();
+        
+            metric.displacementStepUsed =
+                displacementStep;
+        
+            auto fail =
+                [&](const char *reason) -> bool
+            {
+                metric.valid = false;
+                metric.failureReason = reason;
+                return false;
+            };
+        
+            if (!optimizedStateValid)
+            {
+                return fail(
+                    "optimized_state_invalid");
+            }
+        
+            if (pieceId < 0 ||
+                pieceId >= pieceN)
+            {
+                return fail(
+                    "invalid_piece_id");
+            }
+        
+            if (!std::isfinite(displacementStep) ||
+                displacementStep <= 0.0)
+            {
+                return fail(
+                    "invalid_displacement_step");
+            }
+        
+            if (!std::isfinite(relativeDamping) ||
+                relativeDamping < 0.0)
+            {
+                return fail(
+                    "invalid_relative_damping");
+            }
+        
+            Eigen::MatrixXd featureJacobian;
+        
+            bool jacobianAllocated =
+                false;
+        
+            // ------------------------------------------------------------
+            // Central finite difference of the DYNAMICS FEATURE VECTOR:
+            //
+            //     J(:,j) =
+            //
+            //       [phi(P + h D e_j)
+            //        -
+            //        phi(P - h D e_j)] / (2h)
+            //
+            // Only FIRST derivatives are needed.
+            // ------------------------------------------------------------
+            for (int axis = 0;
+                 axis < 3;
+                 ++axis)
+            {
+                Eigen::Matrix3Xd plusPoints;
+                Eigen::Matrix3Xd minusPoints;
+            
+                if (!buildPerturbedPointsForPiece(
+                        pieceId,
+                        axis,
+                        displacementStep,
+                        plusPoints,
+                        minusPoints))
+                {
+                    return fail(
+                        "cartesian_perturbation_failed");
+                }
+            
+                Eigen::VectorXd featurePlus;
+                Eigen::VectorXd featureMinus;
+            
+                if (!evaluateDynamicsFeatureVector(
+                        plusPoints,
+                        featurePlus))
+                {
+                    return fail(
+                        "feature_plus_failed");
+                }
+            
+                if (!evaluateDynamicsFeatureVector(
+                        minusPoints,
+                        featureMinus))
+                {
+                    return fail(
+                        "feature_minus_failed");
+                }
+            
+                if (featurePlus.size() <= 0 ||
+                    featurePlus.size() !=
+                        featureMinus.size())
+                {
+                    return fail(
+                        "feature_dimension_mismatch");
+                }
+            
+                if (!jacobianAllocated)
+                {
+                    featureJacobian.resize(
+                        featurePlus.size(),
+                        3);
+                    
+                    jacobianAllocated =
+                        true;
+                }
+            
+                if (featurePlus.size() !=
+                    featureJacobian.rows())
+                {
+                    return fail(
+                        "feature_dimension_changed");
+                }
+            
+                featureJacobian.col(axis) =
+                    (featurePlus -
+                     featureMinus) /
+                    (2.0 *
+                     displacementStep);
+            }
+        
+            if (!jacobianAllocated ||
+                !featureJacobian.allFinite())
+            {
+                return fail(
+                    "feature_jacobian_invalid");
+            }
+        
+            metric.jacobianFrobeniusNorm =
+                featureJacobian.norm();
+        
+            // ------------------------------------------------------------
+            // Gauss-Newton deformation Gram matrix.
+            //
+            //     G = J^T J >= 0
+            // ------------------------------------------------------------
+            Eigen::Matrix3d gram =
+                featureJacobian.transpose() *
+                featureJacobian;
+        
+            gram =
+                (0.5 *
+                 (gram +
+                  gram.transpose()))
+                    .eval();
+                
+            // ------------------------------------------------------------
+            // Decompose J^T J according to dynamics feature type.
+            //
+            // evaluateDynamicsFeatureVector() stores 9 entries per node:
+            //
+            //   rows 0..2 : normalized velocity
+            //   rows 3..5 : normalized body rate
+            //   rows 6..7 : normalized tilt quaternion components
+            //   row  8    : normalized thrust
+            //
+            // Hence no extra trajectory/feature evaluations are required.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d velocityGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d bodyRateGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d tiltGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d thrustGram =
+                Eigen::Matrix3d::Zero();
+
+            constexpr int featurePerNode = 9;
+
+            if (featureJacobian.rows() %
+                    featurePerNode !=
+                0)
+            {
+                return fail(
+                    "gn_feature_row_count_invalid");
+            }
+
+            const int featureNodeCount =
+                featureJacobian.rows() /
+                featurePerNode;
+
+            for (int nodeId = 0;
+                 nodeId < featureNodeCount;
+                 ++nodeId)
+            {
+                const int row =
+                    featurePerNode *
+                    nodeId;
+            
+                const Eigen::Matrix<double, 3, 3>
+                    velocityJacobian =
+                        featureJacobian.block<3, 3>(
+                            row,
+                            0);
+                        
+                const Eigen::Matrix<double, 3, 3>
+                    bodyRateJacobian =
+                        featureJacobian.block<3, 3>(
+                            row + 3,
+                            0);
+                        
+                const Eigen::Matrix<double, 2, 3>
+                    tiltJacobian =
+                        featureJacobian.block<2, 3>(
+                            row + 6,
+                            0);
+                        
+                const Eigen::Matrix<double, 1, 3>
+                    thrustJacobian =
+                        featureJacobian.block<1, 3>(
+                            row + 8,
+                            0);
+                        
+                velocityGram.noalias() +=
+                    velocityJacobian.transpose() *
+                    velocityJacobian;
+                        
+                bodyRateGram.noalias() +=
+                    bodyRateJacobian.transpose() *
+                    bodyRateJacobian;
+                        
+                tiltGram.noalias() +=
+                    tiltJacobian.transpose() *
+                    tiltJacobian;
+                        
+                thrustGram.noalias() +=
+                    thrustJacobian.transpose() *
+                    thrustJacobian;
+            }
+
+            // Numerical symmetrization for clean diagnostics.
+            velocityGram =
+                (0.5 *
+                 (velocityGram +
+                  velocityGram.transpose()))
+                    .eval();
+                
+            bodyRateGram =
+                (0.5 *
+                 (bodyRateGram +
+                  bodyRateGram.transpose()))
+                    .eval();
+                
+            tiltGram =
+                (0.5 *
+                 (tiltGram +
+                  tiltGram.transpose()))
+                    .eval();
+                
+            thrustGram =
+                (0.5 *
+                 (thrustGram +
+                  thrustGram.transpose()))
+                    .eval();
+                
+            if (!velocityGram.allFinite() ||
+                !bodyRateGram.allFinite() ||
+                !tiltGram.allFinite() ||
+                !thrustGram.allFinite())
+            {
+                return fail(
+                    "gn_component_gram_nonfinite");
+            }
+
+            metric.velocityGram =
+                velocityGram;
+
+            metric.bodyRateGram =
+                bodyRateGram;
+
+            metric.tiltGram =
+                tiltGram;
+
+            metric.thrustGram =
+                thrustGram;
+
+            const Eigen::Matrix3d reconstructedGram =
+                velocityGram +
+                bodyRateGram +
+                tiltGram +
+                thrustGram;
+                    
+            metric.decompositionRelativeError =
+                (gram -
+                 reconstructedGram)
+                    .norm() /
+                std::max(
+                    gram.norm(),
+                    1.0e-12);
+                
+            if (!std::isfinite(
+                    metric.decompositionRelativeError))
+            {
+                return fail(
+                    "gn_decomposition_error_nonfinite");
+            }
+
+            if (!gram.allFinite())
+            {
+                return fail(
+                    "gn_gram_nonfinite");
+            }
+
+            const double velocityTrace =
+                velocityGram.trace();
+
+            const double bodyRateTrace =
+                bodyRateGram.trace();
+
+            const double tiltTrace =
+                tiltGram.trace();
+
+            const double thrustTrace =
+                thrustGram.trace();
+
+            const double totalFeatureTrace =
+                velocityTrace +
+                bodyRateTrace +
+                tiltTrace +
+                thrustTrace;
+
+            if (!std::isfinite(totalFeatureTrace) ||
+                totalFeatureTrace < 0.0)
+            {
+                return fail(
+                    "gn_component_trace_invalid");
+            }
+
+            if (totalFeatureTrace > 1.0e-12)
+            {
+                metric.velocityTraceFraction =
+                    velocityTrace /
+                    totalFeatureTrace;
+            
+                metric.bodyRateTraceFraction =
+                    bodyRateTrace /
+                    totalFeatureTrace;
+            
+                metric.tiltTraceFraction =
+                    tiltTrace /
+                    totalFeatureTrace;
+            
+                metric.thrustTraceFraction =
+                    thrustTrace /
+                    totalFeatureTrace;
+            }
+            else
+            {
+                metric.velocityTraceFraction = 0.0;
+                metric.bodyRateTraceFraction = 0.0;
+                metric.tiltTraceFraction = 0.0;
+                metric.thrustTraceFraction = 0.0;
+            }
+        
+            auto computeDirectionality =
+                [](const Eigen::Matrix3d &component)
+                    -> double
+            {
+                const double trace =
+                    component.trace();
+            
+                if (!std::isfinite(trace) ||
+                    trace <= 1.0e-12)
+                {
+                    return 0.0;
+                }
+            
+                const Eigen::Matrix3d isotropicPart =
+                    (trace / 3.0) *
+                    Eigen::Matrix3d::Identity();
+            
+                return
+                    (component -
+                     isotropicPart)
+                        .norm() /
+                    trace;
+            };
+            
+            metric.velocityDirectionality =
+                computeDirectionality(
+                    velocityGram);
+                
+            metric.bodyRateDirectionality =
+                computeDirectionality(
+                    bodyRateGram);
+                
+            metric.tiltDirectionality =
+                computeDirectionality(
+                    tiltGram);
+                
+            metric.thrustDirectionality =
+                computeDirectionality(
+                    thrustGram);
+
+            metric.gram =
+                gram;
+        
+            // ------------------------------------------------------------
+            // Scale-relative isotropic damping.
+            //
+            // We do NOT use the old maxAnisotropy hard clipping here.
+            // First we want to observe the natural GN spectrum.
+            // ------------------------------------------------------------
+            const double gramScale =
+                gram.trace() /
+                3.0;
+        
+            if (!std::isfinite(gramScale) ||
+                gramScale < 0.0)
+            {
+                return fail(
+                    "gn_scale_invalid");
+            }
+        
+            // If the complete dynamics feature is insensitive to this
+            // deformation, the metric should fall back to isotropic.
+            if (gramScale <= 1.0e-12)
+            {
+                metric.gram.setZero();
+                metric.stiffness.setIdentity();
+                metric.utility.setIdentity();
+            
+                metric.stiffnessEigenvalues.setOnes();
+                metric.utilityEigenvalues.setOnes();
+            
+                metric.principalDirection =
+                    Eigen::Vector3d::UnitX();
+            
+                metric.dampingUsed =
+                    1.0;
+            
+                metric.jacobianFrobeniusNorm =
+                    featureJacobian.norm();
+            
+                metric.anisotropy =
+                    1.0;
+            
+                metric.principalGap =
+                    1.0;
+            
+                metric.valid =
+                    true;
+            
+                metric.failureReason =
+                    "none";
+            
+                return true;
+            }
+        
+            const double damping =
+                std::max(
+                    relativeDamping *
+                        gramScale,
+                    1.0e-12);
+                
+            metric.dampingUsed =
+                damping;
+                
+            const Eigen::Matrix3d stiffness =
+                gram +
+                damping *
+                    Eigen::Matrix3d::Identity();
+                
+            if (!stiffness.allFinite())
+            {
+                return fail(
+                    "gn_stiffness_nonfinite");
+            }
+        
+            Eigen::SelfAdjointEigenSolver<
+                Eigen::Matrix3d>
+                stiffnessSolver(
+                    stiffness);
+                
+            if (stiffnessSolver.info() !=
+                Eigen::Success)
+            {
+                return fail(
+                    "gn_stiffness_eigensolver_failed");
+            }
+        
+            const Eigen::Vector3d stiffnessEigenvalues =
+                stiffnessSolver.eigenvalues();
+        
+            if (!stiffnessEigenvalues.allFinite() ||
+                stiffnessEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail(
+                    "gn_stiffness_not_positive");
+            }
+        
+            metric.stiffness =
+                stiffness;
+        
+            metric.stiffnessEigenvalues =
+                stiffnessEigenvalues;
+        
+            // ------------------------------------------------------------
+            // determinant-normalized inverse stiffness:
+            //
+            //     S ~ K^{-1}
+            //
+            // with
+            //
+            //     det(S) = 1.
+            //
+            // Use log-space geometric mean to avoid scale problems.
+            // ------------------------------------------------------------
+            const double meanLogStiffness =
+                stiffnessEigenvalues.array()
+                    .log()
+                    .mean();
+        
+            const double geometricMeanStiffness =
+                std::exp(
+                    meanLogStiffness);
+                
+            Eigen::Vector3d utilityEigenvalues;
+                
+            for (int i = 0;
+                 i < 3;
+                 ++i)
+            {
+                utilityEigenvalues(i) =
+                    geometricMeanStiffness /
+                    stiffnessEigenvalues(i);
+            }
+        
+            if (!utilityEigenvalues.allFinite() ||
+                utilityEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail(
+                    "gn_utility_eigenvalues_invalid");
+            }
+        
+            Eigen::Matrix3d utility =
+                stiffnessSolver.eigenvectors() *
+                utilityEigenvalues.asDiagonal() *
+                stiffnessSolver.eigenvectors().transpose();
+        
+            utility =
+                (0.5 *
+                 (utility +
+                  utility.transpose()))
+                    .eval();
+                
+            if (!utility.allFinite())
+            {
+                return fail(
+                    "gn_utility_nonfinite");
+            }
+        
+            metric.utility =
+                utility;
+        
+            // Eigenvalues of stiffness are ascending:
+            //
+            // lambda0 <= lambda1 <= lambda2.
+            //
+            // Therefore utility eigenvalues above are descending in the
+            // SAME eigenvector basis:
+            //
+            // mu0 >= mu1 >= mu2.
+            //
+            // The easiest deformation direction is eigenvector column 0
+            // of the STIFFNESS eigensystem.
+            metric.utilityEigenvalues =
+                utilityEigenvalues;
+        
+            metric.principalDirection =
+                stiffnessSolver
+                    .eigenvectors()
+                    .col(0);
+        
+            metric.anisotropy =
+                stiffnessEigenvalues(2) /
+                stiffnessEigenvalues(0);
+        
+            metric.principalGap =
+                stiffnessEigenvalues(1) /
+                stiffnessEigenvalues(0);
+        
+            // Stable visualization sign.
+            Eigen::Vector3d leftPoint;
+            Eigen::Vector3d rightPoint;
+        
+            if (pieceId == 0)
+            {
+                leftPoint =
+                    headPVA.col(0);
+            }
+            else
+            {
+                leftPoint =
+                    optimizedPoints.col(
+                        pieceId - 1);
+            }
+        
+            if (pieceId ==
+                pieceN - 1)
+            {
+                rightPoint =
+                    tailPVA.col(0);
+            }
+            else
+            {
+                rightPoint =
+                    optimizedPoints.col(
+                        pieceId);
+            }
+        
+            const Eigen::Vector3d tangent =
+                rightPoint -
+                leftPoint;
+        
+            if (tangent.norm() > 1.0e-9 &&
+                metric.principalDirection.dot(
+                    tangent) < 0.0)
+            {
+                metric.principalDirection *=
+                    -1.0;
+            }
+        
+            metric.valid =
+                true;
+        
+            metric.failureReason =
+                "none";
+        
+            return true;
         }
 
         inline bool evaluatePieceDeformationCost(
@@ -2255,6 +3217,50 @@ namespace gcopter
                 restoreGradient);
 
             return anyValid;
+        }
+
+        inline bool computeGaussNewtonDeformationMetrics(
+            GaussNewtonDeformationMetrics &metrics,
+            const double displacementStep = 0.01,
+            const double relativeDamping = 1.0e-3)
+        {
+            metrics.clear();
+        
+            if (!optimizedStateValid ||
+                pieceN <= 0)
+            {
+                return false;
+            }
+        
+            metrics.resize(
+                pieceN);
+            
+            bool allValid =
+                true;
+            
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const bool success =
+                    computeSingleGaussNewtonDeformationMetric(
+                        pieceId,
+                        metrics[pieceId],
+                        displacementStep,
+                        relativeDamping);
+                    
+                allValid =
+                    allValid &&
+                    success;
+            }
+        
+            // Restore the nominal MINCO state because feature evaluation
+            // repeatedly changes the internal MINCO coefficients.
+            minco.setParameters(
+                optimizedPoints,
+                optimizedTimes);
+            
+            return allValid;
         }
 
         inline bool hasOptimizedState() const
