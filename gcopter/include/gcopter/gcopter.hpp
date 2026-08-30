@@ -30,12 +30,15 @@
 #include "gcopter/lbfgs.hpp"
 
 #include <Eigen/Eigen>
+#include <Eigen/Eigenvalues>
+#include <Eigen/StdVector>
 
 #include <algorithm>
 #include <cmath>
 #include <cfloat>
 #include <iostream>
 #include <vector>
+#include <string>
 
 namespace gcopter
 {
@@ -54,6 +57,59 @@ namespace gcopter
             double penaltyCost = 0.0;
             double maxViolationM = 0.0;
         };
+
+        enum class DeformationMetricObjective
+        {
+            ENERGY_ONLY = 0,
+            DYNAMICS_ONLY = 1,
+            FULL = 2
+        };
+
+        struct DeformationMetric
+        {
+            // Local curvature of the full GCOPTER objective with respect to
+            // a Cartesian deformation of one trajectory piece.
+            Eigen::Matrix3d stiffness =
+                Eigen::Matrix3d::Identity();
+
+            // Inverse-curvature metric. Large value along a direction means
+            // that the optimized trajectory can deform more easily there.
+            Eigen::Matrix3d utility =
+                Eigen::Matrix3d::Identity();
+
+            // Eigenvalues before and after positive regularization.
+            Eigen::Vector3d rawStiffnessEigenvalues =
+                Eigen::Vector3d::Ones();
+
+            Eigen::Vector3d regularizedStiffnessEigenvalues =
+                Eigen::Vector3d::Ones();
+
+            // Principal eigenvector of utility.
+            Eigen::Vector3d principalDirection =
+                Eigen::Vector3d::UnitX();
+
+            Eigen::Matrix3d scalarStiffness =
+                Eigen::Matrix3d::Identity();
+
+            double gradientScalarRelativeError =
+                INFINITY;
+            
+            // lambda_max(S) / lambda_min(S).
+            double anisotropy = 1.0;
+            double rawAnisotropy = 1.0;
+            double symmetryError = INFINITY;
+
+            bool valid = false;
+
+            std::string failureReason = "none";
+
+            EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        };
+
+        typedef std::vector<
+            DeformationMetric,
+            Eigen::aligned_allocator<DeformationMetric>>
+            DeformationMetrics;
 
     private:
         minco::MINCO_S3NU minco;
@@ -92,6 +148,13 @@ namespace gcopter
         Eigen::VectorXd gradByTimes;
         Eigen::MatrixX3d partialGradByCoeffs;
         Eigen::VectorXd partialGradByTimes;
+
+        Eigen::VectorXd optimizedX;
+        Eigen::Matrix3Xd optimizedPoints;
+        Eigen::VectorXd optimizedTimes;
+        double optimizedCost = INFINITY;
+        bool optimizedStateValid = false;
+
         CorridorDiagnostics initialCorridorDiagnostics;
         CorridorDiagnostics finalCorridorDiagnostics;
 
@@ -574,6 +637,1207 @@ namespace gcopter
             return cost;
         }
 
+        inline double evaluateObjectiveAt(const Eigen::VectorXd &x,
+                                          Eigen::VectorXd &gradient)
+        {
+            if (x.size() != temporalDim + spatialDim)
+            {
+                gradient.resize(0);
+                return INFINITY;
+            }
+
+            gradient.resize(x.size());
+            gradient.setZero();
+
+            return costFunctional(this, x, gradient);
+        }
+
+        inline double evaluateObjectiveAtPoints(
+            const Eigen::Matrix3Xd &testPoints,
+            Eigen::Matrix3Xd &gradientByPoints,
+            const DeformationMetricObjective objectiveMode)
+        {
+            if (!optimizedStateValid)
+            {
+                gradientByPoints.resize(3, 0);
+                return INFINITY;
+            }
+        
+            if (testPoints.rows() != 3 ||
+                testPoints.cols() != pieceN - 1)
+            {
+                gradientByPoints.resize(3, 0);
+                return INFINITY;
+            }
+        
+            if (optimizedTimes.size() != pieceN)
+            {
+                gradientByPoints.resize(3, 0);
+                return INFINITY;
+            }
+        
+            // ----------------------------------------------------
+            // MINCO is evaluated directly in Cartesian waypoint
+            // coordinates with the optimized durations fixed.
+            // ----------------------------------------------------
+            minco.setParameters(
+                testPoints,
+                optimizedTimes);
+            
+            double cost = 0.0;
+            
+            minco.getEnergy(cost);
+            
+            minco.getEnergyPartialGradByCoeffs(
+                partialGradByCoeffs);
+            
+            minco.getEnergyPartialGradByTimes(
+                partialGradByTimes);
+            
+            // ----------------------------------------------------
+            // ENERGY_ONLY:
+            //
+            //     J_metric = J_MINCO
+            //
+            // No physical/corridor penalty is attached.
+            // ----------------------------------------------------
+            if (objectiveMode !=
+                DeformationMetricObjective::ENERGY_ONLY)
+            {
+                Eigen::VectorXd metricPenaltyWeights =
+                    penaltyWt;
+            
+                // -----------------------------------------------
+                // DYNAMICS_ONLY:
+                //
+                // remove the position/corridor penalty but keep
+                //
+                // velocity
+                // body rate
+                // tilt
+                // thrust
+                //
+                // penalties.
+                // -----------------------------------------------
+                if (objectiveMode ==
+                    DeformationMetricObjective::DYNAMICS_ONLY)
+                {
+                    if (metricPenaltyWeights.size() > 0)
+                    {
+                        metricPenaltyWeights(0) = 0.0;
+                    }
+                }
+            
+                attachPenaltyFunctional(
+                    optimizedTimes,
+                    minco.getCoeffs(),
+                    hPolyIdx,
+                    hPolytopes,
+                    smoothEps,
+                    integralRes,
+                    magnitudeBd,
+                    metricPenaltyWeights,
+                    flatmap,
+                    cost,
+                    partialGradByTimes,
+                    partialGradByCoeffs);
+            }
+        
+            minco.propogateGrad(
+                partialGradByCoeffs,
+                partialGradByTimes,
+                gradByPoints,
+                gradByTimes);
+            
+            // T is fixed during deformation analysis, therefore
+            // rho * sum(T) is only a constant and has no influence
+            // on the Cartesian Hessian. Keeping it here preserves
+            // the numerical objective value.
+            cost +=
+                rho *
+                optimizedTimes.sum();
+            
+            gradientByPoints =
+                gradByPoints;
+            
+            if (!std::isfinite(cost) ||
+                !gradientByPoints.allFinite())
+            {
+                return INFINITY;
+            }
+        
+            return cost;
+        }
+    
+        inline Eigen::Vector3d projectPointGradientToPiece(
+            const int pieceId,
+            const Eigen::Matrix3Xd &pointGradient) const
+        {
+            Eigen::Vector3d projected =
+                Eigen::Vector3d::Zero();
+        
+            int movablePointCount = 0;
+        
+            if (pieceId > 0)
+            {
+                ++movablePointCount;
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                ++movablePointCount;
+            }
+        
+            if (movablePointCount <= 0)
+            {
+                return projected;
+            }
+        
+            // Normalized deformation basis:
+            //
+            // D^T D = I_3
+            //
+            // for both boundary and interior pieces.
+            const double weight =
+                1.0 /
+                std::sqrt(
+                    static_cast<double>(
+                        movablePointCount));
+                    
+            if (pieceId > 0)
+            {
+                projected +=
+                    weight *
+                    pointGradient.col(pieceId - 1);
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                projected +=
+                    weight *
+                    pointGradient.col(pieceId);
+            }
+        
+            return projected;
+        }
+
+        inline bool buildPerturbedPointsForPiece(
+            const int pieceId,
+            const int axis,
+            const double displacement,
+            Eigen::Matrix3Xd &plusPoints,
+            Eigen::Matrix3Xd &minusPoints) const
+        {
+            if (!optimizedStateValid ||
+                pieceId < 0 ||
+                pieceId >= pieceN ||
+                axis < 0 ||
+                axis >= 3 ||
+                displacement <= 0.0)
+            {
+                return false;
+            }
+        
+            plusPoints =
+                optimizedPoints;
+        
+            minusPoints =
+                optimizedPoints;
+        
+            int movablePointCount = 0;
+        
+            if (pieceId > 0)
+            {
+                ++movablePointCount;
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                ++movablePointCount;
+            }
+        
+            if (movablePointCount <= 0)
+            {
+                return false;
+            }
+        
+            const double weight =
+                1.0 /
+                std::sqrt(
+                    static_cast<double>(
+                        movablePointCount));
+                    
+            Eigen::Vector3d delta =
+                Eigen::Vector3d::Zero();
+                    
+            delta(axis) =
+                weight * displacement;
+                    
+            if (pieceId > 0)
+            {
+                plusPoints.col(pieceId - 1) +=
+                    delta;
+            
+                minusPoints.col(pieceId - 1) -=
+                    delta;
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                plusPoints.col(pieceId) +=
+                    delta;
+            
+                minusPoints.col(pieceId) -=
+                    delta;
+            }
+        
+            return plusPoints.allFinite() &&
+                   minusPoints.allFinite();
+        }
+
+        inline bool buildDeformedPointsForPiece(
+            const int pieceId,
+            const Eigen::Vector3d &deformation,
+            Eigen::Matrix3Xd &deformedPoints) const
+        {
+            if (!optimizedStateValid ||
+                pieceId < 0 ||
+                pieceId >= pieceN ||
+                !deformation.allFinite())
+            {
+                return false;
+            }
+        
+            deformedPoints =
+                optimizedPoints;
+        
+            int movablePointCount = 0;
+        
+            if (pieceId > 0)
+            {
+                ++movablePointCount;
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                ++movablePointCount;
+            }
+        
+            if (movablePointCount <= 0)
+            {
+                return false;
+            }
+        
+            // Normalized piece deformation basis:
+            //
+            //     D_i^T D_i = I_3
+            //
+            // Interior pieces contain two movable waypoints, so each
+            // waypoint receives deformation / sqrt(2).
+            const double weight =
+                1.0 /
+                std::sqrt(
+                    static_cast<double>(
+                        movablePointCount));
+                    
+            if (pieceId > 0)
+            {
+                deformedPoints.col(pieceId - 1) +=
+                    weight * deformation;
+            }
+        
+            if (pieceId < pieceN - 1)
+            {
+                deformedPoints.col(pieceId) +=
+                    weight * deformation;
+            }
+        
+            return deformedPoints.allFinite();
+        }
+
+        inline bool evaluatePieceDeformationCost(
+            const int pieceId,
+            const Eigen::Vector3d &deformation,
+            const DeformationMetricObjective objectiveMode,
+            double &cost)
+        {
+            Eigen::Matrix3Xd testPoints;
+        
+            if (!buildDeformedPointsForPiece(
+                    pieceId,
+                    deformation,
+                    testPoints))
+            {
+                cost = INFINITY;
+                return false;
+            }
+        
+            Eigen::Matrix3Xd dummyGradient;
+        
+            cost =
+                evaluateObjectiveAtPoints(
+                    testPoints,
+                    dummyGradient,
+                    objectiveMode);
+                
+            return std::isfinite(cost);
+        }
+
+        inline bool computeScalarCostStiffness(
+            const int pieceId,
+            const double displacementStep,
+            const DeformationMetricObjective objectiveMode,
+            Eigen::Matrix3d &stiffness)
+        {
+            stiffness.setZero();
+        
+            if (!optimizedStateValid ||
+                displacementStep <= 0.0 ||
+                !std::isfinite(displacementStep))
+            {
+                return false;
+            }
+        
+            const double h =
+                displacementStep;
+        
+            const double h2 =
+                h * h;
+        
+            double cost0 = INFINITY;
+        
+            if (!evaluatePieceDeformationCost(
+                    pieceId,
+                    Eigen::Vector3d::Zero(),
+                    objectiveMode,
+                    cost0))
+            {
+                return false;
+            }
+        
+            // ------------------------------------------------------------
+            // Diagonal entries
+            //
+            // K_ii =
+            //
+            //   [F(+h e_i) - 2 F(0) + F(-h e_i)] / h^2
+            // ------------------------------------------------------------
+            for (int axis = 0;
+                 axis < 3;
+                 ++axis)
+            {
+                Eigen::Vector3d delta =
+                    Eigen::Vector3d::Zero();
+            
+                delta(axis) =
+                    h;
+            
+                double costPlus =
+                    INFINITY;
+            
+                double costMinus =
+                    INFINITY;
+            
+                if (!evaluatePieceDeformationCost(
+                        pieceId,
+                        delta,
+                        objectiveMode,
+                        costPlus))
+                {
+                    return false;
+                }
+            
+                if (!evaluatePieceDeformationCost(
+                        pieceId,
+                        -delta,
+                        objectiveMode,
+                        costMinus))
+                {
+                    return false;
+                }
+            
+                stiffness(axis, axis) =
+                    (costPlus -
+                     2.0 * cost0 +
+                     costMinus) /
+                    h2;
+            }
+        
+            // ------------------------------------------------------------
+            // Off-diagonal entries
+            //
+            // K_ij =
+            //
+            // [ F(+i,+j)
+            // - F(+i,-j)
+            // - F(-i,+j)
+            // + F(-i,-j) ] / (4 h^2)
+            // ------------------------------------------------------------
+            for (int i = 0;
+                 i < 3;
+                 ++i)
+            {
+                for (int j = i + 1;
+                     j < 3;
+                     ++j)
+                {
+                    Eigen::Vector3d deltaPP =
+                        Eigen::Vector3d::Zero();
+                
+                    Eigen::Vector3d deltaPM =
+                        Eigen::Vector3d::Zero();
+                
+                    Eigen::Vector3d deltaMP =
+                        Eigen::Vector3d::Zero();
+                
+                    Eigen::Vector3d deltaMM =
+                        Eigen::Vector3d::Zero();
+                
+                    deltaPP(i) = h;
+                    deltaPP(j) = h;
+                
+                    deltaPM(i) = h;
+                    deltaPM(j) = -h;
+                
+                    deltaMP(i) = -h;
+                    deltaMP(j) = h;
+                
+                    deltaMM(i) = -h;
+                    deltaMM(j) = -h;
+                
+                    double costPP =
+                        INFINITY;
+                
+                    double costPM =
+                        INFINITY;
+                
+                    double costMP =
+                        INFINITY;
+                
+                    double costMM =
+                        INFINITY;
+                
+                    if (!evaluatePieceDeformationCost(
+                            pieceId,
+                            deltaPP,
+                            objectiveMode,
+                            costPP) ||
+                        !evaluatePieceDeformationCost(
+                            pieceId,
+                            deltaPM,
+                            objectiveMode,
+                            costPM) ||
+                        !evaluatePieceDeformationCost(
+                            pieceId,
+                            deltaMP,
+                            objectiveMode,
+                            costMP) ||
+                        !evaluatePieceDeformationCost(
+                            pieceId,
+                            deltaMM,
+                            objectiveMode,
+                            costMM))
+                    {
+                        return false;
+                    }
+                
+                    const double value =
+                        (costPP -
+                         costPM -
+                         costMP +
+                         costMM) /
+                        (4.0 * h2);
+                        
+                    stiffness(i, j) =
+                        value;
+                        
+                    stiffness(j, i) =
+                        value;
+                }
+            }
+        
+            return stiffness.allFinite();
+        }
+
+        inline int getXiBlockOffset(const int pointId) const
+        {
+            int offset = 0;
+
+            for (int i = 0; i < pointId; ++i)
+            {
+                const int polyId = vPolyIdx(i);
+                offset += vPolytopes[polyId].cols();
+            }
+
+            return offset;
+        }
+
+        inline bool computePointJacobianWrtXi(
+            const int pointId,
+            const Eigen::VectorXd &fullX,
+            Eigen::MatrixXd &jacobian) const
+        {
+            if (pointId < 0 ||
+                pointId >= static_cast<int>(vPolyIdx.size()))
+            {
+                return false;
+            }
+
+            const int polyId = vPolyIdx(pointId);
+            const int k = vPolytopes[polyId].cols();
+
+            if (k < 2)
+            {
+                return false;
+            }
+
+            const int offset = getXiBlockOffset(pointId);
+            const int begin = temporalDim + offset;
+
+            if (begin + k > fullX.size())
+            {
+                return false;
+            }
+
+            const Eigen::VectorXd xi =
+                fullX.segment(begin, k);
+
+            const double xiNorm = xi.norm();
+
+            if (!std::isfinite(xiNorm) ||
+                xiNorm <= 1.0e-10)
+            {
+                return false;
+            }
+
+            // u = xi / ||xi||
+            const Eigen::VectorXd u = xi / xiNorm;
+
+            // GCOPTER's forwardP() uses only the first k - 1 entries.
+            const Eigen::VectorXd r = u.head(k - 1);
+
+            // p = v0 + V * (r .* r)
+            const auto V =
+                vPolytopes[polyId].rightCols(k - 1);
+
+            // dp / du
+            Eigen::MatrixXd dPdu =
+                Eigen::MatrixXd::Zero(3, k);
+
+            dPdu.leftCols(k - 1) =
+                2.0 * (V * r.asDiagonal());
+
+            // du / dxi =
+            // (I - u*u^T) / ||xi||
+            const Eigen::MatrixXd projector =
+                Eigen::MatrixXd::Identity(k, k) -
+                u * u.transpose();
+
+            jacobian =
+                dPdu * projector / xiNorm;
+
+            return jacobian.allFinite();
+        }
+
+        inline bool buildPieceDeformationMap(
+            const int pieceId,
+            const Eigen::VectorXd &fullX,
+            Eigen::MatrixXd &deformationMap,
+            const double jacobianDamping) const
+        {
+            if (pieceId < 0 || pieceId >= pieceN)
+            {
+                return false;
+            }
+
+            const int totalDim =
+                temporalDim + spatialDim;
+
+            deformationMap =
+                Eigen::MatrixXd::Zero(totalDim, 3);
+
+            int addedPointCount = 0;
+
+            auto addPoint =
+                [&](const int pointId) -> bool
+            {
+                Eigen::MatrixXd J;
+
+                if (!computePointJacobianWrtXi(
+                        pointId, fullX, J))
+                {
+                    return false;
+                }
+
+                Eigen::Matrix3d gram =
+                    J * J.transpose();
+
+                const double gramScale =
+                    std::max(gram.trace() / 3.0,
+                             1.0e-12);
+
+                gram.diagonal().array() +=
+                    jacobianDamping * gramScale;
+
+                Eigen::LDLT<Eigen::Matrix3d> ldlt(gram);
+
+                if (ldlt.info() != Eigen::Success)
+                {
+                    return false;
+                }
+
+                const Eigen::MatrixXd pseudoInverse =
+                    J.transpose() *
+                    ldlt.solve(
+                        Eigen::Matrix3d::Identity());
+
+                if (!pseudoInverse.allFinite())
+                {
+                    return false;
+                }
+
+                const int polyId =
+                    vPolyIdx(pointId);
+
+                const int k =
+                    vPolytopes[polyId].cols();
+
+                const int offset =
+                    getXiBlockOffset(pointId);
+
+                deformationMap.block(
+                    temporalDim + offset,
+                    0,
+                    k,
+                    3) = pseudoInverse;
+
+                ++addedPointCount;
+
+                return true;
+            };
+
+            // Piece i lies between:
+            //
+            // start / point_(i-1)
+            // and
+            // point_i / goal.
+            //
+            // We move both movable ends in the same Cartesian direction.
+            if (pieceId > 0)
+            {
+                addPoint(pieceId - 1);
+            }
+
+            if (pieceId < pieceN - 1)
+            {
+                addPoint(pieceId);
+            }
+
+            return addedPointCount > 0;
+        }
+
+        inline bool computeSingleDeformationMetric(
+            const int pieceId,
+            DeformationMetric &metric,
+            const double displacementStep,
+            const double jacobianDamping,
+            const double maxAnisotropy,
+            const DeformationMetricObjective objectiveMode)
+        {
+            metric = DeformationMetric();
+           
+            (void)jacobianDamping;
+
+            auto fail =
+                [&](const char *reason) -> bool
+            {
+                metric.valid = false;
+                metric.failureReason = reason;
+                return false;
+            };
+        
+            // ------------------------------------------------------------
+            // Stage 1: validate the saved nominal solution.
+            // ------------------------------------------------------------
+            if (!optimizedStateValid)
+            {
+                return fail("optimized_state_invalid");
+            }
+        
+            if (displacementStep <= 0.0 ||
+                !std::isfinite(displacementStep))
+            {
+                return fail("invalid_displacement_step");
+            }
+        
+            // ------------------------------------------------------------
+            // Stage 2: construct
+            //
+            //     delta x = D * delta p
+            //
+            // for this trajectory piece.
+            // ------------------------------------------------------------
+            Eigen::MatrixXd D;
+        
+            // ------------------------------------------------------------
+            // Stage 2:
+            // Construct the projected Hessian directly in Cartesian
+            // MINCO waypoint space.
+            //
+            //     K_i = D_i^T H_P D_i
+            //
+            // This avoids GCOPTER's nonlinear xi parameterization.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d Kraw =
+                Eigen::Matrix3d::Zero();
+
+            for (int axis = 0;
+                 axis < 3;
+                 ++axis)
+            {
+                Eigen::Matrix3Xd plusPoints;
+                Eigen::Matrix3Xd minusPoints;
+
+                if (!buildPerturbedPointsForPiece(
+                        pieceId,
+                        axis,
+                        displacementStep,
+                        plusPoints,
+                        minusPoints))
+                {
+                    return fail(
+                        "cartesian_perturbation_failed");
+                }
+
+                Eigen::Matrix3Xd gradientPlus;
+                Eigen::Matrix3Xd gradientMinus;
+
+                const double costPlus =
+                    evaluateObjectiveAtPoints(
+                        plusPoints,
+                        gradientPlus,
+                        objectiveMode);
+                    
+                const double costMinus =
+                    evaluateObjectiveAtPoints(
+                        minusPoints,
+                        gradientMinus,
+                        objectiveMode);
+                    
+                if (!std::isfinite(costPlus) ||
+                    !std::isfinite(costMinus))
+                {
+                    return fail(
+                        "cartesian_perturbed_cost_nonfinite");
+                }
+
+                if (!gradientPlus.allFinite() ||
+                    !gradientMinus.allFinite())
+                {
+                    return fail(
+                        "cartesian_gradient_nonfinite");
+                }
+
+                const Eigen::Vector3d projectedGradientPlus =
+                    projectPointGradientToPiece(
+                        pieceId,
+                        gradientPlus);
+
+                const Eigen::Vector3d projectedGradientMinus =
+                    projectPointGradientToPiece(
+                        pieceId,
+                        gradientMinus);
+
+                Kraw.col(axis) =
+                    (projectedGradientPlus -
+                     projectedGradientMinus) /
+                    (2.0 * displacementStep);
+            }
+
+            if (!Kraw.allFinite())
+            {
+                return fail(
+                    "cartesian_stiffness_nonfinite");
+            }
+
+            // ------------------------------------------------------------
+            // A true Hessian must be symmetric.
+            //
+            // Measure the discrepancy BEFORE symmetrization. This is a
+            // useful numerical diagnostic of finite-difference quality.
+            // ------------------------------------------------------------
+            const double symmetryError =
+                (Kraw - Kraw.transpose()).norm() /
+                std::max(
+                    Kraw.norm(),
+                    1.0e-12);
+
+            const Eigen::Matrix3d K =
+                (0.5 *
+                 (Kraw + Kraw.transpose()))
+                    .eval();
+            
+            Eigen::Matrix3d scalarK;
+
+            if (!computeScalarCostStiffness(
+                    pieceId,
+                    displacementStep,
+                    objectiveMode,
+                    scalarK))
+            {
+                return fail(
+                    "scalar_cost_stiffness_failed");
+            }
+
+            metric.scalarStiffness =
+                scalarK;
+
+            // Compare the symmetrized gradient-difference Hessian with
+            // the scalar-cost finite-difference Hessian.
+            metric.gradientScalarRelativeError =
+                (K - scalarK).norm() /
+                std::max(
+                    scalarK.norm(),
+                    1.0e-12);
+
+            if (!K.allFinite())
+            {
+                return fail(
+                    "symmetric_stiffness_nonfinite");
+            }
+
+            metric.stiffness =
+                scalarK;
+        
+            metric.symmetryError =
+                symmetryError;
+            // // ------------------------------------------------------------
+            // // Stage 3: projected Hessian
+            // //
+            // //     K = D^T H D
+            // //
+            // // We never explicitly form the large Hessian H.
+            // // ------------------------------------------------------------
+            // Eigen::Matrix3d K =
+            //     Eigen::Matrix3d::Zero();
+        
+            // for (int axis = 0; axis < 3; ++axis)
+            // {
+            //     const Eigen::VectorXd perturbation =
+            //         displacementStep * D.col(axis);
+            
+            //     if (!perturbation.allFinite())
+            //     {
+            //         return fail("perturbation_nonfinite");
+            //     }
+            
+            //     Eigen::VectorXd xPlus =
+            //         optimizedX + perturbation;
+            
+            //     Eigen::VectorXd xMinus =
+            //         optimizedX - perturbation;
+            
+            //     Eigen::VectorXd gPlus;
+            //     Eigen::VectorXd gMinus;
+            
+            //     const double costPlus =
+            //         evaluateObjectiveAt(xPlus, gPlus);
+            
+            //     const double costMinus =
+            //         evaluateObjectiveAt(xMinus, gMinus);
+            
+            //     if (!std::isfinite(costPlus) ||
+            //         !std::isfinite(costMinus))
+            //     {
+            //         return fail("perturbed_cost_nonfinite");
+            //     }
+            
+            //     if (gPlus.size() != optimizedX.size() ||
+            //         gMinus.size() != optimizedX.size())
+            //     {
+            //         return fail("perturbed_gradient_bad_dimension");
+            //     }
+            
+            //     if (!gPlus.allFinite() ||
+            //         !gMinus.allFinite())
+            //     {
+            //         return fail("perturbed_gradient_nonfinite");
+            //     }
+            
+            //     const Eigen::VectorXd hessianVectorProduct =
+            //         (gPlus - gMinus) /
+            //         (2.0 * displacementStep);
+            
+            //     K.col(axis) =
+            //         D.transpose() *
+            //         hessianVectorProduct;
+            // }
+        
+            // // Central finite differences may introduce a small
+            // // antisymmetric numerical component.
+            // const Eigen::Matrix3d rawK = K;
+
+            // const double symmetryError =
+            //     (rawK - rawK.transpose()).norm() /
+            //     std::max(rawK.norm(), 1.0e-12);
+
+            // const Eigen::Matrix3d symmetricK =
+            //     (0.5 * (rawK + rawK.transpose())).eval();
+
+            // K = symmetricK;
+        
+            // ROS_INFO_STREAM("piece " << pieceId
+            //     << " raw K symmetry error = "
+            //     << symmetryError);
+
+            // if (!K.allFinite())
+            // {
+            //     return fail("stiffness_nonfinite");
+            // }
+        
+            // metric.stiffness = K;
+        
+            // ------------------------------------------------------------
+            // Stage 4: eigendecomposition of the Cartesian stiffness.
+            // ------------------------------------------------------------
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>
+                stiffnessSolver(scalarK);
+        
+            if (stiffnessSolver.info() != Eigen::Success)
+            {
+                return fail("stiffness_eigensolver_failed");
+            }
+        
+            const Eigen::Vector3d rawEigenvalues =
+                stiffnessSolver.eigenvalues();
+        
+            if (!rawEigenvalues.allFinite())
+            {
+                return fail("stiffness_eigenvalues_nonfinite");
+            }
+        
+            metric.rawStiffnessEigenvalues =
+                rawEigenvalues;
+            
+            const double rawPositiveFloor =
+                std::max(
+                    rawEigenvalues.cwiseAbs().maxCoeff() * 1.0e-9,
+                    1.0e-12);
+                
+            Eigen::Vector3d rawPositiveEigenvalues;
+                
+            for (int i = 0; i < 3; ++i)
+            {
+                rawPositiveEigenvalues(i) =
+                    std::max(
+                        rawEigenvalues(i),
+                        rawPositiveFloor);
+            }
+
+            metric.rawAnisotropy =
+                rawPositiveEigenvalues.maxCoeff() /
+                rawPositiveEigenvalues.minCoeff();
+            // ------------------------------------------------------------
+            // Stage 5: positive regularization.
+            //
+            // The complete GCOPTER objective is nonconvex and uses smoothed
+            // penalties, so the numerical local Hessian can contain negative
+            // eigenvalues.  We project it to an SPD directional stiffness
+            // before defining the inverse metric.
+            // ------------------------------------------------------------
+            const double spectrumScale =
+                std::max(
+                    rawEigenvalues.cwiseAbs().maxCoeff(),
+                    1.0e-9);
+                
+            const double allowedAnisotropy =
+                std::max(maxAnisotropy, 1.0);
+                
+            const double eigenFloor =
+                spectrumScale /
+                allowedAnisotropy;
+                
+            Eigen::Vector3d regularizedEigenvalues;
+                
+            for (int i = 0; i < 3; ++i)
+            {
+                regularizedEigenvalues(i) =
+                    std::max(
+                        rawEigenvalues(i),
+                        eigenFloor);
+            }
+        
+            if (!regularizedEigenvalues.allFinite() ||
+                regularizedEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail("regularized_stiffness_invalid");
+            }
+        
+            metric.regularizedStiffnessEigenvalues =
+                regularizedEigenvalues;
+        
+            // ------------------------------------------------------------
+            // Stage 6: construct the trajectory-utility metric.
+            //
+            // Raw:
+            //
+            //     S_raw = K_reg^{-1}.
+            //
+            // We want det(S) = 1 so that S expresses directional preference
+            // only, not an arbitrary cost scale.
+            //
+            // DO NOT compute det(S_raw) directly:
+            //
+            //     det(S_raw) = 1 / (lambda1 lambda2 lambda3)
+            //
+            // can easily be extremely small or large even for a perfectly
+            // valid SPD matrix.
+            //
+            // Instead, if
+            //
+            //     g = (lambda1 lambda2 lambda3)^(1/3),
+            //
+            // then the normalized utility eigenvalues are exactly
+            //
+            //     mu_i = g / lambda_i.
+            //
+            // We compute g in log-space for numerical robustness.
+            // ------------------------------------------------------------
+            double meanLogStiffness = 0.0;
+        
+            for (int i = 0; i < 3; ++i)
+            {
+                const double lambda =
+                    regularizedEigenvalues(i);
+            
+                if (!std::isfinite(lambda) ||
+                    lambda <= 0.0)
+                {
+                    return fail("stiffness_log_invalid");
+                }
+            
+                meanLogStiffness +=
+                    std::log(lambda);
+            }
+        
+            meanLogStiffness /= 3.0;
+        
+            const double geometricMeanStiffness =
+                std::exp(meanLogStiffness);
+        
+            if (!std::isfinite(geometricMeanStiffness) ||
+                geometricMeanStiffness <= 0.0)
+            {
+                return fail("stiffness_geometric_mean_invalid");
+            }
+        
+            Eigen::Vector3d utilityEigenvalues;
+        
+            for (int i = 0; i < 3; ++i)
+            {
+                utilityEigenvalues(i) =
+                    geometricMeanStiffness /
+                    regularizedEigenvalues(i);
+            }
+        
+            if (!utilityEigenvalues.allFinite() ||
+                utilityEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail("utility_eigenvalues_invalid");
+            }
+        
+            Eigen::Matrix3d utility =
+                stiffnessSolver.eigenvectors() *
+                utilityEigenvalues.asDiagonal() *
+                stiffnessSolver.eigenvectors().transpose();
+        
+            utility =
+                0.5 *
+                (utility + utility.transpose());
+        
+            if (!utility.allFinite())
+            {
+                return fail("utility_nonfinite");
+            }
+        
+            // ------------------------------------------------------------
+            // Stage 7: recover the principal easy-deformation direction.
+            // ------------------------------------------------------------
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>
+                utilitySolver(utility);
+        
+            if (utilitySolver.info() != Eigen::Success)
+            {
+                return fail("utility_eigensolver_failed");
+            }
+        
+            const Eigen::Vector3d finalUtilityEigenvalues =
+                utilitySolver.eigenvalues();
+        
+            if (!finalUtilityEigenvalues.allFinite() ||
+                finalUtilityEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail("final_utility_eigenvalues_invalid");
+            }
+        
+            metric.utility =
+                utility;
+        
+            metric.principalDirection =
+                utilitySolver.eigenvectors().col(2);
+        
+            metric.anisotropy =
+                finalUtilityEigenvalues(2) /
+                std::max(
+                    finalUtilityEigenvalues(0),
+                    1.0e-12);
+                
+            // ------------------------------------------------------------
+            // Stage 8: choose a stable sign for visualization/logging.
+            //
+            // S itself is invariant to u -> -u, but a stable sign makes the
+            // printed principal direction easier to compare across runs.
+            // ------------------------------------------------------------
+            Eigen::Vector3d leftPoint;
+            Eigen::Vector3d rightPoint;
+                
+            if (pieceId == 0)
+            {
+                leftPoint =
+                    headPVA.col(0);
+            }
+            else
+            {
+                leftPoint =
+                    optimizedPoints.col(pieceId - 1);
+            }
+        
+            if (pieceId == pieceN - 1)
+            {
+                rightPoint =
+                    tailPVA.col(0);
+            }
+            else
+            {
+                rightPoint =
+                    optimizedPoints.col(pieceId);
+            }
+        
+            const Eigen::Vector3d tangent =
+                rightPoint - leftPoint;
+        
+            if (tangent.norm() > 1.0e-9 &&
+                metric.principalDirection.dot(tangent) < 0.0)
+            {
+                metric.principalDirection *= -1.0;
+            }
+        
+            metric.valid = true;
+            metric.failureReason = "none";
+        
+            return true;
+        }
+
         static inline double costDistance(void *ptr,
                                           const Eigen::VectorXd &xi,
                                           Eigen::VectorXd &gradXi)
@@ -804,6 +2068,14 @@ namespace gcopter
             headPVA = initialPVA;
             tailPVA = terminalPVA;
 
+            // A new planning problem invalidates the previous optimization
+            // snapshot.
+            optimizedStateValid = false;
+            optimizedCost = INFINITY;
+            optimizedX.resize(0);
+            optimizedPoints.resize(3, 0);
+            optimizedTimes.resize(0);
+
             hPolytopes = safeCorridor;
             for (size_t i = 0; i < hPolytopes.size(); i++)
             {
@@ -873,6 +2145,9 @@ namespace gcopter
         inline double optimize(Trajectory<5> &traj,
                                const double &relCostTol)
         {
+            optimizedStateValid = false;
+            optimizedCost = INFINITY;
+
             Eigen::VectorXd x(temporalDim + spatialDim);
             Eigen::Map<Eigen::VectorXd> tau(x.data(), temporalDim);
             Eigen::Map<Eigen::VectorXd> xi(x.data() + temporalDim, spatialDim);
@@ -908,10 +2183,22 @@ namespace gcopter
                 forwardP(xi, vPolyIdx, vPolytopes, points);
                 minco.setParameters(points, times);
                 minco.getTrajectory(traj);
-                finalCorridorDiagnostics = evaluateCorridorDiagnostics(traj);
+
+                finalCorridorDiagnostics =
+                    evaluateCorridorDiagnostics(traj);
+
+                // Save the converged optimization state.  Sensitivity
+                // analysis later starts from exactly this x*.
+                optimizedX = x;
+                optimizedPoints = points;
+                optimizedTimes = times;
+                optimizedCost = minCostFunctional;
+                optimizedStateValid = true;
             }
             else
             {
+                optimizedStateValid = false;
+
                 traj.clear();
                 minCostFunctional = INFINITY;
                 std::cout << "Optimization Failed: "
@@ -920,6 +2207,87 @@ namespace gcopter
             }
 
             return minCostFunctional;
+        }
+
+        inline bool computeDeformationMetrics(
+            DeformationMetrics &metrics,
+            const double displacementStep = 0.02,
+            const double jacobianDamping = 1.0e-6,
+            const double maxAnisotropy = 10.0,
+            const DeformationMetricObjective objectiveMode =
+                DeformationMetricObjective::FULL)
+        {
+            metrics.clear();
+
+            if (!optimizedStateValid ||
+                pieceN <= 0)
+            {
+                return false;
+            }
+
+            metrics.resize(pieceN);
+
+            bool anyValid = false;
+
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const bool success =
+                    computeSingleDeformationMetric(
+                        pieceId,
+                        metrics[pieceId],
+                        displacementStep,
+                        jacobianDamping,
+                        maxAnisotropy,
+                        objectiveMode);
+
+                anyValid =
+                    anyValid || success;
+            }
+
+            // evaluateObjectiveAt() changes temporary GCOPTER buffers.
+            // Restore the nominal optimized state before returning.
+            Eigen::VectorXd restoreGradient;
+
+            evaluateObjectiveAt(
+                optimizedX,
+                restoreGradient);
+
+            return anyValid;
+        }
+
+        inline bool hasOptimizedState() const
+        {
+            return optimizedStateValid;
+        }
+
+        inline const Eigen::VectorXd &
+        getOptimizedX() const
+        {
+            return optimizedX;
+        }
+
+        inline const Eigen::Matrix3Xd &
+        getOptimizedPoints() const
+        {
+            return optimizedPoints;
+        }
+
+        inline const Eigen::VectorXd &
+        getOptimizedTimes() const
+        {
+            return optimizedTimes;
+        }
+
+        inline double getOptimizedCost() const
+        {
+            return optimizedCost;
+        }
+
+        inline int getPieceNum() const
+        {
+            return pieceN;
         }
 
         inline const CorridorDiagnostics &getInitialCorridorDiagnostics() const
