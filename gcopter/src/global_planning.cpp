@@ -1732,6 +1732,134 @@ public:
                             }
                         }
 
+                        // ============================================================
+                        // Compare the final selected obstacle faces under the same
+                        // compressed CSGN utility.
+                        //
+                        // Lower mean_metric_damage is better: it means the corridor
+                        // places fewer obstacle-face normals along MINCO's easy
+                        // deformation directions.
+                        // ============================================================
+                        const std::size_t comparableInfoCount =
+                            std::min(
+                                controlSecondPassInfos.size(),
+                                metricSecondPassInfos.size());
+
+                        for (std::size_t corridorId = 0;
+                             corridorId <
+                                 comparableInfoCount;
+                             ++corridorId)
+                        {
+                            const auto &controlInfo =
+                                controlSecondPassInfos[
+                                    corridorId];
+
+                            const auto &metricInfo =
+                                metricSecondPassInfos[
+                                    corridorId];
+
+                            ROS_INFO_STREAM(
+                                "TF_CSGN_FIRI_DAMAGE "
+                                << "corridor="
+                                << corridorId
+
+                                << " control_obs_faces="
+                                << controlInfo.obstacle_face_count
+
+                                << " metric_obs_faces="
+                                << metricInfo.obstacle_face_count
+
+                                << " control_mean_psi="
+                                << controlInfo.mean_metric_damage
+
+                                << " metric_mean_psi="
+                                << metricInfo.mean_metric_damage
+
+                                << " delta_mean_psi="
+                                << (metricInfo.mean_metric_damage -
+                                    controlInfo.mean_metric_damage)
+
+                                << " control_min_psi="
+                                << controlInfo.min_metric_damage
+
+                                << " metric_min_psi="
+                                << metricInfo.min_metric_damage
+
+                                << " control_max_psi="
+                                << controlInfo.max_metric_damage
+
+                                << " metric_max_psi="
+                                << metricInfo.max_metric_damage);
+                        }
+
+                        int controlObstacleFaceCount =
+                            0;
+
+                        int metricObstacleFaceCount =
+                            0;
+
+                        double controlWeightedDamageSum =
+                            0.0;
+
+                        double metricWeightedDamageSum =
+                            0.0;
+
+                        for (const auto &info :
+                             controlSecondPassInfos)
+                        {
+                            controlObstacleFaceCount +=
+                                info.obstacle_face_count;
+
+                            controlWeightedDamageSum +=
+                                static_cast<double>(
+                                    info.obstacle_face_count) *
+                                info.mean_metric_damage;
+                        }
+
+                        for (const auto &info :
+                             metricSecondPassInfos)
+                        {
+                            metricObstacleFaceCount +=
+                                info.obstacle_face_count;
+
+                            metricWeightedDamageSum +=
+                                static_cast<double>(
+                                    info.obstacle_face_count) *
+                                info.mean_metric_damage;
+                        }
+
+                        const double controlMeanMetricDamage =
+                            controlObstacleFaceCount > 0
+                                ? controlWeightedDamageSum /
+                                      static_cast<double>(
+                                          controlObstacleFaceCount)
+                                : 0.0;
+
+                        const double metricMeanMetricDamage =
+                            metricObstacleFaceCount > 0
+                                ? metricWeightedDamageSum /
+                                      static_cast<double>(
+                                          metricObstacleFaceCount)
+                                : 0.0;
+
+                        ROS_INFO_STREAM(
+                            "TF_CSGN_FIRI_DAMAGE_SUMMARY "
+                            << "control_obs_faces="
+                            << controlObstacleFaceCount
+
+                            << " metric_obs_faces="
+                            << metricObstacleFaceCount
+
+                            << " control_mean_psi="
+                            << controlMeanMetricDamage
+
+                            << " metric_mean_psi="
+                            << metricMeanMetricDamage
+
+                            << " delta_mean_psi="
+                            << (metricMeanMetricDamage -
+                                controlMeanMetricDamage));
+
                         ROS_INFO_STREAM(
                             "TF_CSGN_FIRI_AB "
                             << "control_success="

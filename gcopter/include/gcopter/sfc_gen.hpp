@@ -54,7 +54,20 @@ namespace sfc_gen
         bool budget_exchange_attempted = false;
         bool budget_exchange_accepted = false;
         double directional_radius = 0.0;
-        Eigen::Vector3d direction = Eigen::Vector3d::Zero();
+        Eigen::Vector3d direction =
+            Eigen::Vector3d::Zero();
+
+        int obstacle_face_count =
+            0;
+
+        double mean_metric_damage =
+            0.0;
+
+        double min_metric_damage =
+            0.0;
+
+        double max_metric_damage =
+            0.0;
     };
 
     struct SegmentDeformationMetric
@@ -343,7 +356,11 @@ namespace sfc_gen
                                  diagnostics.budget_exchange_attempted,
                                  diagnostics.budget_exchange_accepted,
                                  diagnostics.directional_radius,
-                                 segmentOptions.direction.normalized()});
+                                 segmentOptions.direction.normalized(),
+                                 diagnostics.obstacle_face_count,
+                                 diagnostics.mean_metric_damage,
+                                 diagnostics.min_metric_damage,
+                                 diagnostics.max_metric_damage});
                 return false;
             }
 
@@ -367,7 +384,11 @@ namespace sfc_gen
                                          gapDiagnostics.budget_exchange_attempted,
                                          gapDiagnostics.budget_exchange_accepted,
                                          gapDiagnostics.directional_radius,
-                                         gapOptions.direction.normalized()});
+                                         gapOptions.direction.normalized(),
+                                         gapDiagnostics.obstacle_face_count,
+                                         gapDiagnostics.mean_metric_damage,
+                                         gapDiagnostics.min_metric_damage,
+                                         gapDiagnostics.max_metric_damage});
                         return false;
                     }
                     hpolys.emplace_back(gap);
@@ -379,7 +400,11 @@ namespace sfc_gen
                                      gapDiagnostics.budget_exchange_attempted,
                                      gapDiagnostics.budget_exchange_accepted,
                                      gapDiagnostics.directional_radius,
-                                     gapOptions.direction.normalized()});
+                                     gapOptions.direction.normalized(),
+                                     gapDiagnostics.obstacle_face_count,
+                                     gapDiagnostics.mean_metric_damage,
+                                     gapDiagnostics.min_metric_damage,
+                                     gapDiagnostics.max_metric_damage});
                 }
             }
 
@@ -392,7 +417,11 @@ namespace sfc_gen
                              diagnostics.budget_exchange_attempted,
                              diagnostics.budget_exchange_accepted,
                              diagnostics.directional_radius,
-                             segmentOptions.direction.normalized()});
+                             segmentOptions.direction.normalized(),
+                             diagnostics.obstacle_face_count,
+                             diagnostics.mean_metric_damage,
+                             diagnostics.min_metric_damage,
+                             diagnostics.max_metric_damage});
             ++rawSegmentId;
         }
         if (hpolys.empty())

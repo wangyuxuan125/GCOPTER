@@ -88,6 +88,28 @@ namespace firi
         bool budget_exchange_attempted = false;
         bool budget_exchange_accepted = false;
         double directional_radius = 0.0;
+
+        // Number of final obstacle-generated faces.
+        // Fixed map/bounding-box faces are excluded.
+        int obstacle_face_count =
+            0;
+
+        // CSGN damage evaluated on the FINAL selected obstacle faces.
+        //
+        // psi(n,S) = 0.5 * log((n^T S n)/(n^T n))
+        //
+        // These diagnostics are evaluated whenever a valid metric is
+        // supplied, independently of metric_weight. Therefore CONTROL
+        // (metric_weight = 0) and METRIC (metric_weight = 1) can be
+        // compared against exactly the same CSGN utility.
+        double mean_metric_damage =
+            0.0;
+
+        double min_metric_damage =
+            0.0;
+
+        double max_metric_damage =
+            0.0;
     };
 
     inline void chol3d(const Eigen::Matrix3d &A,
@@ -436,43 +458,69 @@ namespace firi
                       tfOptions.face_count_weight)
                 : 0.0;
 
-        auto metricFaceDamage =
+        // ------------------------------------------------------------
+        // Evaluate the CSGN geometric damage of a physical face normal.
+        //
+        // IMPORTANT:
+        // This depends on metricAvailable, NOT metricFavorable.
+        //
+        // Thus the CONTROL run (metric_weight = 0) can still be
+        // evaluated against exactly the same CSGN metric.
+        // ------------------------------------------------------------
+        auto evaluateMetricDamage =
             [&](const Eigen::Vector3d &physicalNormal)
                 -> double
         {
-            if (!metricFavorable)
+            if (!metricAvailable)
             {
                 return 0.0;
             }
-        
+
             const double squaredNorm =
                 physicalNormal.squaredNorm();
-        
+
             if (!std::isfinite(squaredNorm) ||
                 squaredNorm <=
                     epsilon * epsilon)
             {
                 return 0.0;
             }
-        
+
             const double rayleigh =
                 physicalNormal.dot(
                     deformationUtility *
                     physicalNormal) /
                 squaredNorm;
-                
+
             if (!std::isfinite(rayleigh) ||
                 rayleigh <= 0.0)
             {
                 return 0.0;
             }
-        
+
             return
                 0.5 *
                 std::log(
                     std::max(
                         rayleigh,
                         epsilon));
+        };
+
+        // ------------------------------------------------------------
+        // Score contribution.
+        //
+        // CONTROL has metric_weight = 0 and therefore returns exactly
+        // zero here, while evaluateMetricDamage() remains available for
+        // post-selection diagnostics.
+        // ------------------------------------------------------------
+        auto metricFaceDamage =
+            [&](const Eigen::Vector3d &physicalNormal)
+                -> double
+        {
+            return metricFavorable
+                       ? evaluateMetricDamage(
+                             physicalNormal)
+                       : 0.0;
         };
 
         const int maxFaces = tfOptions.max_faces > 0
@@ -910,13 +958,112 @@ namespace firi
 
         if (tfDiagnostics != nullptr)
         {
-            tfDiagnostics->face_count = hPoly.rows();
-            tfDiagnostics->face_budget_saturated = hPoly.rows() >= maxFaces;
+            tfDiagnostics->face_count =
+                hPoly.rows();
+
+            tfDiagnostics->face_budget_saturated =
+                tfOptions.max_faces > 0 &&
+                hPoly.rows() >= maxFaces;
+
             const Eigen::Vector3d projected =
-                r.asDiagonal() * R.transpose() * favorableDirection;
-            tfDiagnostics->directional_radius = trajectoryFavorable
-                                                    ? projected.norm()
-                                                    : 0.0;
+                r.asDiagonal() *
+                R.transpose() *
+                favorableDirection;
+
+            tfDiagnostics->directional_radius =
+                trajectoryFavorable
+                    ? projected.norm()
+                    : 0.0;
+
+            // --------------------------------------------------------
+            // Evaluate FINAL obstacle faces against the supplied CSGN
+            // utility.
+            //
+            // forwardHIsBoundary corresponds to the final FIRI
+            // iteration and therefore labels the rows that generated
+            // the final hPoly.
+            // --------------------------------------------------------
+            int obstacleFaceCount =
+                0;
+
+            double metricDamageSum =
+                0.0;
+
+            double minMetricDamage =
+                INFINITY;
+
+            double maxMetricDamage =
+                -INFINITY;
+
+            if (metricAvailable)
+            {
+                for (int faceId = 0;
+                     faceId < hPoly.rows();
+                     ++faceId)
+                {
+                    if (forwardHIsBoundary[faceId])
+                    {
+                        continue;
+                    }
+
+                    const Eigen::Vector3d physicalNormal =
+                        hPoly.block<1, 3>(
+                            faceId, 0)
+                            .transpose();
+
+                    const double damage =
+                        evaluateMetricDamage(
+                            physicalNormal);
+
+                    if (!std::isfinite(damage))
+                    {
+                        continue;
+                    }
+
+                    ++obstacleFaceCount;
+
+                    metricDamageSum +=
+                        damage;
+
+                    minMetricDamage =
+                        std::min(
+                            minMetricDamage,
+                            damage);
+
+                    maxMetricDamage =
+                        std::max(
+                            maxMetricDamage,
+                            damage);
+                }
+            }
+
+            tfDiagnostics->obstacle_face_count =
+                obstacleFaceCount;
+
+            if (obstacleFaceCount > 0)
+            {
+                tfDiagnostics->mean_metric_damage =
+                    metricDamageSum /
+                    static_cast<double>(
+                        obstacleFaceCount);
+
+                tfDiagnostics->min_metric_damage =
+                    minMetricDamage;
+
+                tfDiagnostics->max_metric_damage =
+                    maxMetricDamage;
+            }
+            else
+            {
+                tfDiagnostics->mean_metric_damage =
+                    0.0;
+
+                tfDiagnostics->min_metric_damage =
+                    0.0;
+
+                tfDiagnostics->max_metric_damage =
+                    0.0;
+            }
         }
 
         return true;
