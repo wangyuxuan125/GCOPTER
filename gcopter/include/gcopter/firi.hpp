@@ -427,7 +427,7 @@ namespace firi
                 
         const bool conditionedFiri =
             trajectoryFavorable ||
-            metricAvailable;
+            metricFavorable;
                 
         const double faceCountWeight =
             conditionedFiri
@@ -440,7 +440,7 @@ namespace firi
             [&](const Eigen::Vector3d &physicalNormal)
                 -> double
         {
-            if (!metricAvailable)
+            if (!metricFavorable)
             {
                 return 0.0;
             }
@@ -589,9 +589,10 @@ namespace firi
                 {
                     activeObstacleCount += pcFlags(obstacleId) ? 1 : 0;
                 }
-                const bool budgetAware = trajectoryFavorable &&
-                                         faceCountWeight > 0.0 &&
-                                         tfOptions.max_faces > 0;
+                const bool budgetAware =
+                    conditionedFiri &&
+                    faceCountWeight > 0.0 &&
+                    tfOptions.max_faces > 0;
                 const int obstacleFaceSlots =
                     maxFaces - acceptedFaceCount - activeBoundaryCount;
                 const int coverageDivisor = std::max(obstacleFaceSlots, 1);
@@ -688,8 +689,10 @@ namespace firi
                     activeBoundaryForBudget += bdFlags(boundaryId) ? 1 : 0;
                 }
                 const bool mustReserveBoundarySlot =
-                    trajectoryFavorable && faceCountWeight > 0.0 &&
-                    tfOptions.max_faces > 0 && activeBoundaryForBudget > 0 &&
+                    conditionedFiri &&
+                    faceCountWeight > 0.0 &&
+                    tfOptions.max_faces > 0 &&
+                    activeBoundaryForBudget > 0 &&
                     maxFaces - nH <= activeBoundaryForBudget;
                 if (mustReserveBoundarySlot || minSqrD < minSqrR)
                 {
@@ -755,10 +758,11 @@ namespace firi
                     // local obstacle sample. This is a K*L*N certificate check,
                     // not full FIRI construction or unbounded backtracking.
                     bool exchangeAccepted = false;
-                    const bool exchangeAttempted = !budgetExchangeAttempted &&
-                                                   trajectoryFavorable &&
-                                                   unresolvedBoundary == 0 &&
-                                                   unresolvedObstacle > 0;
+                    const bool exchangeAttempted =
+                        !budgetExchangeAttempted &&
+                        conditionedFiri &&
+                        unresolvedBoundary == 0 &&
+                        unresolvedObstacle > 0;
                     budgetExchangeAttempted =
                         budgetExchangeAttempted || exchangeAttempted;
                     if (exchangeAttempted)

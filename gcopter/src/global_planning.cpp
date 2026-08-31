@@ -1646,6 +1646,12 @@ public:
                             << controlSecondPassHPolys.size()
                             << " metric_corridors="
                             << metricSecondPassHPolys.size()
+
+                            << " control_infos="
+                            << controlSecondPassInfos.size()
+                                                    
+                            << " metric_infos="
+                            << metricSecondPassInfos.size()
                         
                             << " control_faces="
                             << controlFaceCount

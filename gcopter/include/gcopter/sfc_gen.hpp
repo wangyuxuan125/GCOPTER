@@ -303,7 +303,8 @@ namespace sfc_gen
             firi::TrajectoryFavorableOptions segmentOptions = options;
             segmentOptions.enabled = true;
             segmentOptions.direction = b - a;
-            egmentOptions.metric_enabled =
+                    
+            segmentOptions.metric_enabled =
                 false;
 
             segmentOptions.deformation_utility =
