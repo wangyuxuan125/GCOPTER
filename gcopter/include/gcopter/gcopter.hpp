@@ -113,9 +113,29 @@ namespace gcopter
 
         struct GaussNewtonDeformationMetric
         {
-            // J^T J before isotropic damping.
+            // Unweighted J^T J, kept for comparison.
+            Eigen::Matrix3d rawGram =
+                Eigen::Matrix3d::Zero();
+
+            // gram below will become the proximity-weighted Gram matrix.
             Eigen::Matrix3d gram =
                 Eigen::Matrix3d::Zero();
+
+            // Nominal constraint proximity diagnostics.
+            // Order:
+            //   [velocity, body rate, tilt, thrust]
+            Eigen::Vector4d meanProximityRatios =
+                Eigen::Vector4d::Zero();
+
+            Eigen::Vector4d maxProximityRatios =
+                Eigen::Vector4d::Zero();
+
+            Eigen::Vector4d meanProximityWeights =
+                Eigen::Vector4d::Zero();
+
+            double proximityPowerUsed = 0.0;
+
+            double rawAnisotropy = 1.0;
             
             // ------------------------------------------------------------
             // Per-feature Gauss-Newton contributions:
@@ -1271,18 +1291,270 @@ namespace gcopter
             return featureVector.allFinite();
         }
 
+        inline bool evaluateNominalDynamicsProximityWeights(
+            Eigen::Matrix<double, 4, Eigen::Dynamic> &nodeWeights,
+            Eigen::Vector4d &meanRatios,
+            Eigen::Vector4d &maxRatios,
+            Eigen::Vector4d &meanWeights,
+            const double proximityPower)
+        {
+            nodeWeights.resize(4, 0);
+        
+            meanRatios.setZero();
+            maxRatios.setZero();
+            meanWeights.setZero();
+        
+            if (!optimizedStateValid ||
+                pieceN <= 0 ||
+                integralRes <= 0 ||
+                optimizedTimes.size() != pieceN ||
+                magnitudeBd.size() < 5 ||
+                !std::isfinite(proximityPower) ||
+                proximityPower <= 0.0)
+            {
+                return false;
+            }
+        
+            const double velocityScale =
+                std::max(
+                    std::abs(magnitudeBd(0)),
+                    1.0e-6);
+                
+            const double bodyRateScale =
+                std::max(
+                    std::abs(magnitudeBd(1)),
+                    1.0e-6);
+                
+            const double thetaMax =
+                std::max(
+                    std::abs(magnitudeBd(2)),
+                    1.0e-6);
+                
+            const double tiltScale =
+                std::max(
+                    std::sin(0.5 * thetaMax),
+                    1.0e-6);
+                
+            const double thrustMean =
+                0.5 *
+                (magnitudeBd(3) +
+                 magnitudeBd(4));
+                
+            const double thrustRadius =
+                std::max(
+                    0.5 *
+                        std::abs(
+                            magnitudeBd(4) -
+                            magnitudeBd(3)),
+                    1.0e-6);
+                        
+            minco.setParameters(
+                optimizedPoints,
+                optimizedTimes);
+            
+            Trajectory<5> nominalTrajectory;
+            
+            minco.getTrajectory(
+                nominalTrajectory);
+            
+            if (nominalTrajectory.getPieceNum() !=
+                pieceN)
+            {
+                return false;
+            }
+        
+            const int nodeCount =
+                pieceN *
+                (integralRes + 1);
+        
+            nodeWeights.resize(
+                4,
+                nodeCount);
+            
+            int nodeId = 0;
+            
+            auto computeWeight =
+                [&](const double ratio) -> double
+            {
+                const double clipped =
+                    std::max(
+                        0.0,
+                        std::min(
+                            ratio,
+                            1.0));
+                        
+                return std::pow(
+                    clipped,
+                    proximityPower);
+            };
+        
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const double duration =
+                    optimizedTimes(pieceId);
+            
+                if (!std::isfinite(duration) ||
+                    duration <= 0.0)
+                {
+                    return false;
+                }
+            
+                const auto &piece =
+                    nominalTrajectory[pieceId];
+            
+                for (int sampleId = 0;
+                     sampleId <= integralRes;
+                     ++sampleId)
+                {
+                    const double alpha =
+                        static_cast<double>(sampleId) /
+                        static_cast<double>(integralRes);
+                
+                    const double localTime =
+                        alpha * duration;
+                
+                    const Eigen::Vector3d vel =
+                        piece.getVel(localTime);
+                
+                    const Eigen::Vector3d acc =
+                        piece.getAcc(localTime);
+                
+                    const Eigen::Vector3d jer =
+                        piece.getJer(localTime);
+                
+                    double thrust = 0.0;
+                
+                    Eigen::Vector4d quat =
+                        Eigen::Vector4d::Zero();
+                
+                    Eigen::Vector3d bodyRate =
+                        Eigen::Vector3d::Zero();
+                
+                    flatmap.forward(
+                        vel,
+                        acc,
+                        jer,
+                        0.0,
+                        0.0,
+                        thrust,
+                        quat,
+                        bodyRate);
+                    
+                    if (!vel.allFinite() ||
+                        !acc.allFinite() ||
+                        !jer.allFinite() ||
+                        !std::isfinite(thrust) ||
+                        !quat.allFinite() ||
+                        !bodyRate.allFinite())
+                    {
+                        return false;
+                    }
+                
+                    Eigen::Vector4d ratios;
+                
+                    ratios(0) =
+                        vel.norm() /
+                        velocityScale;
+                
+                    ratios(1) =
+                        bodyRate.norm() /
+                        bodyRateScale;
+                
+                    ratios(2) =
+                        std::sqrt(
+                            quat(1) * quat(1) +
+                            quat(2) * quat(2)) /
+                        tiltScale;
+                        
+                    ratios(3) =
+                        std::abs(
+                            thrust -
+                            thrustMean) /
+                        thrustRadius;
+                        
+                    if (!ratios.allFinite())
+                    {
+                        return false;
+                    }
+                
+                    Eigen::Vector4d weights;
+                
+                    for (int featureId = 0;
+                         featureId < 4;
+                         ++featureId)
+                    {
+                        weights(featureId) =
+                            computeWeight(
+                                ratios(featureId));
+                    }
+                
+                    nodeWeights.col(nodeId) =
+                        weights;
+                
+                    meanRatios +=
+                        ratios;
+                
+                    meanWeights +=
+                        weights;
+                
+                    maxRatios =
+                        maxRatios.cwiseMax(
+                            ratios);
+                        
+                    ++nodeId;
+                }
+            }
+        
+            if (nodeId != nodeCount)
+            {
+                return false;
+            }
+        
+            meanRatios /=
+                static_cast<double>(
+                    nodeCount);
+                
+            meanWeights /=
+                static_cast<double>(
+                    nodeCount);
+                
+            return nodeWeights.allFinite() &&
+                   meanRatios.allFinite() &&
+                   maxRatios.allFinite() &&
+                   meanWeights.allFinite();
+        }
+
         inline bool computeSingleGaussNewtonDeformationMetric(
             const int pieceId,
             GaussNewtonDeformationMetric &metric,
             const double displacementStep,
-            const double relativeDamping)
+            const double relativeDamping,
+            const double proximityPower,
+            const Eigen::Matrix<double, 4, Eigen::Dynamic> &nodeWeights,
+            const Eigen::Vector4d &meanRatios,
+            const Eigen::Vector4d &maxRatios,
+            const Eigen::Vector4d &meanWeights)
         {
             metric =
                 GaussNewtonDeformationMetric();
         
             metric.displacementStepUsed =
                 displacementStep;
-        
+
+            metric.proximityPowerUsed =
+                proximityPower;
+
+            metric.meanProximityRatios =
+                meanRatios;
+
+            metric.maxProximityRatios =
+                maxRatios;
+
+            metric.meanProximityWeights =
+                meanWeights;
+
             auto fail =
                 [&](const char *reason) -> bool
             {
@@ -1318,6 +1590,13 @@ namespace gcopter
                     "invalid_relative_damping");
             }
         
+            if (!std::isfinite(proximityPower) ||
+                proximityPower <= 0.0)
+            {
+                return fail(
+                    "invalid_proximity_power");
+            }
+
             Eigen::MatrixXd featureJacobian;
         
             bool jacobianAllocated =
@@ -1412,45 +1691,6 @@ namespace gcopter
         
             metric.jacobianFrobeniusNorm =
                 featureJacobian.norm();
-        
-            // ------------------------------------------------------------
-            // Gauss-Newton deformation Gram matrix.
-            //
-            //     G = J^T J >= 0
-            // ------------------------------------------------------------
-            Eigen::Matrix3d gram =
-                featureJacobian.transpose() *
-                featureJacobian;
-        
-            gram =
-                (0.5 *
-                 (gram +
-                  gram.transpose()))
-                    .eval();
-                
-            // ------------------------------------------------------------
-            // Decompose J^T J according to dynamics feature type.
-            //
-            // evaluateDynamicsFeatureVector() stores 9 entries per node:
-            //
-            //   rows 0..2 : normalized velocity
-            //   rows 3..5 : normalized body rate
-            //   rows 6..7 : normalized tilt quaternion components
-            //   row  8    : normalized thrust
-            //
-            // Hence no extra trajectory/feature evaluations are required.
-            // ------------------------------------------------------------
-            Eigen::Matrix3d velocityGram =
-                Eigen::Matrix3d::Zero();
-
-            Eigen::Matrix3d bodyRateGram =
-                Eigen::Matrix3d::Zero();
-
-            Eigen::Matrix3d tiltGram =
-                Eigen::Matrix3d::Zero();
-
-            Eigen::Matrix3d thrustGram =
-                Eigen::Matrix3d::Zero();
 
             constexpr int featurePerNode = 9;
 
@@ -1466,6 +1706,49 @@ namespace gcopter
                 featureJacobian.rows() /
                 featurePerNode;
 
+            if (nodeWeights.rows() != 4 ||
+                nodeWeights.cols() !=
+                    featureNodeCount)
+            {
+                return fail(
+                    "gn_proximity_weight_dimension_mismatch");
+            }
+
+            // ------------------------------------------------------------
+            // Raw, unweighted GN Gram.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d rawGram =
+                featureJacobian.transpose() *
+                featureJacobian;
+
+            rawGram =
+                (0.5 *
+                 (rawGram +
+                  rawGram.transpose()))
+                    .eval();
+                
+            if (!rawGram.allFinite())
+            {
+                return fail(
+                    "gn_raw_gram_nonfinite");
+            }
+
+            metric.rawGram =
+                rawGram;
+
+            // ------------------------------------------------------------
+            // Construct W^(1/2) J.
+            //
+            // Each nominal proximity weight is frozen while taking the
+            // Cartesian finite difference. Therefore
+            //
+            //     G_w = J^T W J
+            //
+            // remains positive semidefinite.
+            // ------------------------------------------------------------
+            Eigen::MatrixXd weightedJacobian =
+                featureJacobian;
+
             for (int nodeId = 0;
                  nodeId < featureNodeCount;
                  ++nodeId)
@@ -1474,48 +1757,129 @@ namespace gcopter
                     featurePerNode *
                     nodeId;
             
-                const Eigen::Matrix<double, 3, 3>
-                    velocityJacobian =
-                        featureJacobian.block<3, 3>(
-                            row,
-                            0);
-                        
-                const Eigen::Matrix<double, 3, 3>
-                    bodyRateJacobian =
-                        featureJacobian.block<3, 3>(
-                            row + 3,
-                            0);
-                        
-                const Eigen::Matrix<double, 2, 3>
-                    tiltJacobian =
-                        featureJacobian.block<2, 3>(
-                            row + 6,
-                            0);
-                        
-                const Eigen::Matrix<double, 1, 3>
-                    thrustJacobian =
-                        featureJacobian.block<1, 3>(
-                            row + 8,
-                            0);
-                        
+                const double sqrtVelocityWeight =
+                    std::sqrt(
+                        nodeWeights(0, nodeId));
+                    
+                const double sqrtBodyRateWeight =
+                    std::sqrt(
+                        nodeWeights(1, nodeId));
+                    
+                const double sqrtTiltWeight =
+                    std::sqrt(
+                        nodeWeights(2, nodeId));
+                    
+                const double sqrtThrustWeight =
+                    std::sqrt(
+                        nodeWeights(3, nodeId));
+                    
+                weightedJacobian.block<3, 3>(
+                    row,
+                    0) *=
+                    sqrtVelocityWeight;
+                
+                weightedJacobian.block<3, 3>(
+                    row + 3,
+                    0) *=
+                    sqrtBodyRateWeight;
+                
+                weightedJacobian.block<2, 3>(
+                    row + 6,
+                    0) *=
+                    sqrtTiltWeight;
+                
+                weightedJacobian.block<1, 3>(
+                    row + 8,
+                    0) *=
+                    sqrtThrustWeight;
+            }
+
+            if (!weightedJacobian.allFinite())
+            {
+                return fail(
+                    "gn_weighted_jacobian_nonfinite");
+            }
+
+            Eigen::Matrix3d gram =
+                weightedJacobian.transpose() *
+                weightedJacobian;
+
+            gram =
+                (0.5 *
+                 (gram +
+                  gram.transpose()))
+                    .eval();
+                
+            if (!gram.allFinite())
+            {
+                return fail(
+                    "gn_weighted_gram_nonfinite");
+            }
+
+            // ------------------------------------------------------------
+            // Independent per-feature decomposition of J^T W J.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d velocityGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d bodyRateGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d tiltGram =
+                Eigen::Matrix3d::Zero();
+
+            Eigen::Matrix3d thrustGram =
+                Eigen::Matrix3d::Zero();
+
+            for (int nodeId = 0;
+                 nodeId < featureNodeCount;
+                 ++nodeId)
+            {
+                const int row =
+                    featurePerNode *
+                    nodeId;
+            
+                const auto velocityJacobian =
+                    featureJacobian.block<3, 3>(
+                        row,
+                        0);
+                    
+                const auto bodyRateJacobian =
+                    featureJacobian.block<3, 3>(
+                        row + 3,
+                        0);
+                    
+                const auto tiltJacobian =
+                    featureJacobian.block<2, 3>(
+                        row + 6,
+                        0);
+                    
+                const auto thrustJacobian =
+                    featureJacobian.block<1, 3>(
+                        row + 8,
+                        0);
+                    
                 velocityGram.noalias() +=
+                    nodeWeights(0, nodeId) *
                     velocityJacobian.transpose() *
                     velocityJacobian;
-                        
+                    
                 bodyRateGram.noalias() +=
+                    nodeWeights(1, nodeId) *
                     bodyRateJacobian.transpose() *
                     bodyRateJacobian;
-                        
+                    
                 tiltGram.noalias() +=
+                    nodeWeights(2, nodeId) *
                     tiltJacobian.transpose() *
                     tiltJacobian;
-                        
+                    
                 thrustGram.noalias() +=
+                    nodeWeights(3, nodeId) *
                     thrustJacobian.transpose() *
                     thrustJacobian;
             }
 
-            // Numerical symmetrization for clean diagnostics.
             velocityGram =
                 (0.5 *
                  (velocityGram +
@@ -1546,7 +1910,7 @@ namespace gcopter
                 !thrustGram.allFinite())
             {
                 return fail(
-                    "gn_component_gram_nonfinite");
+                    "gn_weighted_component_nonfinite");
             }
 
             metric.velocityGram =
@@ -1566,7 +1930,7 @@ namespace gcopter
                 bodyRateGram +
                 tiltGram +
                 thrustGram;
-                    
+
             metric.decompositionRelativeError =
                 (gram -
                  reconstructedGram)
@@ -1582,12 +1946,9 @@ namespace gcopter
                     "gn_decomposition_error_nonfinite");
             }
 
-            if (!gram.allFinite())
-            {
-                return fail(
-                    "gn_gram_nonfinite");
-            }
-
+            // ------------------------------------------------------------
+            // Weighted contribution fractions.
+            // ------------------------------------------------------------
             const double velocityTrace =
                 velocityGram.trace();
 
@@ -1631,14 +1992,7 @@ namespace gcopter
                     thrustTrace /
                     totalFeatureTrace;
             }
-            else
-            {
-                metric.velocityTraceFraction = 0.0;
-                metric.bodyRateTraceFraction = 0.0;
-                metric.tiltTraceFraction = 0.0;
-                metric.thrustTraceFraction = 0.0;
-            }
-        
+
             auto computeDirectionality =
                 [](const Eigen::Matrix3d &component)
                     -> double
@@ -1662,7 +2016,7 @@ namespace gcopter
                         .norm() /
                     trace;
             };
-            
+
             metric.velocityDirectionality =
                 computeDirectionality(
                     velocityGram);
@@ -1678,32 +2032,32 @@ namespace gcopter
             metric.thrustDirectionality =
                 computeDirectionality(
                     thrustGram);
-
+                
             metric.gram =
                 gram;
         
             // ------------------------------------------------------------
-            // Scale-relative isotropic damping.
+            // The isotropic prior uses the RAW sensitivity scale.
             //
-            // We do NOT use the old maxAnisotropy hard clipping here.
-            // First we want to observe the natural GN spectrum.
+            // This is intentional:
+            //
+            // If every nominal constraint is far from its limit, W becomes
+            // small, while the isotropic prior remains.  The final metric
+            // then naturally approaches I.
             // ------------------------------------------------------------
-            const double gramScale =
-                gram.trace() /
+            const double rawGramScale =
+                rawGram.trace() /
                 3.0;
-        
-            if (!std::isfinite(gramScale) ||
-                gramScale < 0.0)
+
+            if (!std::isfinite(rawGramScale) ||
+                rawGramScale < 0.0)
             {
                 return fail(
-                    "gn_scale_invalid");
+                    "gn_raw_scale_invalid");
             }
-        
-            // If the complete dynamics feature is insensitive to this
-            // deformation, the metric should fall back to isotropic.
-            if (gramScale <= 1.0e-12)
+
+            if (rawGramScale <= 1.0e-12)
             {
-                metric.gram.setZero();
                 metric.stiffness.setIdentity();
                 metric.utility.setIdentity();
             
@@ -1716,8 +2070,8 @@ namespace gcopter
                 metric.dampingUsed =
                     1.0;
             
-                metric.jacobianFrobeniusNorm =
-                    featureJacobian.norm();
+                metric.rawAnisotropy =
+                    1.0;
             
                 metric.anisotropy =
                     1.0;
@@ -1733,16 +2087,49 @@ namespace gcopter
             
                 return true;
             }
-        
+
             const double damping =
                 std::max(
                     relativeDamping *
-                        gramScale,
+                        rawGramScale,
                     1.0e-12);
                 
             metric.dampingUsed =
                 damping;
                 
+            // Raw GN anisotropy, for A/B comparison.
+            const Eigen::Matrix3d rawStiffness =
+                rawGram +
+                damping *
+                    Eigen::Matrix3d::Identity();
+                
+            Eigen::SelfAdjointEigenSolver<
+                Eigen::Matrix3d>
+                rawSolver(
+                    rawStiffness);
+                
+            if (rawSolver.info() !=
+                Eigen::Success)
+            {
+                return fail(
+                    "gn_raw_eigensolver_failed");
+            }
+
+            const Eigen::Vector3d rawEigenvalues =
+                rawSolver.eigenvalues();
+
+            if (!rawEigenvalues.allFinite() ||
+                rawEigenvalues.minCoeff() <= 0.0)
+            {
+                return fail(
+                    "gn_raw_eigenvalues_invalid");
+            }
+
+            metric.rawAnisotropy =
+                rawEigenvalues(2) /
+                rawEigenvalues(0);
+
+            // This is the actual proximity-weighted stiffness.
             const Eigen::Matrix3d stiffness =
                 gram +
                 damping *
@@ -3222,12 +3609,33 @@ namespace gcopter
         inline bool computeGaussNewtonDeformationMetrics(
             GaussNewtonDeformationMetrics &metrics,
             const double displacementStep = 0.01,
-            const double relativeDamping = 1.0e-3)
+            const double relativeDamping = 1.0e-3,
+            const double proximityPower = 4.0)
         {
             metrics.clear();
         
             if (!optimizedStateValid ||
                 pieceN <= 0)
+            {
+                return false;
+            }
+        
+            Eigen::Matrix<
+                double,
+                4,
+                Eigen::Dynamic>
+                nodeWeights;
+        
+            Eigen::Vector4d meanRatios;
+            Eigen::Vector4d maxRatios;
+            Eigen::Vector4d meanWeights;
+        
+            if (!evaluateNominalDynamicsProximityWeights(
+                    nodeWeights,
+                    meanRatios,
+                    maxRatios,
+                    meanWeights,
+                    proximityPower))
             {
                 return false;
             }
@@ -3247,15 +3655,18 @@ namespace gcopter
                         pieceId,
                         metrics[pieceId],
                         displacementStep,
-                        relativeDamping);
+                        relativeDamping,
+                        proximityPower,
+                        nodeWeights,
+                        meanRatios,
+                        maxRatios,
+                        meanWeights);
                     
                 allValid =
                     allValid &&
                     success;
             }
         
-            // Restore the nominal MINCO state because feature evaluation
-            // repeatedly changes the internal MINCO coefficients.
             minco.setParameters(
                 optimizedPoints,
                 optimizedTimes);

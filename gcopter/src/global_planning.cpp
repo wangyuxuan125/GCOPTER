@@ -972,6 +972,18 @@ public:
                 // deformation metric.  It only runs when the experiment tag
                 // is exactly "debug_metric", so normal benchmarks are not
                 // affected.
+                // ------------------------------------------------------------
+                // Debug gate diagnostic.
+                // ------------------------------------------------------------
+                ROS_INFO_STREAM(
+                    "TF_GN_DEBUG_GATE "
+                    << "experiment_tag="
+                    << config.experimentTag
+                    << " final_cost="
+                    << record.final_cost
+                    << " finite_cost="
+                    << std::isfinite(record.final_cost));
+                    
                 if (config.experimentTag == "debug_metric" &&
                     std::isfinite(record.final_cost))
                 {
@@ -984,6 +996,9 @@ public:
                 
                     const double gnRelativeDamping =
                         1.0e-3;
+
+                    const double gnProximityPower =
+                        4.0;
                 
                     const auto metricStarted =
                         std::chrono::steady_clock::now();
@@ -992,7 +1007,8 @@ public:
                         gcopter.computeGaussNewtonDeformationMetrics(
                             gnMetrics,
                             gnStep,
-                            gnRelativeDamping);
+                            gnRelativeDamping,
+                            gnProximityPower);
                         
                     const double elapsedMs =
                         std::chrono::duration<
@@ -1003,10 +1019,11 @@ public:
                             .count();
                             
                     ROS_INFO_STREAM(
-                        "TF_GN_COMPONENT_END "
+                        "TF_PWGN_END "
                         << "success=" << success
                         << " pieces=" << gnMetrics.size()
-                        << " elapsed_ms=" << elapsedMs);
+                        << " elapsed_ms=" << elapsedMs
+                        << " gamma=" << gnProximityPower);
                     
                     for (size_t pieceId = 0;
                          pieceId < gnMetrics.size();
@@ -1033,8 +1050,32 @@ public:
                             metric.thrustTraceFraction;
                     
                         ROS_INFO_STREAM(
-                            "TF_GN_COMPONENT "
+                            "TF_PWGN "
                             << "piece=" << pieceId
+                        
+                            << " mean_r=["
+                            << metric.meanProximityRatios(0) << ","
+                            << metric.meanProximityRatios(1) << ","
+                            << metric.meanProximityRatios(2) << ","
+                            << metric.meanProximityRatios(3) << "]"
+                        
+                            << " max_r=["
+                            << metric.maxProximityRatios(0) << ","
+                            << metric.maxProximityRatios(1) << ","
+                            << metric.maxProximityRatios(2) << ","
+                            << metric.maxProximityRatios(3) << "]"
+                        
+                            << " mean_w=["
+                            << metric.meanProximityWeights(0) << ","
+                            << metric.meanProximityWeights(1) << ","
+                            << metric.meanProximityWeights(2) << ","
+                            << metric.meanProximityWeights(3) << "]"
+                        
+                            << " raw_anis="
+                            << metric.rawAnisotropy
+                        
+                            << " weighted_anis="
+                            << metric.anisotropy
                         
                             << " frac_v="
                             << metric.velocityTraceFraction
@@ -1048,26 +1089,11 @@ public:
                             << " frac_thrust="
                             << metric.thrustTraceFraction
                         
-                            << " frac_sum="
-                            << fractionSum
-                        
-                            << " dir_v="
-                            << metric.velocityDirectionality
-                        
-                            << " dir_omega="
-                            << metric.bodyRateDirectionality
-                        
-                            << " dir_tilt="
-                            << metric.tiltDirectionality
-                        
-                            << " dir_thrust="
-                            << metric.thrustDirectionality
-                        
                             << " decomp_err="
                             << metric.decompositionRelativeError
                         
-                            << " total_anis="
-                            << metric.anisotropy);
+                            << " detS="
+                            << metric.utility.determinant());
                     }
                 }
 
