@@ -988,27 +988,30 @@ public:
                     std::isfinite(record.final_cost))
                 {
                     gcopter::GCOPTER_PolytopeSFC::
-                        GaussNewtonDeformationMetrics
-                            gnMetrics;
+                        GaussNewtonDeformationMetrics metrics;
                 
-                    const double gnStep =
+                    const double csgnStep =
                         0.01;
                 
-                    const double gnRelativeDamping =
+                    const double relativeDamping =
                         1.0e-3;
-
-                    const double gnProximityPower =
+                
+                    const double proximityPower =
                         4.0;
+                
+                    const double maxCorridorAnisotropy =
+                        10.0;
                 
                     const auto metricStarted =
                         std::chrono::steady_clock::now();
                 
                     const bool success =
                         gcopter.computeGaussNewtonDeformationMetrics(
-                            gnMetrics,
-                            gnStep,
-                            gnRelativeDamping,
-                            gnProximityPower);
+                            metrics,
+                            csgnStep,
+                            relativeDamping,
+                            proximityPower,
+                            maxCorridorAnisotropy);
                         
                     const double elapsedMs =
                         std::chrono::duration<
@@ -1019,23 +1022,26 @@ public:
                             .count();
                             
                     ROS_INFO_STREAM(
-                        "TF_PWGN_END "
+                        "TF_CSGN_COMPRESS_END "
                         << "success=" << success
-                        << " pieces=" << gnMetrics.size()
+                        << " pieces=" << metrics.size()
                         << " elapsed_ms=" << elapsedMs
-                        << " gamma=" << gnProximityPower);
+                        << " h=" << csgnStep
+                        << " gamma=" << proximityPower
+                        << " kappa_max="
+                        << maxCorridorAnisotropy);
                     
                     for (size_t pieceId = 0;
-                         pieceId < gnMetrics.size();
+                         pieceId < metrics.size();
                          ++pieceId)
                     {
                         const auto &metric =
-                            gnMetrics[pieceId];
+                            metrics[pieceId];
                     
                         if (!metric.valid)
                         {
                             ROS_WARN_STREAM(
-                                "TF_GN_COMPONENT "
+                                "TF_CSGN_COMPRESS "
                                 << "piece=" << pieceId
                                 << " INVALID reason="
                                 << metric.failureReason);
@@ -1043,57 +1049,40 @@ public:
                             continue;
                         }
                     
-                        const double fractionSum =
-                            metric.velocityTraceFraction +
-                            metric.bodyRateTraceFraction +
-                            metric.tiltTraceFraction +
-                            metric.thrustTraceFraction;
-                    
                         ROS_INFO_STREAM(
-                            "TF_PWGN "
+                            "TF_CSGN_COMPRESS "
                             << "piece=" << pieceId
                         
-                            << " mean_r=["
-                            << metric.meanProximityRatios(0) << ","
-                            << metric.meanProximityRatios(1) << ","
-                            << metric.meanProximityRatios(2) << ","
-                            << metric.meanProximityRatios(3) << "]"
-                        
-                            << " max_r=["
-                            << metric.maxProximityRatios(0) << ","
-                            << metric.maxProximityRatios(1) << ","
-                            << metric.maxProximityRatios(2) << ","
-                            << metric.maxProximityRatios(3) << "]"
-                        
-                            << " mean_w=["
-                            << metric.meanProximityWeights(0) << ","
-                            << metric.meanProximityWeights(1) << ","
-                            << metric.meanProximityWeights(2) << ","
-                            << metric.meanProximityWeights(3) << "]"
-                        
-                            << " raw_anis="
-                            << metric.rawAnisotropy
-                        
-                            << " weighted_anis="
+                            << " natural_anis="
                             << metric.anisotropy
                         
-                            << " frac_v="
-                            << metric.velocityTraceFraction
+                            << " alpha="
+                            << metric.spectrumCompressionAlpha
                         
-                            << " frac_omega="
-                            << metric.bodyRateTraceFraction
+                            << " corridor_anis="
+                            << metric.corridorAnisotropy
                         
-                            << " frac_tilt="
-                            << metric.tiltTraceFraction
+                            << " natural_eig=["
+                            << metric.utilityEigenvalues(0)
+                            << ","
+                            << metric.utilityEigenvalues(1)
+                            << ","
+                            << metric.utilityEigenvalues(2)
+                            << "]"
                         
-                            << " frac_thrust="
-                            << metric.thrustTraceFraction
+                            << " corridor_eig=["
+                            << metric.corridorUtilityEigenvalues(0)
+                            << ","
+                            << metric.corridorUtilityEigenvalues(1)
+                            << ","
+                            << metric.corridorUtilityEigenvalues(2)
+                            << "]"
                         
-                            << " decomp_err="
-                            << metric.decompositionRelativeError
+                            << " det_natural="
+                            << metric.utility.determinant()
                         
-                            << " detS="
-                            << metric.utility.determinant());
+                            << " det_corridor="
+                            << metric.corridorUtility.determinant());
                     }
                 }
 

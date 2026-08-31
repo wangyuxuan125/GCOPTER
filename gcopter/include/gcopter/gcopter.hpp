@@ -177,6 +177,28 @@ namespace gcopter
         
             Eigen::Vector3d principalDirection =
                 Eigen::Vector3d::UnitX();
+
+            // ------------------------------------------------------------
+            // Spectrum-compressed utility used by the downstream corridor
+            // generator.
+            //
+            // `utility` remains the natural determinant-normalized inverse
+            // CSGN metric.
+            //
+            // `corridorUtility` preserves its eigenvectors and eigenvalue
+            // ordering, but bounds the anisotropy.
+            // ------------------------------------------------------------
+            Eigen::Matrix3d corridorUtility =
+                Eigen::Matrix3d::Identity();
+
+            Eigen::Vector3d corridorUtilityEigenvalues =
+                Eigen::Vector3d::Ones();
+
+            double corridorAnisotropy = 1.0;
+
+            double spectrumCompressionAlpha = 1.0;
+
+            double maxCorridorAnisotropyUsed = 1.0;
         
             double displacementStepUsed = 0.0;
         
@@ -1291,6 +1313,244 @@ namespace gcopter
             return featureVector.allFinite();
         }
 
+        inline bool evaluateConstraintUtilizationFeatureVector(
+            const Eigen::Matrix3Xd &testPoints,
+            Eigen::VectorXd &featureVector)
+        {
+            featureVector.resize(0);
+        
+            if (!optimizedStateValid ||
+                pieceN <= 0 ||
+                integralRes <= 0)
+            {
+                return false;
+            }
+        
+            if (testPoints.rows() != 3 ||
+                testPoints.cols() != pieceN - 1 ||
+                optimizedTimes.size() != pieceN ||
+                magnitudeBd.size() < 5)
+            {
+                return false;
+            }
+        
+            const double velocityScale =
+                std::max(
+                    std::abs(magnitudeBd(0)),
+                    1.0e-6);
+                
+            const double bodyRateScale =
+                std::max(
+                    std::abs(magnitudeBd(1)),
+                    1.0e-6);
+                
+            const double thetaMax =
+                std::max(
+                    std::abs(magnitudeBd(2)),
+                    1.0e-6);
+                
+            const double tiltScale =
+                std::max(
+                    std::sin(0.5 * thetaMax),
+                    1.0e-6);
+                
+            const double thrustMean =
+                0.5 *
+                (magnitudeBd(3) +
+                 magnitudeBd(4));
+                
+            const double thrustRadius =
+                std::max(
+                    0.5 *
+                        std::abs(
+                            magnitudeBd(4) -
+                            magnitudeBd(3)),
+                    1.0e-6);
+                        
+            minco.setParameters(
+                testPoints,
+                optimizedTimes);
+            
+            Trajectory<5> metricTrajectory;
+            
+            minco.getTrajectory(
+                metricTrajectory);
+            
+            if (metricTrajectory.getPieceNum() !=
+                pieceN)
+            {
+                return false;
+            }
+        
+            // Four scalar constraint-utilization features:
+            //
+            //   0: velocity
+            //   1: body rate
+            //   2: tilt
+            //   3: thrust
+            constexpr int featurePerNode =
+                4;
+        
+            const int nodeCount =
+                pieceN *
+                (integralRes + 1);
+        
+            featureVector.resize(
+                featurePerNode *
+                nodeCount);
+            
+            int offset = 0;
+            
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const double duration =
+                    optimizedTimes(pieceId);
+            
+                if (!std::isfinite(duration) ||
+                    duration <= 0.0)
+                {
+                    featureVector.resize(0);
+                    return false;
+                }
+            
+                const double dt =
+                    duration /
+                    static_cast<double>(
+                        integralRes);
+                    
+                const auto &piece =
+                    metricTrajectory[pieceId];
+                    
+                for (int sampleId = 0;
+                     sampleId <= integralRes;
+                     ++sampleId)
+                {
+                    const double alpha =
+                        static_cast<double>(sampleId) /
+                        static_cast<double>(
+                            integralRes);
+                        
+                    const double localTime =
+                        alpha *
+                        duration;
+                        
+                    const double trapezoidWeight =
+                        (sampleId == 0 ||
+                         sampleId == integralRes)
+                            ? 0.5
+                            : 1.0;
+                        
+                    // Makes J^T J approximate a time integral.
+                    const double integrationWeight =
+                        std::sqrt(
+                            trapezoidWeight *
+                            dt);
+                        
+                    const Eigen::Vector3d vel =
+                        piece.getVel(
+                            localTime);
+                        
+                    const Eigen::Vector3d acc =
+                        piece.getAcc(
+                            localTime);
+                        
+                    const Eigen::Vector3d jer =
+                        piece.getJer(
+                            localTime);
+                        
+                    double thrust = 0.0;
+                        
+                    Eigen::Vector4d quat =
+                        Eigen::Vector4d::Zero();
+                        
+                    Eigen::Vector3d bodyRate =
+                        Eigen::Vector3d::Zero();
+                        
+                    flatmap.forward(
+                        vel,
+                        acc,
+                        jer,
+                        0.0,
+                        0.0,
+                        thrust,
+                        quat,
+                        bodyRate);
+                    
+                    if (!vel.allFinite() ||
+                        !acc.allFinite() ||
+                        !jer.allFinite() ||
+                        !std::isfinite(thrust) ||
+                        !quat.allFinite() ||
+                        !bodyRate.allFinite())
+                    {
+                        featureVector.resize(0);
+                        return false;
+                    }
+                
+                    const double velocityUtilization =
+                        vel.squaredNorm() /
+                        (velocityScale *
+                         velocityScale);
+                        
+                    const double bodyRateUtilization =
+                        bodyRate.squaredNorm() /
+                        (bodyRateScale *
+                         bodyRateScale);
+                        
+                    const double tiltUtilization =
+                        (quat(1) * quat(1) +
+                         quat(2) * quat(2)) /
+                        (tiltScale *
+                         tiltScale);
+                        
+                    const double thrustNormalized =
+                        (thrust -
+                         thrustMean) /
+                        thrustRadius;
+                        
+                    const double thrustUtilization =
+                        thrustNormalized *
+                        thrustNormalized;
+                        
+                    if (!std::isfinite(
+                            velocityUtilization) ||
+                        !std::isfinite(
+                            bodyRateUtilization) ||
+                        !std::isfinite(
+                            tiltUtilization) ||
+                        !std::isfinite(
+                            thrustUtilization))
+                    {
+                        featureVector.resize(0);
+                        return false;
+                    }
+                
+                    featureVector(offset + 0) =
+                        integrationWeight *
+                        velocityUtilization;
+                
+                    featureVector(offset + 1) =
+                        integrationWeight *
+                        bodyRateUtilization;
+                
+                    featureVector(offset + 2) =
+                        integrationWeight *
+                        tiltUtilization;
+                
+                    featureVector(offset + 3) =
+                        integrationWeight *
+                        thrustUtilization;
+                
+                    offset +=
+                        featurePerNode;
+                }
+            }
+        
+            return featureVector.allFinite();
+        }
+
         inline bool evaluateNominalDynamicsProximityWeights(
             Eigen::Matrix<double, 4, Eigen::Dynamic> &nodeWeights,
             Eigen::Vector4d &meanRatios,
@@ -1532,6 +1792,7 @@ namespace gcopter
             const double displacementStep,
             const double relativeDamping,
             const double proximityPower,
+            const double maxCorridorAnisotropy,
             const Eigen::Matrix<double, 4, Eigen::Dynamic> &nodeWeights,
             const Eigen::Vector4d &meanRatios,
             const Eigen::Vector4d &maxRatios,
@@ -1554,6 +1815,8 @@ namespace gcopter
 
             metric.meanProximityWeights =
                 meanWeights;
+            metric.maxCorridorAnisotropyUsed =
+                maxCorridorAnisotropy;
 
             auto fail =
                 [&](const char *reason) -> bool
@@ -1581,6 +1844,13 @@ namespace gcopter
             {
                 return fail(
                     "invalid_displacement_step");
+            }
+
+            if (!std::isfinite(maxCorridorAnisotropy) ||
+                maxCorridorAnisotropy < 1.0)
+            {
+                return fail(
+                    "invalid_max_corridor_anisotropy");
             }
         
             if (!std::isfinite(relativeDamping) ||
@@ -1634,7 +1904,7 @@ namespace gcopter
                 Eigen::VectorXd featurePlus;
                 Eigen::VectorXd featureMinus;
             
-                if (!evaluateDynamicsFeatureVector(
+                if (!evaluateConstraintUtilizationFeatureVector(
                         plusPoints,
                         featurePlus))
                 {
@@ -1642,7 +1912,7 @@ namespace gcopter
                         "feature_plus_failed");
                 }
             
-                if (!evaluateDynamicsFeatureVector(
+                if (!evaluateConstraintUtilizationFeatureVector(
                         minusPoints,
                         featureMinus))
                 {
@@ -1692,7 +1962,7 @@ namespace gcopter
             metric.jacobianFrobeniusNorm =
                 featureJacobian.norm();
 
-            constexpr int featurePerNode = 9;
+            constexpr int featurePerNode = 4;
 
             if (featureJacobian.rows() %
                     featurePerNode !=
@@ -1773,23 +2043,23 @@ namespace gcopter
                     std::sqrt(
                         nodeWeights(3, nodeId));
                     
-                weightedJacobian.block<3, 3>(
-                    row,
+                weightedJacobian.block<1, 3>(
+                    row + 0,
                     0) *=
                     sqrtVelocityWeight;
                 
-                weightedJacobian.block<3, 3>(
-                    row + 3,
+                weightedJacobian.block<1, 3>(
+                    row + 1,
                     0) *=
                     sqrtBodyRateWeight;
                 
-                weightedJacobian.block<2, 3>(
-                    row + 6,
+                weightedJacobian.block<1, 3>(
+                    row + 2,
                     0) *=
                     sqrtTiltWeight;
                 
                 weightedJacobian.block<1, 3>(
-                    row + 8,
+                    row + 3,
                     0) *=
                     sqrtThrustWeight;
             }
@@ -1839,41 +2109,45 @@ namespace gcopter
                     featurePerNode *
                     nodeId;
             
-                const auto velocityJacobian =
-                    featureJacobian.block<3, 3>(
-                        row,
-                        0);
-                    
-                const auto bodyRateJacobian =
-                    featureJacobian.block<3, 3>(
-                        row + 3,
-                        0);
-                    
-                const auto tiltJacobian =
-                    featureJacobian.block<2, 3>(
-                        row + 6,
-                        0);
-                    
-                const auto thrustJacobian =
-                    featureJacobian.block<1, 3>(
-                        row + 8,
-                        0);
-                    
+                const Eigen::Matrix<double, 1, 3>
+                    velocityJacobian =
+                        featureJacobian.block<1, 3>(
+                            row + 0,
+                            0);
+                        
+                const Eigen::Matrix<double, 1, 3>
+                    bodyRateJacobian =
+                        featureJacobian.block<1, 3>(
+                            row + 1,
+                            0);
+                        
+                const Eigen::Matrix<double, 1, 3>
+                    tiltJacobian =
+                        featureJacobian.block<1, 3>(
+                            row + 2,
+                            0);
+                        
+                const Eigen::Matrix<double, 1, 3>
+                    thrustJacobian =
+                        featureJacobian.block<1, 3>(
+                            row + 3,
+                            0);
+                        
                 velocityGram.noalias() +=
                     nodeWeights(0, nodeId) *
                     velocityJacobian.transpose() *
                     velocityJacobian;
-                    
+                        
                 bodyRateGram.noalias() +=
                     nodeWeights(1, nodeId) *
                     bodyRateJacobian.transpose() *
                     bodyRateJacobian;
-                    
+                        
                 tiltGram.noalias() +=
                     nodeWeights(2, nodeId) *
                     tiltJacobian.transpose() *
                     tiltJacobian;
-                    
+                        
                 thrustGram.noalias() +=
                     nodeWeights(3, nodeId) *
                     thrustJacobian.transpose() *
@@ -2241,6 +2515,134 @@ namespace gcopter
             metric.utilityEigenvalues =
                 utilityEigenvalues;
         
+            // ------------------------------------------------------------
+            // Order-preserving log-spectrum compression.
+            //
+            // Natural utility eigenvalues are ordered:
+            //
+            //     mu_0 >= mu_1 >= mu_2 > 0.
+            //
+            // We retain:
+            //   * eigenvectors,
+            //   * eigenvalue ordering,
+            //   * determinant = 1,
+            //
+            // while bounding:
+            //
+            //     mu_max / mu_min <= maxCorridorAnisotropy.
+            // ------------------------------------------------------------
+            const double naturalUtilityAnisotropy =
+                utilityEigenvalues(0) /
+                utilityEigenvalues(2);
+
+            if (!std::isfinite(
+                    naturalUtilityAnisotropy) ||
+                naturalUtilityAnisotropy < 1.0)
+            {
+                return fail(
+                    "natural_utility_anisotropy_invalid");
+            }
+
+            double compressionAlpha =
+                1.0;
+
+            if (naturalUtilityAnisotropy >
+                    maxCorridorAnisotropy &&
+                naturalUtilityAnisotropy >
+                    1.0 + 1.0e-12)
+            {
+                compressionAlpha =
+                    std::log(
+                        maxCorridorAnisotropy) /
+                    std::log(
+                        naturalUtilityAnisotropy);
+            }
+
+            compressionAlpha =
+                std::max(
+                    0.0,
+                    std::min(
+                        compressionAlpha,
+                        1.0));
+                    
+            metric.spectrumCompressionAlpha =
+                compressionAlpha;
+                    
+            // Work in log-space.
+            // Re-centering guarantees det(S_c) = 1 even in the presence
+            // of small floating-point drift.
+            Eigen::Vector3d logUtility;
+                    
+            for (int i = 0;
+                 i < 3;
+                 ++i)
+            {
+                logUtility(i) =
+                    std::log(
+                        utilityEigenvalues(i));
+            }
+
+            const double meanLogUtility =
+                logUtility.mean();
+
+            Eigen::Vector3d compressedLogUtility;
+
+            for (int i = 0;
+                 i < 3;
+                 ++i)
+            {
+                compressedLogUtility(i) =
+                    compressionAlpha *
+                    (logUtility(i) -
+                     meanLogUtility);
+            }
+
+            Eigen::Vector3d corridorUtilityEigenvalues;
+
+            for (int i = 0;
+                 i < 3;
+                 ++i)
+            {
+                corridorUtilityEigenvalues(i) =
+                    std::exp(
+                        compressedLogUtility(i));
+            }
+
+            if (!corridorUtilityEigenvalues.allFinite() ||
+                corridorUtilityEigenvalues.minCoeff() <=
+                    0.0)
+            {
+                return fail(
+                    "corridor_utility_eigenvalues_invalid");
+            }
+
+            Eigen::Matrix3d corridorUtility =
+                stiffnessSolver.eigenvectors() *
+                corridorUtilityEigenvalues.asDiagonal() *
+                stiffnessSolver.eigenvectors().transpose();
+
+            corridorUtility =
+                (0.5 *
+                 (corridorUtility +
+                  corridorUtility.transpose()))
+                    .eval();
+                
+            if (!corridorUtility.allFinite())
+            {
+                return fail(
+                    "corridor_utility_nonfinite");
+            }
+
+            metric.corridorUtility =
+                corridorUtility;
+
+            metric.corridorUtilityEigenvalues =
+                corridorUtilityEigenvalues;
+
+            metric.corridorAnisotropy =
+                corridorUtilityEigenvalues(0) /
+                corridorUtilityEigenvalues(2);
+
             metric.principalDirection =
                 stiffnessSolver
                     .eigenvectors()
@@ -3610,7 +4012,8 @@ namespace gcopter
             GaussNewtonDeformationMetrics &metrics,
             const double displacementStep = 0.01,
             const double relativeDamping = 1.0e-3,
-            const double proximityPower = 4.0)
+            const double proximityPower = 4.0,
+            const double maxCorridorAnisotropy = 10.0)
         {
             metrics.clear();
         
@@ -3657,6 +4060,7 @@ namespace gcopter
                         displacementStep,
                         relativeDamping,
                         proximityPower,
+                        maxCorridorAnisotropy,
                         nodeWeights,
                         meanRatios,
                         maxRatios,
