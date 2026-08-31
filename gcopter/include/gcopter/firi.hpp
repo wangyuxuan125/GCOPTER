@@ -46,11 +46,36 @@ namespace firi
     struct TrajectoryFavorableOptions
     {
         bool enabled = false;
-        Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
-        double directional_width_weight = 0.0;
-        double face_count_weight = 0.0;
-        int candidate_pool_size = 4;
-        int max_faces = 0;
+
+        Eigen::Vector3d direction =
+            Eigen::Vector3d::UnitX();
+
+        double directional_width_weight =
+            0.0;
+
+        double face_count_weight =
+            0.0;
+
+        int candidate_pool_size =
+            4;
+
+        int max_faces =
+            0;
+
+        // --------------------------------------------------------
+        // MINCO/CSGN deformation utility.
+        //
+        // Large n^T S n means that a face with normal n would
+        // constrain an easy trajectory-deformation direction.
+        // --------------------------------------------------------
+        bool metric_enabled =
+            false;
+
+        Eigen::Matrix3d deformation_utility =
+            Eigen::Matrix3d::Identity();
+
+        double metric_weight =
+            0.0;
     };
 
     struct TrajectoryFavorableDiagnostics
@@ -337,18 +362,119 @@ namespace firi
 
         const int M = bd.rows();
         const int N = pc.cols();
+
         const bool trajectoryFavorable =
-            tfOptions.enabled && tfOptions.direction.allFinite() &&
-            tfOptions.direction.norm() > epsilon;
-        const Eigen::Vector3d favorableDirection = trajectoryFavorable
-                                                        ? tfOptions.direction.normalized()
-                                                        : Eigen::Vector3d::Zero();
-        const double favorableWeight = trajectoryFavorable
-                                           ? std::max(0.0, tfOptions.directional_width_weight)
-                                           : 0.0;
-        const double faceCountWeight = trajectoryFavorable
-                                           ? std::max(0.0, tfOptions.face_count_weight)
-                                           : 0.0;
+            tfOptions.enabled &&
+            tfOptions.direction.allFinite() &&
+            tfOptions.direction.norm() >
+                epsilon;
+
+        const Eigen::Vector3d favorableDirection =
+            trajectoryFavorable
+                ? tfOptions.direction.normalized()
+                : Eigen::Vector3d::Zero();
+
+        const double favorableWeight =
+            trajectoryFavorable
+                ? std::max(
+                      0.0,
+                      tfOptions.directional_width_weight)
+                : 0.0;
+                
+        // ------------------------------------------------------------
+        // Validate the CSGN deformation utility independently of the
+        // old route-direction preference.
+        // ------------------------------------------------------------
+        Eigen::Matrix3d deformationUtility =
+            0.5 *
+            (tfOptions.deformation_utility +
+             tfOptions.deformation_utility.transpose());
+            
+        bool metricAvailable =
+            false;
+            
+        if (tfOptions.metric_enabled &&
+            deformationUtility.allFinite())
+        {
+            Eigen::SelfAdjointEigenSolver<
+                Eigen::Matrix3d>
+                metricSolver(
+                    deformationUtility);
+                
+            metricAvailable =
+                metricSolver.info() ==
+                    Eigen::Success &&
+                metricSolver.eigenvalues()
+                        .minCoeff() >
+                    epsilon;
+        }
+
+        if (!metricAvailable)
+        {
+            deformationUtility.setIdentity();
+        }
+
+        const double metricWeight =
+            metricAvailable
+                ? std::max(
+                      0.0,
+                      tfOptions.metric_weight)
+                : 0.0;
+                
+        const bool metricFavorable =
+            metricAvailable &&
+            metricWeight > 0.0;
+                
+        const bool conditionedFiri =
+            trajectoryFavorable ||
+            metricAvailable;
+                
+        const double faceCountWeight =
+            conditionedFiri
+                ? std::max(
+                      0.0,
+                      tfOptions.face_count_weight)
+                : 0.0;
+
+        auto metricFaceDamage =
+            [&](const Eigen::Vector3d &physicalNormal)
+                -> double
+        {
+            if (!metricAvailable)
+            {
+                return 0.0;
+            }
+        
+            const double squaredNorm =
+                physicalNormal.squaredNorm();
+        
+            if (!std::isfinite(squaredNorm) ||
+                squaredNorm <=
+                    epsilon * epsilon)
+            {
+                return 0.0;
+            }
+        
+            const double rayleigh =
+                physicalNormal.dot(
+                    deformationUtility *
+                    physicalNormal) /
+                squaredNorm;
+                
+            if (!std::isfinite(rayleigh) ||
+                rayleigh <= 0.0)
+            {
+                return 0.0;
+            }
+        
+            return
+                0.5 *
+                std::log(
+                    std::max(
+                        rayleigh,
+                        epsilon));
+        };
+
         const int maxFaces = tfOptions.max_faces > 0
                                  ? std::max(tfOptions.max_faces, M)
                                  : M + N;
@@ -425,9 +551,17 @@ namespace firi
             {
                 selectedId = -1;
                 selectedDistance = INFINITY;
-                const int poolSize = faceCountWeight > 0.0
-                                         ? std::max(1, tfOptions.candidate_pool_size)
-                                         : 1;
+                const bool scoreAwareSelection =
+                    faceCountWeight > 0.0 ||
+                    favorableWeight > 0.0 ||
+                    metricWeight > 0.0;
+
+                const int poolSize =
+                    scoreAwareSelection
+                        ? std::max(
+                              1,
+                              tfOptions.candidate_pool_size)
+                        : 1;
                 std::vector<std::pair<double, int>> shortlist;
                 shortlist.reserve(poolSize);
                 for (int candidate = 0; candidate < N; ++candidate)
@@ -491,12 +625,34 @@ namespace firi
                     const Eigen::Vector3d physicalNormal =
                         forward.transpose() * tangents.block<1, 3>(candidate, 0).transpose();
                     const double directionalDamage =
-                        trajectoryFavorable && physicalNormal.norm() > epsilon
-                            ? std::pow(physicalNormal.normalized().dot(favorableDirection), 2)
+                        trajectoryFavorable &&
+                                physicalNormal.norm() > epsilon
+                            ? std::pow(
+                                  physicalNormal.normalized().dot(
+                                      favorableDirection),
+                                  2)
                             : 0.0;
-                    const double score = std::log(std::max(distRs(candidate), epsilon)) -
-                                         faceCountWeight * std::log1p(static_cast<double>(coverage)) +
-                                         favorableWeight * directionalDamage;
+                                
+                    const double deformationDamage =
+                        metricFaceDamage(
+                            physicalNormal);
+                        
+                    const double score =
+                        std::log(
+                            std::max(
+                                distRs(candidate),
+                                epsilon))
+                            
+                        - faceCountWeight *
+                              std::log1p(
+                                  static_cast<double>(
+                                      coverage))
+                                
+                        + favorableWeight *
+                              directionalDamage
+                                
+                        + metricWeight *
+                              deformationDamage;
                     const bool meetsCoverage = !budgetAware ||
                                                coverage >= requiredCoverage;
                     const bool preferCandidate =
@@ -641,9 +797,21 @@ namespace firi
                                                    favorableDirection),
                                                2)
                                     : 0.0;
+                            const double deformationDamage =
+                                metricFaceDamage(
+                                    physicalNormal);
+                                
                             const double exchangeScore =
-                                std::log(std::max(distRs(candidate), epsilon)) +
-                                favorableWeight * directionalDamage;
+                                std::log(
+                                    std::max(
+                                        distRs(candidate),
+                                        epsilon))
+                                    
+                                + favorableWeight *
+                                      directionalDamage
+                                    
+                                + metricWeight *
+                                      deformationDamage;
                             for (int replacement = 0; replacement < nH; ++replacement)
                             {
                                 if (forwardHIsBoundary[replacement])

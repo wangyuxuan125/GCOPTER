@@ -57,6 +57,29 @@ namespace sfc_gen
         Eigen::Vector3d direction = Eigen::Vector3d::Zero();
     };
 
+    struct SegmentDeformationMetric
+    {
+        int source_piece_id =
+            -1;
+
+        double mapping_distance =
+            0.0;
+
+        Eigen::Matrix3d utility =
+            Eigen::Matrix3d::Identity();
+
+        bool valid =
+            false;
+
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    };
+
+    using SegmentDeformationMetrics =
+        std::vector<
+            SegmentDeformationMetric,
+            Eigen::aligned_allocator<
+                SegmentDeformationMetric>>;
+
     template <typename Map>
     inline double planPath(const Eigen::Vector3d &s,
                            const Eigen::Vector3d &g,
@@ -219,6 +242,8 @@ namespace sfc_gen
         const firi::TrajectoryFavorableOptions &options,
         std::vector<Eigen::MatrixX4d> &hpolys,
         std::vector<TrajectoryFavorableFiriInfo> &infos,
+        const SegmentDeformationMetrics *segmentMetrics =
+            nullptr,
         const double eps = 1.0e-6)
     {
         hpolys.clear();
@@ -239,6 +264,7 @@ namespace sfc_gen
 
         Eigen::MatrixX4d hp, gap;
         Eigen::Vector3d a, b = path.front();
+        int rawSegmentId = 0;
         std::vector<Eigen::Vector3d> validPc;
         validPc.reserve(points.size());
         for (int i = 1; i < n;)
@@ -277,6 +303,33 @@ namespace sfc_gen
             firi::TrajectoryFavorableOptions segmentOptions = options;
             segmentOptions.enabled = true;
             segmentOptions.direction = b - a;
+            egmentOptions.metric_enabled =
+                false;
+
+            segmentOptions.deformation_utility =
+                Eigen::Matrix3d::Identity();
+
+            if (segmentMetrics != nullptr)
+            {
+                if (rawSegmentId >=
+                    static_cast<int>(
+                        segmentMetrics->size()))
+                {
+                    return false;
+                }
+            
+                const auto &mappedMetric =
+                    (*segmentMetrics)[rawSegmentId];
+            
+                if (mappedMetric.valid)
+                {
+                    segmentOptions.metric_enabled =
+                        true;
+                
+                    segmentOptions.deformation_utility =
+                        mappedMetric.utility;
+                }
+            }
             firi::TrajectoryFavorableDiagnostics diagnostics;
             if (!firi::firi(bd, pc, a, b, hp, 4, eps,
                             segmentOptions, &diagnostics))
@@ -339,8 +392,15 @@ namespace sfc_gen
                              diagnostics.budget_exchange_accepted,
                              diagnostics.directional_radius,
                              segmentOptions.direction.normalized()});
+            ++rawSegmentId;
         }
         if (hpolys.empty())
+        {
+            return false;
+        }
+
+        if (segmentMetrics != nullptr &&
+            rawSegmentId != static_cast<int>(segmentMetrics->size()))
         {
             return false;
         }

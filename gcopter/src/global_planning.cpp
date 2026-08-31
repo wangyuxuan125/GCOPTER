@@ -1030,7 +1030,637 @@ public:
                         << " gamma=" << proximityPower
                         << " kappa_max="
                         << maxCorridorAnisotropy);
+
+                    struct MetricAnchor
+                    {
+                        int pieceId = -1;
                     
+                        Eigen::Vector3d position =
+                            Eigen::Vector3d::Zero();
+                    
+                        Eigen::Matrix3d utility =
+                            Eigen::Matrix3d::Identity();
+                    
+                        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+                    };
+
+                    typedef std::vector<
+                        MetricAnchor,
+                        Eigen::aligned_allocator<MetricAnchor>>
+                        MetricAnchors;
+
+                    MetricAnchors metricAnchors;
+                    
+                    if (success &&
+                        traj.getPieceNum() ==
+                            static_cast<int>(metrics.size()))
+                    {
+                        constexpr int anchorSamplesPerPiece =
+                            5;
+                    
+                        metricAnchors.reserve(
+                            metrics.size() *
+                            anchorSamplesPerPiece);
+                        
+                        for (int pieceId = 0;
+                             pieceId < traj.getPieceNum();
+                             ++pieceId)
+                        {
+                            const auto &metric =
+                                metrics[pieceId];
+                        
+                            if (!metric.valid)
+                            {
+                                continue;
+                            }
+                        
+                            const auto &piece =
+                                traj[pieceId];
+                        
+                            const double duration =
+                                piece.getDuration();
+                        
+                            for (int sampleId = 0;
+                                 sampleId <
+                                     anchorSamplesPerPiece;
+                                 ++sampleId)
+                            {
+                                const double alpha =
+                                    static_cast<double>(sampleId) /
+                                    static_cast<double>(
+                                        anchorSamplesPerPiece - 1);
+                                    
+                                MetricAnchor anchor;
+                                    
+                                anchor.pieceId =
+                                    pieceId;
+                                    
+                                anchor.position =
+                                    piece.getPos(
+                                        alpha *
+                                        duration);
+                                    
+                                anchor.utility =
+                                    metric.corridorUtility;
+                                    
+                                metricAnchors.push_back(
+                                    anchor);
+                            }
+                        }
+                    }
+
+                    struct MappingSegment
+                    {
+                        Eigen::Vector3d a =
+                            Eigen::Vector3d::Zero();
+                    
+                        Eigen::Vector3d b =
+                            Eigen::Vector3d::Zero();
+                    
+                        int metricPieceId = -1;
+                    
+                        double mappingDistance =
+                            INFINITY;
+                    
+                        Eigen::Matrix3d utility =
+                            Eigen::Matrix3d::Identity();
+                    
+                        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+                    };
+
+                    typedef std::vector<
+                        MappingSegment,
+                        Eigen::aligned_allocator<MappingSegment>>
+                        MappingSegments;
+
+                    MappingSegments mappingSegments;
+
+                    if (!metricAnchors.empty())
+                    {
+                        const double progress =
+                            std::max(
+                                config.tfFiriProgress,
+                                config.voxelWidth);
+                            
+                        const int routePointCount =
+                            static_cast<int>(
+                                route.size());
+                            
+                        Eigen::Vector3d b =
+                            route.front();
+                            
+                        for (int routeId = 1;
+                             routeId < routePointCount;)
+                        {
+                            const Eigen::Vector3d a =
+                                b;
+                        
+                            if ((a - route[routeId]).norm() >
+                                progress)
+                            {
+                                b =
+                                    (route[routeId] - a)
+                                        .normalized() *
+                                    progress +
+                                    a;
+                            }
+                            else
+                            {
+                                b =
+                                    route[routeId];
+                            
+                                ++routeId;
+                            }
+                        
+                            MappingSegment segment;
+                        
+                            segment.a =
+                                a;
+                        
+                            segment.b =
+                                b;
+                        
+                            const Eigen::Vector3d midpoint =
+                                0.5 *
+                                (a + b);
+                        
+                            for (const auto &anchor :
+                                 metricAnchors)
+                            {
+                                const double distance =
+                                    (midpoint -
+                                     anchor.position)
+                                        .norm();
+                                    
+                                if (distance <
+                                    segment.mappingDistance)
+                                {
+                                    segment.mappingDistance =
+                                        distance;
+                                
+                                    segment.metricPieceId =
+                                        anchor.pieceId;
+                                
+                                    segment.utility =
+                                        anchor.utility;
+                                }
+                            }
+                        
+                            mappingSegments.push_back(
+                                segment);
+                        }
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_METRIC_MAP_END "
+                        << "anchors="
+                        << metricAnchors.size()
+                        << " segments="
+                        << mappingSegments.size()
+                        << " minco_pieces="
+                        << metrics.size());
+
+                    for (size_t segmentId = 0;
+                         segmentId < mappingSegments.size();
+                         ++segmentId)
+                    {
+                        const auto &segment =
+                            mappingSegments[segmentId];
+                    
+                        Eigen::SelfAdjointEigenSolver<
+                            Eigen::Matrix3d>
+                            utilitySolver(
+                                segment.utility);
+                            
+                        double mappedAnisotropy =
+                            INFINITY;
+                            
+                        if (utilitySolver.info() ==
+                            Eigen::Success)
+                        {
+                            const Eigen::Vector3d eig =
+                                utilitySolver.eigenvalues();
+                        
+                            if (eig.minCoeff() > 0.0)
+                            {
+                                mappedAnisotropy =
+                                    eig.maxCoeff() /
+                                    eig.minCoeff();
+                            }
+                        }
+                    
+                        ROS_INFO_STREAM(
+                            "TF_METRIC_MAP "
+                            << "segment="
+                            << segmentId
+                        
+                            << " metric_piece="
+                            << segment.metricPieceId
+                        
+                            << " distance="
+                            << segment.mappingDistance
+                        
+                            << " anis="
+                            << mappedAnisotropy
+                        
+                            << " midpoint=["
+                            << 0.5 *
+                                   (segment.a.x() +
+                                    segment.b.x())
+                            << ","
+                            << 0.5 *
+                                   (segment.a.y() +
+                                    segment.b.y())
+                            << ","
+                            << 0.5 *
+                                   (segment.a.z() +
+                                    segment.b.z())
+                            << "]");
+                    }
+
+                    if (!mappingSegments.empty())
+                    {
+                        double meanMappingDistance =
+                            0.0;
+                    
+                        double maxMappingDistance =
+                            0.0;
+                    
+                        int invalidMappingCount =
+                            0;
+                    
+                        for (const auto &segment :
+                             mappingSegments)
+                        {
+                            if (segment.metricPieceId < 0 ||
+                                !std::isfinite(
+                                    segment.mappingDistance))
+                            {
+                                ++invalidMappingCount;
+                                continue;
+                            }
+                        
+                            meanMappingDistance +=
+                                segment.mappingDistance;
+                        
+                            maxMappingDistance =
+                                std::max(
+                                    maxMappingDistance,
+                                    segment.mappingDistance);
+                        }
+                    
+                        const int validMappingCount =
+                            static_cast<int>(
+                                mappingSegments.size()) -
+                            invalidMappingCount;
+                            
+                        if (validMappingCount > 0)
+                        {
+                            meanMappingDistance /=
+                                static_cast<double>(
+                                    validMappingCount);
+                        }
+                    
+                        ROS_INFO_STREAM(
+                            "TF_METRIC_MAP_SUMMARY "
+                            << "valid="
+                            << validMappingCount
+                            << "/"
+                            << mappingSegments.size()
+                            << " mean_distance="
+                            << meanMappingDistance
+                            << " max_distance="
+                            << maxMappingDistance);
+
+                        // ============================================================
+                        // Convert the validated spatial mapping into the metric format
+                        // consumed by the second-pass trajectory-conditioned FIRI.
+                        //
+                        // IMPORTANT:
+                        // This does NOT modify the first-pass hPolys used by the
+                        // current GCOPTER optimization.  It only prepares a second-pass
+                        // diagnostic FIRI run.
+                        // ============================================================
+                        sfc_gen::SegmentDeformationMetrics
+                            mappedFiriMetrics;
+
+                        mappedFiriMetrics.reserve(
+                            mappingSegments.size());
+                        
+                        // A mapped MINCO metric is considered local enough only when
+                        // its nearest trajectory anchor is inside the same spatial
+                        // scale used to collect local FIRI obstacles.
+                        const double metricMappingDistanceLimit =
+                            std::max(
+                                config.tfFiriRange,
+                                config.voxelWidth);
+                            
+                        int validMappedMetricCount =
+                            0;
+                            
+                        for (const auto &segment :
+                             mappingSegments)
+                        {
+                            sfc_gen::SegmentDeformationMetric
+                                mappedMetric;
+                        
+                            mappedMetric.source_piece_id =
+                                segment.metricPieceId;
+                        
+                            mappedMetric.mapping_distance =
+                                segment.mappingDistance;
+                        
+                            mappedMetric.utility =
+                                segment.utility;
+                        
+                            mappedMetric.valid =
+                                segment.metricPieceId >= 0 &&
+                                std::isfinite(
+                                    segment.mappingDistance) &&
+                                segment.mappingDistance <=
+                                    metricMappingDistanceLimit &&
+                                segment.utility.allFinite();
+                                
+                            if (mappedMetric.valid)
+                            {
+                                ++validMappedMetricCount;
+                            }
+                        
+                            mappedFiriMetrics.push_back(
+                                mappedMetric);
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_FIRI_METRIC_INPUT "
+                            << "segments="
+                            << mappedFiriMetrics.size()
+                            << " valid="
+                            << validMappedMetricCount
+                            << " distance_limit="
+                            << metricMappingDistanceLimit);
+
+                        // ============================================================
+                        // A/B options.
+                        //
+                        // CONTROL:
+                        //   same face budget,
+                        //   same coverage/face-count term,
+                        //   same candidate pool,
+                        //   native MVIE,
+                        //   NO route-direction bias,
+                        //   NO CSGN metric term.
+                        //
+                        // METRIC:
+                        //   exactly the same settings,
+                        //   except metric_weight = 1.
+                        // ============================================================
+                        firi::TrajectoryFavorableOptions
+                            controlOptions;
+                                                
+                        controlOptions.enabled =
+                            true;
+                                                
+                        // Disable the old route-direction preference.
+                        // We want this experiment to isolate CSGN.
+                        controlOptions.directional_width_weight =
+                            0.0;
+                                                
+                        controlOptions.face_count_weight =
+                            std::max(
+                                0.0,
+                                config.tfFiriFaceCountWeight);
+                            
+                        controlOptions.candidate_pool_size =
+                            std::max(
+                                1,
+                                config.tfFiriCandidatePoolSize);
+                            
+                        controlOptions.max_faces =
+                            std::max(
+                                6,
+                                config.tfFiriMaxFaces);
+                            
+                        // The per-segment metric itself will still be supplied,
+                        // but weight zero means it has no effect on candidate score.
+                        controlOptions.metric_weight =
+                            0.0;
+                            
+                        firi::TrajectoryFavorableOptions
+                            metricOptions =
+                                controlOptions;
+                            
+                        metricOptions.metric_weight =
+                            1.0;
+
+                        // ============================================================
+                        // Separate containers so the second-pass experiment cannot
+                        // overwrite the original hPolys used by the nominal GCOPTER.
+                        // ============================================================
+                        std::vector<Eigen::MatrixX4d>
+                            controlSecondPassHPolys;
+                                                    
+                        std::vector<
+                            sfc_gen::TrajectoryFavorableFiriInfo>
+                            controlSecondPassInfos;
+                                                    
+                        std::vector<Eigen::MatrixX4d>
+                            metricSecondPassHPolys;
+                                                    
+                        std::vector<
+                            sfc_gen::TrajectoryFavorableFiriInfo>
+                            metricSecondPassInfos;
+                        
+                        // ============================================================
+                        // CONTROL second pass.
+                        // ============================================================
+                        const auto controlFiriStarted =
+                            std::chrono::steady_clock::now();
+
+                        const bool controlFiriSuccess =
+                            sfc_gen::trajectoryFavorableConvexCover(
+                                route,
+                                pc,
+                                voxelMap.getOrigin(),
+                                voxelMap.getCorner(),
+                                std::max(
+                                    config.tfFiriProgress,
+                                    config.voxelWidth),
+                                std::max(
+                                    config.tfFiriRange,
+                                    config.voxelWidth),
+                                controlOptions,
+                                controlSecondPassHPolys,
+                                controlSecondPassInfos,
+                                &mappedFiriMetrics);
+                                
+                        const double controlFiriMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    controlFiriStarted)
+                                .count();
+                    
+                        // ============================================================
+                        // CSGN metric-aware second pass.
+                        // ============================================================
+                        const auto metricFiriStarted =
+                            std::chrono::steady_clock::now();
+
+                        const bool metricFiriSuccess =
+                            sfc_gen::trajectoryFavorableConvexCover(
+                                route,
+                                pc,
+                                voxelMap.getOrigin(),
+                                voxelMap.getCorner(),
+                                std::max(
+                                    config.tfFiriProgress,
+                                    config.voxelWidth),
+                                std::max(
+                                    config.tfFiriRange,
+                                    config.voxelWidth),
+                                metricOptions,
+                                metricSecondPassHPolys,
+                                metricSecondPassInfos,
+                                &mappedFiriMetrics);
+                                
+                        const double metricFiriMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    metricFiriStarted)
+                                .count();
+
+                        auto countSecondPassFaces =
+                            [](const std::vector<
+                                   Eigen::MatrixX4d> &polys)
+                                -> int
+                        {
+                            int totalFaceCount =
+                                0;
+                        
+                            for (const auto &poly :
+                                 polys)
+                            {
+                                totalFaceCount +=
+                                    static_cast<int>(
+                                        poly.rows());
+                            }
+                        
+                            return totalFaceCount;
+                        };
+                        const int controlFaceCount =
+                            countSecondPassFaces(
+                                controlSecondPassHPolys);
+                            
+                        const int metricFaceCount =
+                            countSecondPassFaces(
+                                metricSecondPassHPolys);
+                        int changedCorridorCount =
+                            0;
+
+                        const std::size_t comparableCorridorCount =
+                            std::min(
+                                controlSecondPassHPolys.size(),
+                                metricSecondPassHPolys.size());
+                            
+                        for (std::size_t corridorId = 0;
+                             corridorId <
+                                 comparableCorridorCount;
+                             ++corridorId)
+                        {
+                            const auto &controlPoly =
+                                controlSecondPassHPolys[
+                                    corridorId];
+                                
+                            const auto &metricPoly =
+                                metricSecondPassHPolys[
+                                    corridorId];
+                                
+                            bool corridorChanged =
+                                false;
+                                
+                            if (controlPoly.rows() !=
+                                    metricPoly.rows() ||
+                                controlPoly.cols() !=
+                                    metricPoly.cols())
+                            {
+                                corridorChanged =
+                                    true;
+                            }
+                            else
+                            {
+                                const double relativeDifference =
+                                    (controlPoly -
+                                     metricPoly)
+                                        .norm() /
+                                    std::max(
+                                        controlPoly.norm(),
+                                        1.0e-12);
+                                    
+                                corridorChanged =
+                                    relativeDifference >
+                                    1.0e-8;
+                                    
+                                ROS_INFO_STREAM(
+                                    "TF_CSGN_FIRI_DIFF "
+                                    << "corridor="
+                                    << corridorId
+                                    << " rel_diff="
+                                    << relativeDifference
+                                    << " control_faces="
+                                    << controlPoly.rows()
+                                    << " metric_faces="
+                                    << metricPoly.rows());
+                            }
+                        
+                            if (corridorChanged)
+                            {
+                                ++changedCorridorCount;
+                            }
+                        }
+
+                        // A different final corridor count is itself a geometric
+                        // change, so include unmatched corridors.
+                        changedCorridorCount +=
+                            static_cast<int>(
+                                std::max(
+                                    controlSecondPassHPolys.size(),
+                                    metricSecondPassHPolys.size()) -
+                                comparableCorridorCount);
+
+                        ROS_INFO_STREAM(
+                            "TF_CSGN_FIRI_AB "
+                            << "control_success="
+                            << controlFiriSuccess
+                            << " metric_success="
+                            << metricFiriSuccess
+                        
+                            << " mapped_metrics="
+                            << mappedFiriMetrics.size()
+                            << " mapped_valid="
+                            << validMappedMetricCount
+                        
+                            << " control_corridors="
+                            << controlSecondPassHPolys.size()
+                            << " metric_corridors="
+                            << metricSecondPassHPolys.size()
+                        
+                            << " control_faces="
+                            << controlFaceCount
+                            << " metric_faces="
+                            << metricFaceCount
+                        
+                            << " changed_corridors="
+                            << changedCorridorCount
+                        
+                            << " control_ms="
+                            << controlFiriMs
+                            << " metric_ms="
+                            << metricFiriMs);
+                    }
+
                     for (size_t pieceId = 0;
                          pieceId < metrics.size();
                          ++pieceId)
@@ -1084,6 +1714,7 @@ public:
                             << " det_corridor="
                             << metric.corridorUtility.determinant());
                     }
+
                 }
 
                 if (!std::isfinite(record.final_cost))
