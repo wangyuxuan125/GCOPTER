@@ -1040,8 +1040,6 @@ public:
                     
                         Eigen::Matrix3d utility =
                             Eigen::Matrix3d::Identity();
-                    
-                        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
                     };
 
                     typedef std::vector<
@@ -1124,8 +1122,6 @@ public:
                     
                         Eigen::Matrix3d utility =
                             Eigen::Matrix3d::Identity();
-                    
-                        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
                     };
 
                     typedef std::vector<
@@ -1435,10 +1431,17 @@ public:
                                 1,
                                 config.tfFiriCandidatePoolSize);
                             
+                        // Pure CSGN geometry-response experiment:
+                        //
+                        // Disable the HARD face-count cap so that both CONTROL and
+                        // METRIC are allowed to finish constructing obstacle-free
+                        // corridors.
+                        //
+                        // The soft face-count/coverage score remains active, and both
+                        // sides still use the same candidate pool.  Therefore the only
+                        // A/B difference remains metric_weight = 0 vs 1.
                         controlOptions.max_faces =
-                            std::max(
-                                6,
-                                config.tfFiriMaxFaces);
+                            0;
                             
                         // The per-segment metric itself will still be supplied,
                         // but weight zero means it has no effect on candidate score.
@@ -1629,6 +1632,105 @@ public:
                                     controlSecondPassHPolys.size(),
                                     metricSecondPassHPolys.size()) -
                                 comparableCorridorCount);
+
+                        // ============================================================
+                        // Diagnose second-pass FIRI failures.
+                        //
+                        // If trajectoryFavorableConvexCover() fails inside the first
+                        // raw segment, hpolys is still empty but infos contains the
+                        // diagnostics produced by that failed FIRI call.
+                        // ============================================================
+                        if (!controlFiriSuccess)
+                        {
+                            if (!controlSecondPassInfos.empty())
+                            {
+                                const auto &failure =
+                                    controlSecondPassInfos.back();
+                            
+                                ROS_WARN_STREAM(
+                                    "TF_CSGN_FIRI_FAILURE "
+                                    << "mode=control"
+                                
+                                    << " info_count="
+                                    << controlSecondPassInfos.size()
+                                
+                                    << " completed_corridors="
+                                    << controlSecondPassHPolys.size()
+                                
+                                    << " face_count="
+                                    << failure.face_count
+                                
+                                    << " budget_saturated="
+                                    << failure.face_budget_saturated
+                                
+                                    << " unresolved_total="
+                                    << failure.unresolved_constraint_count
+                                
+                                    << " unresolved_boundary="
+                                    << failure.unresolved_boundary_count
+                                
+                                    << " unresolved_obstacle="
+                                    << failure.unresolved_obstacle_count
+                                
+                                    << " exchange_attempted="
+                                    << failure.budget_exchange_attempted
+                                
+                                    << " exchange_accepted="
+                                    << failure.budget_exchange_accepted);
+                            }
+                            else
+                            {
+                                ROS_WARN(
+                                    "TF_CSGN_FIRI_FAILURE "
+                                    "mode=control no_failure_info");
+                            }
+                        }
+
+                        if (!metricFiriSuccess)
+                        {
+                            if (!metricSecondPassInfos.empty())
+                            {
+                                const auto &failure =
+                                    metricSecondPassInfos.back();
+                            
+                                ROS_WARN_STREAM(
+                                    "TF_CSGN_FIRI_FAILURE "
+                                    << "mode=metric"
+                                
+                                    << " info_count="
+                                    << metricSecondPassInfos.size()
+                                
+                                    << " completed_corridors="
+                                    << metricSecondPassHPolys.size()
+                                
+                                    << " face_count="
+                                    << failure.face_count
+                                
+                                    << " budget_saturated="
+                                    << failure.face_budget_saturated
+                                
+                                    << " unresolved_total="
+                                    << failure.unresolved_constraint_count
+                                
+                                    << " unresolved_boundary="
+                                    << failure.unresolved_boundary_count
+                                
+                                    << " unresolved_obstacle="
+                                    << failure.unresolved_obstacle_count
+                                
+                                    << " exchange_attempted="
+                                    << failure.budget_exchange_attempted
+                                
+                                    << " exchange_accepted="
+                                    << failure.budget_exchange_accepted);
+                            }
+                            else
+                            {
+                                ROS_WARN(
+                                    "TF_CSGN_FIRI_FAILURE "
+                                    "mode=metric no_failure_info");
+                            }
+                        }
 
                         ROS_INFO_STREAM(
                             "TF_CSGN_FIRI_AB "
