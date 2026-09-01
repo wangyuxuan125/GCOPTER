@@ -2246,6 +2246,149 @@ public:
 
                             << " tested_max="
                             << maximumFaceBudgetToTest);
+
+                        // ============================================================
+                        // Metric-weight sweep around the empirical feasibility
+                        // threshold.
+                        //
+                        // The previous face-budget sweep showed:
+                        //
+                        //   CONTROL first full success: B = 28
+                        //   METRIC  first full success: B = 29  (for metric_weight=1)
+                        //
+                        // We now test whether the CSGN term is simply too strong
+                        // relative to the coverage/face-count term.
+                        //
+                        // Nothing except metric_weight changes inside each fixed
+                        // face-budget experiment.
+                        // ============================================================
+                        const std::vector<int>
+                            metricWeightProbeBudgets =
+                                {
+                                    28,
+                                    29
+                                };
+                            
+                        const std::vector<double>
+                            metricWeightsToTest =
+                                {
+                                    0.0,
+                                    0.1,
+                                    0.25,
+                                    0.5,
+                                    0.75,
+                                    1.0
+                                };
+                            
+                        for (const int faceBudget :
+                             metricWeightProbeBudgets)
+                        {
+                            // metric_weight = 0 is the exact CONTROL reference
+                            // under this same per-region face budget.
+                            const FaceBudgetRunSummary
+                                weightSweepControl =
+                                    runFaceBudgetCase(
+                                        faceBudget,
+                                        0.0);
+                                    
+                            for (const double metricWeight :
+                                 metricWeightsToTest)
+                            {
+                                const FaceBudgetRunSummary
+                                    weightSweepRun =
+                                        runFaceBudgetCase(
+                                            faceBudget,
+                                            metricWeight);
+                                        
+                                int deltaTotalFaces =
+                                    0;
+                                        
+                                int deltaObstacleFaces =
+                                    0;
+                                        
+                                double deltaMeanMetricDamage =
+                                    std::numeric_limits<double>::
+                                        quiet_NaN();
+                                        
+                                if (weightSweepControl.success &&
+                                    weightSweepRun.success)
+                                {
+                                    deltaTotalFaces =
+                                        weightSweepRun.totalFaces -
+                                        weightSweepControl.totalFaces;
+                                
+                                    deltaObstacleFaces =
+                                        weightSweepRun.obstacleFaces -
+                                        weightSweepControl.obstacleFaces;
+                                
+                                    if (std::isfinite(
+                                            weightSweepControl.meanMetricDamage) &&
+                                        std::isfinite(
+                                            weightSweepRun.meanMetricDamage))
+                                    {
+                                        deltaMeanMetricDamage =
+                                            weightSweepRun.meanMetricDamage -
+                                            weightSweepControl.meanMetricDamage;
+                                    }
+                                }
+                            
+                                ROS_INFO_STREAM(
+                                    "TF_CSGN_FIRI_WEIGHT "
+                                    << "budget="
+                                    << faceBudget
+                                
+                                    << " weight="
+                                    << metricWeight
+                                
+                                    << " control_success="
+                                    << weightSweepControl.success
+                                
+                                    << " success="
+                                    << weightSweepRun.success
+                                
+                                    << " corridors="
+                                    << weightSweepRun.corridorCount
+                                
+                                    << " infos="
+                                    << weightSweepRun.infoCount
+                                
+                                    << " faces="
+                                    << weightSweepRun.totalFaces
+                                
+                                    << " obs_faces="
+                                    << weightSweepRun.obstacleFaces
+                                
+                                    << " mean_psi="
+                                    << weightSweepRun.meanMetricDamage
+                                
+                                    << " delta_faces="
+                                    << deltaTotalFaces
+                                
+                                    << " delta_obs_faces="
+                                    << deltaObstacleFaces
+                                
+                                    << " delta_mean_psi="
+                                    << deltaMeanMetricDamage
+                                
+                                    << " unresolved_total="
+                                    << weightSweepRun.unresolvedTotal
+                                
+                                    << " unresolved_obs="
+                                    << weightSweepRun.unresolvedObstacle
+                                
+                                    << " budget_saturated="
+                                    << weightSweepRun.failureBudgetSaturated
+                                
+                                    << " exchange_attempted="
+                                    << weightSweepRun.exchangeAttempted
+                                
+                                    << " exchange_accepted="
+                                    << weightSweepRun.exchangeAccepted
+                                
+                                    << " elapsed_ms="
+                                    << weightSweepRun.elapsedMs);
+                            }
+                        }
                     }
 
                     for (size_t pieceId = 0;
