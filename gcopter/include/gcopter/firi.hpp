@@ -61,7 +61,22 @@ namespace firi
 
         int max_faces =
             0;
-
+        // --------------------------------------------------------
+        // Hard-budget coverage-first gate.
+        //
+        // 0.0:
+        //   preserve the legacy minimum-required-coverage rule.
+        //
+        // 1.0:
+        //   only candidates with the maximum coverage inside the
+        //   current shortlist are allowed into the geometry/CSGN
+        //   score comparison.
+        //
+        // Intermediate values:
+        //   require coverage >= ceil(ratio * maxCoverage).
+        // --------------------------------------------------------
+        double coverage_ratio =
+            0.0;
         // --------------------------------------------------------
         // MINCO/CSGN deformation utility.
         //
@@ -457,6 +472,12 @@ namespace firi
                       0.0,
                       tfOptions.face_count_weight)
                 : 0.0;
+        const double coverageRatio =
+            std::min(
+                1.0,
+                std::max(
+                    0.0,
+                    tfOptions.coverage_ratio));
 
         // ------------------------------------------------------------
         // Evaluate the CSGN geometric damage of a physical face normal.
@@ -651,26 +672,103 @@ namespace firi
                                                                 coverageDivisor)
                                                  : 1;
 
+                // --------------------------------------------------------
+                // Coverage evaluation shared by the gate and the final
+                // candidate score loop.
+                // --------------------------------------------------------
+                auto computeCoverage =
+                    [&](const int candidate)
+                        -> int
+                {
+                    int coverage =
+                        0;
+                
+                    if (faceCountWeight <= 0.0)
+                    {
+                        return coverage;
+                    }
+                
+                    for (int pointId = 0;
+                         pointId < N;
+                         ++pointId)
+                    {
+                        if (pcFlags(pointId) &&
+                            tangents.block<1, 3>(
+                                candidate, 0)
+                                    .dot(
+                                        forwardPC.col(
+                                            pointId)) +
+                                    tangents(
+                                        candidate, 3) >
+                                -epsilon)
+                        {
+                            ++coverage;
+                        }
+                    }
+                
+                    return coverage;
+                };
+
+                // --------------------------------------------------------
+                // Legacy:
+                //     coverageGate = requiredCoverage.
+                //
+                // Coverage-first:
+                //     coverageGate = max(
+                //         requiredCoverage,
+                //         ceil(rho * maxCoverageInShortlist)).
+                //
+                // At rho = 1 this gives a strict coverage-first rule:
+                // CSGN may only distinguish candidates having maximum
+                // shortlist coverage.
+                // --------------------------------------------------------
+                int maxCoverageInShortlist =
+                    -1;
+
+                if (budgetAware &&
+                    coverageRatio > 0.0)
+                {
+                    for (const auto &item :
+                         shortlist)
+                    {
+                        const int candidate =
+                            item.second;
+                    
+                        maxCoverageInShortlist =
+                            std::max(
+                                maxCoverageInShortlist,
+                                computeCoverage(
+                                    candidate));
+                    }
+                }
+
+                int coverageGate =
+                    requiredCoverage;
+
+                if (budgetAware &&
+                    coverageRatio > 0.0 &&
+                    maxCoverageInShortlist >= 0)
+                {
+                    coverageGate =
+                        std::max(
+                            requiredCoverage,
+                            static_cast<int>(
+                                std::ceil(
+                                    coverageRatio *
+                                    static_cast<double>(
+                                        maxCoverageInShortlist))));
+                }
+
                 double bestScore = INFINITY;
+
                 int bestCoverage = -1;
                 bool coverageRequirementMet = false;
                 for (const auto &item : shortlist)
                 {
                     const int candidate = item.second;
-                    int coverage = 0;
-                    if (faceCountWeight > 0.0)
-                    {
-                        for (int pointId = 0; pointId < N; ++pointId)
-                        {
-                            if (pcFlags(pointId) &&
-                                tangents.block<1, 3>(candidate, 0).dot(forwardPC.col(pointId)) +
-                                        tangents(candidate, 3) >
-                                    -epsilon)
-                            {
-                                ++coverage;
-                            }
-                        }
-                    }
+                    const int coverage =
+                        computeCoverage(
+                            candidate);
                     const Eigen::Vector3d physicalNormal =
                         forward.transpose() * tangents.block<1, 3>(candidate, 0).transpose();
                     const double directionalDamage =
@@ -703,7 +801,7 @@ namespace firi
                         + metricWeight *
                               deformationDamage;
                     const bool meetsCoverage = !budgetAware ||
-                                               coverage >= requiredCoverage;
+                                               coverage >= coverageGate;
                     const bool preferCandidate =
                         (meetsCoverage && !coverageRequirementMet) ||
                         (meetsCoverage == coverageRequirementMet &&
