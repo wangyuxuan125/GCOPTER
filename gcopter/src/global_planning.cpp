@@ -2734,6 +2734,79 @@ public:
                             << " metric_slack_final="
                             << backendMetricResult.corridor_slack_final);
 
+                        // ============================================================
+                        // Trajectory-relevant compact corridor -> GCOPTER backend.
+                        //
+                        // Reuse exactly the same backend diagnostic routine as the
+                        // existing paired CSGN experiment.
+                        //
+                        // This directly tests whether the large face-count reduction
+                        // translates into lower optimization burden without degrading
+                        // trajectory quality or corridor feasibility.
+                        // ============================================================
+                        BackendAbResult
+                            compactBackendResult;
+
+                        if (compactSuccess)
+                        {
+                            compactBackendResult =
+                                runBackendAb(
+                                    compactHPolys);
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_MINFACE_BACKEND "
+                            << "corridor_success="
+                            << compactSuccess
+
+                            << " setup_success="
+                            << compactBackendResult.setup_success
+
+                            << " opt_success="
+                            << compactBackendResult.optimize_success
+
+                            << " corridors="
+                            << compactBackendResult.corridor_count
+
+                            << " faces="
+                            << compactBackendResult.total_faces
+
+                            << " traj_pieces="
+                            << compactBackendResult.trajectory_pieces
+
+                            << " constrained_pieces="
+                            << compactBackendResult.constrained_pieces
+
+                            << " final_cost="
+                            << compactBackendResult.final_cost
+
+                            << " duration="
+                            << compactBackendResult.trajectory_duration
+
+                            << " setup_ms="
+                            << compactBackendResult.setup_ms
+
+                            << " opt_ms="
+                            << compactBackendResult.optimize_ms
+
+                            << " penalty_initial="
+                            << compactBackendResult.corridor_penalty_initial
+
+                            << " penalty_final="
+                            << compactBackendResult.corridor_penalty_final
+
+                            << " violation_initial="
+                            << compactBackendResult.max_corridor_violation_initial
+
+                            << " violation_final="
+                            << compactBackendResult.max_corridor_violation_final
+
+                            << " slack_initial="
+                            << compactBackendResult.corridor_slack_initial
+
+                            << " slack_final="
+                            << compactBackendResult.corridor_slack_final);
+
                         const int minimumFaceBudgetToTest =
                             24;
 
