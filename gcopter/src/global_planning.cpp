@@ -3624,6 +3624,101 @@ public:
                             << " generation_ms="
                             << mincoNativeMs);
 
+                        // ============================================================
+                        // MINCO-piece-native corridor -> GCOPTER backend.
+                        //
+                        // The SAME runBackendAb() routine is used for:
+                        //
+                        //   - hard-budget FIRI CONTROL,
+                        //   - hard-budget FIRI METRIC,
+                        //   - route-segment compact corridor,
+                        //   - MINCO-piece-native compact corridor.
+                        //
+                        // Therefore setup/optimization diagnostics are directly
+                        // comparable at the backend implementation level.
+                        // ============================================================
+                        BackendAbResult
+                            mincoNativeBackendResult;
+
+                        if (mincoNativeSuccess &&
+                            mincoNativeHPolys.size() ==
+                                static_cast<std::size_t>(
+                                    traj.getPieceNum()))
+                        {
+                            mincoNativeBackendResult =
+                                runBackendAb(
+                                    mincoNativeHPolys);
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_MINCO_NATIVE_BACKEND "
+                            << "corridor_success="
+                            << mincoNativeSuccess
+
+                            << " setup_success="
+                            << mincoNativeBackendResult.setup_success
+
+                            << " opt_success="
+                            << mincoNativeBackendResult.optimize_success
+
+                            << " corridors="
+                            << mincoNativeBackendResult.corridor_count
+
+                            << " faces="
+                            << mincoNativeBackendResult.total_faces
+
+                            << " traj_pieces="
+                            << mincoNativeBackendResult.trajectory_pieces
+
+                            << " constrained_pieces="
+                            << mincoNativeBackendResult.constrained_pieces
+
+                            << " final_cost="
+                            << mincoNativeBackendResult.final_cost
+
+                            << " duration="
+                            << mincoNativeBackendResult.trajectory_duration
+
+                            << " setup_ms="
+                            << mincoNativeBackendResult.setup_ms
+
+                            << " opt_ms="
+                            << mincoNativeBackendResult.optimize_ms
+
+                            << " penalty_initial="
+                            << mincoNativeBackendResult.corridor_penalty_initial
+
+                            << " penalty_final="
+                            << mincoNativeBackendResult.corridor_penalty_final
+
+                            << " violation_initial="
+                            << mincoNativeBackendResult.max_corridor_violation_initial
+
+                            << " violation_final="
+                            << mincoNativeBackendResult.max_corridor_violation_final
+
+                            << " slack_initial="
+                            << mincoNativeBackendResult.corridor_slack_initial
+
+                            << " slack_final="
+                            << mincoNativeBackendResult.corridor_slack_final
+
+                            // Same-run B=28 CONTROL reference.
+                            << " control_faces="
+                            << backendControlResult.total_faces
+
+                            << " control_cost="
+                            << backendControlResult.final_cost
+
+                            << " control_setup_ms="
+                            << backendControlResult.setup_ms
+
+                            << " control_opt_ms="
+                            << backendControlResult.optimize_ms
+
+                            << " control_duration="
+                            << backendControlResult.trajectory_duration);
+
                         // Trajectory-relevant compact corridor -> GCOPTER backend.
                         //
                         // Reuse exactly the same backend diagnostic routine as the
