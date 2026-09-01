@@ -1,5 +1,6 @@
 #include "misc/visualizer.hpp"
 #include "gcopter/trajectory.hpp"
+#include "gcopter/minco_support.hpp"
 #include "gcopter/gcopter.hpp"
 #include "gcopter/experiment_logger.hpp"
 #include "gcopter/firi.hpp"
@@ -1030,6 +1031,328 @@ public:
                         << " gamma=" << proximityPower
                         << " kappa_max="
                         << maxCorridorAnisotropy);
+
+                    // ============================================================
+                    // Validate continuous-time MINCO directional support.
+                    //
+                    // Expected ordering for every tested unit normal:
+                    //
+                    //     dense sample <= exact support <= Bernstein hull.
+                    //
+                    // Dense sampling is only a lower-bound diagnostic.
+                    // Bernstein is only an independent outer-bound diagnostic.
+                    //
+                    // The final MINCO-native corridor will use exact support.
+                    // ============================================================
+                    if (success &&
+                        traj.getPieceNum() ==
+                            static_cast<int>(
+                                metrics.size()))
+                    {
+                        const auto supportStarted =
+                            std::chrono::steady_clock::now();
+
+                        constexpr int supportDenseSamples =
+                            2001;
+
+                        constexpr double supportCheckTolerance =
+                            1.0e-7;
+
+                        int supportTestCount =
+                            0;
+
+                        int invalidSupportCount =
+                            0;
+
+                        int denseOrderingViolationCount =
+                            0;
+
+                        int bernsteinOrderingViolationCount =
+                            0;
+
+                        int maxStationaryPointCount =
+                            0;
+
+                        double maxExactMinusDense =
+                            0.0;
+
+                        double maxBernsteinMinusExact =
+                            0.0;
+
+                        double maxDenseMinusExact =
+                            0.0;
+
+                        double maxExactMinusBernstein =
+                            0.0;
+
+                        for (int pieceId = 0;
+                             pieceId < traj.getPieceNum();
+                             ++pieceId)
+                        {
+                            const auto &piece =
+                                traj[pieceId];
+
+                            std::vector<
+                                Eigen::Vector3d,
+                                Eigen::aligned_allocator<
+                                    Eigen::Vector3d>>
+                                testDirections;
+
+                            testDirections.reserve(
+                                12);
+
+                            // World axes, both signs.
+                            for (int axis = 0;
+                                 axis < 3;
+                                 ++axis)
+                            {
+                                const Eigen::Vector3d direction =
+                                    Eigen::Vector3d::Unit(
+                                        axis);
+
+                                testDirections.push_back(
+                                    direction);
+
+                                testDirections.push_back(
+                                    -direction);
+                            }
+
+                            // CSGN principal directions, both signs.
+                            if (metrics[pieceId].valid &&
+                                metrics[pieceId]
+                                    .corridorUtility
+                                    .allFinite())
+                            {
+                                Eigen::SelfAdjointEigenSolver<
+                                    Eigen::Matrix3d>
+                                    utilitySolver(
+                                        metrics[pieceId]
+                                            .corridorUtility);
+
+                                if (utilitySolver.info() ==
+                                    Eigen::Success)
+                                {
+                                    for (int eigenId = 0;
+                                         eigenId < 3;
+                                         ++eigenId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            utilitySolver
+                                                .eigenvectors()
+                                                .col(
+                                                    eigenId);
+
+                                        const double norm =
+                                            direction.norm();
+
+                                        if (norm > 1.0e-12)
+                                        {
+                                            direction /=
+                                                norm;
+
+                                            testDirections
+                                                .push_back(
+                                                    direction);
+
+                                            testDirections
+                                                .push_back(
+                                                    -direction);
+                                        }
+                                    }
+                                }
+                            }
+
+                            double pieceMaxExactMinusDense =
+                                0.0;
+
+                            double pieceMaxBernsteinMinusExact =
+                                0.0;
+
+                            int pieceTests =
+                                0;
+
+                            for (Eigen::Vector3d direction :
+                                 testDirections)
+                            {
+                                const double directionNorm =
+                                    direction.norm();
+
+                                if (!direction.allFinite() ||
+                                    directionNorm <= 1.0e-12)
+                                {
+                                    continue;
+                                }
+
+                                direction /=
+                                    directionNorm;
+
+                                const auto exact =
+                                    traj_relevant::
+                                        exactMincoDirectionalSupport(
+                                            piece,
+                                            direction);
+
+                                const double dense =
+                                    traj_relevant::
+                                        denseDirectionalSupportLowerBound(
+                                            piece,
+                                            direction,
+                                            supportDenseSamples);
+
+                                const double bernstein =
+                                    traj_relevant::
+                                        bernsteinDirectionalSupportUpperBound(
+                                            piece,
+                                            direction);
+
+                                ++supportTestCount;
+                                ++pieceTests;
+
+                                if (!exact.valid ||
+                                    !std::isfinite(dense) ||
+                                    !std::isfinite(bernstein))
+                                {
+                                    ++invalidSupportCount;
+                                    continue;
+                                }
+
+                                maxStationaryPointCount =
+                                    std::max(
+                                        maxStationaryPointCount,
+                                        exact
+                                            .stationary_point_count);
+
+                                const double exactMinusDense =
+                                    exact.support -
+                                    dense;
+
+                                const double bernsteinMinusExact =
+                                    bernstein -
+                                    exact.support;
+
+                                const double denseMinusExact =
+                                    dense -
+                                    exact.support;
+
+                                const double exactMinusBernstein =
+                                    exact.support -
+                                    bernstein;
+
+                                maxExactMinusDense =
+                                    std::max(
+                                        maxExactMinusDense,
+                                        exactMinusDense);
+
+                                maxBernsteinMinusExact =
+                                    std::max(
+                                        maxBernsteinMinusExact,
+                                        bernsteinMinusExact);
+
+                                maxDenseMinusExact =
+                                    std::max(
+                                        maxDenseMinusExact,
+                                        denseMinusExact);
+
+                                maxExactMinusBernstein =
+                                    std::max(
+                                        maxExactMinusBernstein,
+                                        exactMinusBernstein);
+
+                                pieceMaxExactMinusDense =
+                                    std::max(
+                                        pieceMaxExactMinusDense,
+                                        exactMinusDense);
+
+                                pieceMaxBernsteinMinusExact =
+                                    std::max(
+                                        pieceMaxBernsteinMinusExact,
+                                        bernsteinMinusExact);
+
+                                if (dense >
+                                    exact.support +
+                                        supportCheckTolerance)
+                                {
+                                    ++denseOrderingViolationCount;
+                                }
+
+                                if (exact.support >
+                                    bernstein +
+                                        supportCheckTolerance)
+                                {
+                                    ++bernsteinOrderingViolationCount;
+                                }
+                            }
+
+                            ROS_INFO_STREAM(
+                                "TF_MINCO_SUPPORT_PIECE "
+                                << "piece="
+                                << pieceId
+
+                                << " tests="
+                                << pieceTests
+
+                                << " duration="
+                                << piece.getDuration()
+
+                                << " max_exact_minus_dense="
+                                << pieceMaxExactMinusDense
+
+                                << " max_bernstein_minus_exact="
+                                << pieceMaxBernsteinMinusExact);
+                        }
+
+                        const double supportElapsedMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::
+                                        steady_clock::now() -
+                                    supportStarted)
+                                .count();
+
+                        const bool supportValidationPassed =
+                            invalidSupportCount == 0 &&
+                            denseOrderingViolationCount == 0 &&
+                            bernsteinOrderingViolationCount == 0;
+
+                        ROS_INFO_STREAM(
+                            "TF_MINCO_SUPPORT_VALIDATE "
+                            << "success="
+                            << supportValidationPassed
+
+                            << " pieces="
+                            << traj.getPieceNum()
+
+                            << " tests="
+                            << supportTestCount
+
+                            << " invalid="
+                            << invalidSupportCount
+
+                            << " dense_order_violations="
+                            << denseOrderingViolationCount
+
+                            << " bernstein_order_violations="
+                            << bernsteinOrderingViolationCount
+
+                            << " max_stationary_points="
+                            << maxStationaryPointCount
+
+                            << " max_exact_minus_dense="
+                            << maxExactMinusDense
+
+                            << " max_bernstein_minus_exact="
+                            << maxBernsteinMinusExact
+
+                            << " max_dense_minus_exact="
+                            << maxDenseMinusExact
+
+                            << " max_exact_minus_bernstein="
+                            << maxExactMinusBernstein
+
+                            << " elapsed_ms="
+                            << supportElapsedMs);
+                    }
 
                     struct MetricAnchor
                     {
