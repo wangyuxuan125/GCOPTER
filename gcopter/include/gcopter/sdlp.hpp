@@ -28,6 +28,7 @@
 
 #include <Eigen/Eigen>
 #include <cmath>
+#include <cstdint>
 #include <random>
 
 namespace sdlp
@@ -686,22 +687,64 @@ namespace sdlp
     inline void rand_permutation(const int n,
                                  int *p)
     {
-        typedef std::uniform_int_distribution<int> rand_int;
-        typedef rand_int::param_type rand_range;
-        static std::mt19937_64 gen;
-        static rand_int rdi(0, 1);
+        typedef std::uniform_int_distribution<int>
+            rand_int;
+    
+        typedef rand_int::param_type
+            rand_range;
+    
+        // --------------------------------------------------------
+        // Deterministic pseudo-random permutation.
+        //
+        // Seidel's LP solver benefits from randomized constraint
+        // ordering.  However, a static RNG makes repeated identical
+        // FIRI calls consume different RNG states, contaminating
+        // paired CONTROL/METRIC experiments.
+        //
+        // Re-seeding locally makes the permutation depend only on
+        // the problem size, not on how many LP calls happened
+        // previously.  Thus identical LP inputs see the same
+        // pseudo-random constraint order.
+        // --------------------------------------------------------
+        const std::uint64_t seed =
+            0xC0FFEEULL +
+            static_cast<std::uint64_t>(n);
+    
+        std::mt19937_64 gen(seed);
+    
+        rand_int rdi(0, 1);
+    
         int j, k;
-        for (int i = 0; i < n; i++)
+    
+        for (int i = 0;
+             i < n;
+             ++i)
         {
-            p[i] = i;
+            p[i] =
+                i;
         }
-        for (int i = 0; i < n; i++)
+    
+        for (int i = 0;
+             i < n;
+             ++i)
         {
-            rdi.param(rand_range(0, n - i - 1));
-            j = rdi(gen) + i;
-            k = p[j];
-            p[j] = p[i];
-            p[i] = k;
+            rdi.param(
+                rand_range(
+                    0,
+                    n - i - 1));
+                
+            j =
+                rdi(gen) +
+                i;
+                
+            k =
+                p[j];
+                
+            p[j] =
+                p[i];
+                
+            p[i] =
+                k;
         }
     }
 
