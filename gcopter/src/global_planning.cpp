@@ -2663,135 +2663,156 @@ public:
                         //
                         // Legacy CONTROL/METRIC above both use coverage_ratio = 0.
                         // ============================================================
-                        const double coverageFirstRatio =
-                            1.0;
-                                                
-                        int coverageControlFirstSuccessfulBudget =
-                            -1;
-                                                
-                        int coverageMetricFirstSuccessfulBudget =
-                            -1;
-                                                
-                        for (int faceBudget =
-                                 minimumFaceBudgetToTest;
-                             faceBudget <=
-                                 maximumFaceBudgetToTest;
-                             ++faceBudget)
+                        // ============================================================
+                        // Coverage-ratio sweep.
+                        //
+                        // rho = 0:
+                        //     legacy required-coverage gate.
+                        //
+                        // rho -> 1:
+                        //     progressively stronger coverage priority.
+                        //
+                        // We compare CONTROL and CSGN at exactly the same rho.
+                        // ============================================================
+                        const std::vector<double>
+                            coverageRatiosToTest =
+                                {
+                                    0.50,
+                                    0.75,
+                                    0.90,
+                                    1.00
+                                };
+                            
+                        for (const double coverageRatio :
+                             coverageRatiosToTest)
                         {
-                            const FaceBudgetRunSummary
-                                coverageControlRun =
-                                    runFaceBudgetCase(
-                                        faceBudget,
-                                        0.0,
-                                        coverageFirstRatio);
-                                    
-                            const FaceBudgetRunSummary
-                                coverageMetricRun =
-                                    runFaceBudgetCase(
-                                        faceBudget,
-                                        1.0,
-                                        coverageFirstRatio);
-                                    
-                            if (coverageControlRun.success &&
-                                coverageControlFirstSuccessfulBudget < 0)
-                            {
-                                coverageControlFirstSuccessfulBudget =
-                                    faceBudget;
-                            }
+                            int coverageControlFirstSuccessfulBudget =
+                                -1;
                         
-                            if (coverageMetricRun.success &&
-                                coverageMetricFirstSuccessfulBudget < 0)
-                            {
-                                coverageMetricFirstSuccessfulBudget =
-                                    faceBudget;
-                            }
+                            int coverageMetricFirstSuccessfulBudget =
+                                -1;
                         
-                            double deltaCoverageMetricDamage =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                        
-                            if (coverageControlRun.success &&
-                                coverageMetricRun.success &&
-                                std::isfinite(
-                                    coverageControlRun.meanMetricDamage) &&
-                                std::isfinite(
-                                    coverageMetricRun.meanMetricDamage))
+                            for (int faceBudget =
+                                     minimumFaceBudgetToTest;
+                                 faceBudget <=
+                                     maximumFaceBudgetToTest;
+                                 ++faceBudget)
                             {
-                                deltaCoverageMetricDamage =
-                                    coverageMetricRun.meanMetricDamage -
-                                    coverageControlRun.meanMetricDamage;
+                                const FaceBudgetRunSummary
+                                    coverageControlRun =
+                                        runFaceBudgetCase(
+                                            faceBudget,
+                                            0.0,
+                                            coverageRatio);
+                                        
+                                const FaceBudgetRunSummary
+                                    coverageMetricRun =
+                                        runFaceBudgetCase(
+                                            faceBudget,
+                                            1.0,
+                                            coverageRatio);
+                                        
+                                if (coverageControlRun.success &&
+                                    coverageControlFirstSuccessfulBudget < 0)
+                                {
+                                    coverageControlFirstSuccessfulBudget =
+                                        faceBudget;
+                                }
+                            
+                                if (coverageMetricRun.success &&
+                                    coverageMetricFirstSuccessfulBudget < 0)
+                                {
+                                    coverageMetricFirstSuccessfulBudget =
+                                        faceBudget;
+                                }
+                            
+                                double deltaCoverageMetricDamage =
+                                    std::numeric_limits<double>::
+                                        quiet_NaN();
+                            
+                                if (coverageControlRun.success &&
+                                    coverageMetricRun.success &&
+                                    std::isfinite(
+                                        coverageControlRun.meanMetricDamage) &&
+                                    std::isfinite(
+                                        coverageMetricRun.meanMetricDamage))
+                                {
+                                    deltaCoverageMetricDamage =
+                                        coverageMetricRun.meanMetricDamage -
+                                        coverageControlRun.meanMetricDamage;
+                                }
+                            
+                                ROS_INFO_STREAM(
+                                    "TF_CSGN_FIRI_COVERAGE "
+                                    << "budget="
+                                    << faceBudget
+                                
+                                    << " coverage_ratio="
+                                    << coverageRatio
+                                
+                                    << " control_success="
+                                    << coverageControlRun.success
+                                
+                                    << " metric_success="
+                                    << coverageMetricRun.success
+                                
+                                    << " control_corridors="
+                                    << coverageControlRun.corridorCount
+                                
+                                    << " metric_corridors="
+                                    << coverageMetricRun.corridorCount
+                                
+                                    << " control_faces="
+                                    << coverageControlRun.totalFaces
+                                
+                                    << " metric_faces="
+                                    << coverageMetricRun.totalFaces
+                                
+                                    << " control_obs_faces="
+                                    << coverageControlRun.obstacleFaces
+                                
+                                    << " metric_obs_faces="
+                                    << coverageMetricRun.obstacleFaces
+                                
+                                    << " control_mean_psi="
+                                    << coverageControlRun.meanMetricDamage
+                                
+                                    << " metric_mean_psi="
+                                    << coverageMetricRun.meanMetricDamage
+                                
+                                    << " delta_mean_psi="
+                                    << deltaCoverageMetricDamage
+                                
+                                    << " control_unresolved_obs="
+                                    << coverageControlRun.unresolvedObstacle
+                                
+                                    << " metric_unresolved_obs="
+                                    << coverageMetricRun.unresolvedObstacle);
                             }
                         
                             ROS_INFO_STREAM(
-                                "TF_CSGN_FIRI_COVERAGE "
-                                << "budget="
-                                << faceBudget
+                                "TF_CSGN_FIRI_COVERAGE_THRESHOLD "
+                                << "coverage_ratio="
+                                << coverageRatio
                             
-                                << " coverage_ratio="
-                                << coverageFirstRatio
+                                << " legacy_control_first="
+                                << controlFirstSuccessfulBudget
                             
-                                << " control_success="
-                                << coverageControlRun.success
+                                << " legacy_metric_first="
+                                << metricFirstSuccessfulBudget
                             
-                                << " metric_success="
-                                << coverageMetricRun.success
+                                << " cf_control_first="
+                                << coverageControlFirstSuccessfulBudget
                             
-                                << " control_corridors="
-                                << coverageControlRun.corridorCount
+                                << " cf_metric_first="
+                                << coverageMetricFirstSuccessfulBudget
                             
-                                << " metric_corridors="
-                                << coverageMetricRun.corridorCount
+                                << " tested_min="
+                                << minimumFaceBudgetToTest
                             
-                                << " control_faces="
-                                << coverageControlRun.totalFaces
-                            
-                                << " metric_faces="
-                                << coverageMetricRun.totalFaces
-                            
-                                << " control_obs_faces="
-                                << coverageControlRun.obstacleFaces
-                            
-                                << " metric_obs_faces="
-                                << coverageMetricRun.obstacleFaces
-                            
-                                << " control_mean_psi="
-                                << coverageControlRun.meanMetricDamage
-                            
-                                << " metric_mean_psi="
-                                << coverageMetricRun.meanMetricDamage
-                            
-                                << " delta_mean_psi="
-                                << deltaCoverageMetricDamage
-                            
-                                << " control_unresolved_obs="
-                                << coverageControlRun.unresolvedObstacle
-                            
-                                << " metric_unresolved_obs="
-                                << coverageMetricRun.unresolvedObstacle);
+                                << " tested_max="
+                                << maximumFaceBudgetToTest);
                         }
-                        
-                        ROS_INFO_STREAM(
-                            "TF_CSGN_FIRI_COVERAGE_THRESHOLD "
-                            << "coverage_ratio="
-                            << coverageFirstRatio
-                        
-                            << " legacy_control_first="
-                            << controlFirstSuccessfulBudget
-                        
-                            << " legacy_metric_first="
-                            << metricFirstSuccessfulBudget
-                        
-                            << " cf_control_first="
-                            << coverageControlFirstSuccessfulBudget
-                        
-                            << " cf_metric_first="
-                            << coverageMetricFirstSuccessfulBudget
-                        
-                            << " tested_min="
-                            << minimumFaceBudgetToTest
-                        
-                            << " tested_max="
-                            << maximumFaceBudgetToTest);
 
                         // ============================================================
                         // Metric-weight sweep around the empirical feasibility
