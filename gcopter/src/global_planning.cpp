@@ -1,6 +1,7 @@
 #include "misc/visualizer.hpp"
 #include "gcopter/trajectory.hpp"
 #include "gcopter/minco_support.hpp"
+#include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
 #include "gcopter/experiment_logger.hpp"
 #include "gcopter/firi.hpp"
@@ -3312,6 +3313,317 @@ public:
                             << backendMetricResult.corridor_slack_final);
 
                         // ============================================================
+                        // ============================================================
+                        // MINCO-piece-native compact corridor.
+                        //
+                        // Unlike the route-segment MVP:
+                        //
+                        //   - no raw RRT segment is used,
+                        //   - no MINCO -> route metric mapping is used,
+                        //   - one corridor is attempted directly for each nominal
+                        //     MINCO polynomial piece,
+                        //   - complete continuous-time containment is certified by
+                        //     exact directional support.
+                        // ============================================================
+                        std::vector<Eigen::MatrixX4d>
+                            mincoNativeHPolys;
+
+                        std::vector<
+                            traj_relevant::
+                                MincoPieceCorridorDiagnostics,
+                            Eigen::aligned_allocator<
+                                traj_relevant::
+                                    MincoPieceCorridorDiagnostics>>
+                            mincoNativeInfos;
+
+                        bool mincoNativeSuccess =
+                            success &&
+                            traj.getPieceNum() ==
+                                static_cast<int>(
+                                    metrics.size());
+
+                        int mincoNativeAdjacentOverlapCount =
+                            0;
+
+                        const auto mincoNativeStarted =
+                            std::chrono::steady_clock::now();
+
+                        if (mincoNativeSuccess)
+                        {
+                            mincoNativeHPolys.reserve(
+                                traj.getPieceNum());
+
+                            mincoNativeInfos.reserve(
+                                traj.getPieceNum());
+
+                            for (int pieceId = 0;
+                                 pieceId < traj.getPieceNum();
+                                 ++pieceId)
+                            {
+                                traj_relevant::
+                                    MincoPieceCorridorOptions
+                                        pieceOptions;
+
+                                pieceOptions.max_extra_radius =
+                                    std::max(
+                                        config.tfFiriRange,
+                                        config.voxelWidth);
+
+                                pieceOptions.min_extra_ratio =
+                                    0.25;
+
+                                pieceOptions.overlap_radius =
+                                    0.01;
+
+                                pieceOptions.epsilon =
+                                    1.0e-6;
+
+                                pieceOptions.root_tolerance =
+                                    1.0e-10;
+
+                                pieceOptions.metric_enabled =
+                                    metrics[pieceId].valid;
+
+                                pieceOptions.deformation_utility =
+                                    metrics[pieceId]
+                                        .corridorUtility;
+
+                                Eigen::MatrixX4d piecePoly;
+
+                                traj_relevant::
+                                    MincoPieceCorridorDiagnostics
+                                        pieceInfo;
+
+                                const bool pieceSuccess =
+                                    traj_relevant::
+                                        buildCompactMincoPiecePolytope(
+                                            pc,
+                                            voxelMap.getOrigin(),
+                                            voxelMap.getCorner(),
+                                            traj[pieceId],
+                                            pieceOptions,
+                                            piecePoly,
+                                            &pieceInfo);
+
+                                mincoNativeInfos.push_back(
+                                    pieceInfo);
+
+                                if (!pieceSuccess)
+                                {
+                                    mincoNativeSuccess =
+                                        false;
+
+                                    ROS_WARN_STREAM(
+                                        "TF_MINCO_NATIVE_FAILURE "
+                                        << "piece="
+                                        << pieceId
+
+                                        << " input_obs="
+                                        << pieceInfo
+                                               .input_obstacle_count
+
+                                        << " local_obs="
+                                        << pieceInfo
+                                               .local_obstacle_count
+
+                                        << " candidates="
+                                        << pieceInfo
+                                               .candidate_count
+
+                                        << " rejected_candidates="
+                                        << pieceInfo
+                                               .rejected_candidate_count
+
+                                        << " unresolved="
+                                        << pieceInfo
+                                               .unresolved_obstacle_count);
+
+                                    break;
+                                }
+
+                                if (!mincoNativeHPolys.empty())
+                                {
+                                    const bool adjacentOverlap =
+                                        geo_utils::overlap(
+                                            mincoNativeHPolys.back(),
+                                            piecePoly,
+                                            0.005);
+
+                                    if (adjacentOverlap)
+                                    {
+                                        ++mincoNativeAdjacentOverlapCount;
+                                    }
+                                    else
+                                    {
+                                        mincoNativeSuccess =
+                                            false;
+
+                                        ROS_WARN_STREAM(
+                                            "TF_MINCO_NATIVE_FAILURE "
+                                            << "piece="
+                                            << pieceId
+                                            << " reason=adjacent_overlap");
+
+                                        break;
+                                    }
+                                }
+
+                                mincoNativeHPolys.push_back(
+                                    piecePoly);
+                            }
+                        }
+
+                        const double mincoNativeMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    mincoNativeStarted)
+                                .count();
+
+                        int mincoNativeFaces =
+                            0;
+
+                        int mincoNativeDomainFaces =
+                            0;
+
+                        int mincoNativeObstacleFaces =
+                            0;
+
+                        int mincoNativeCandidates =
+                            0;
+
+                        int mincoNativeRejectedCandidates =
+                            0;
+
+                        int mincoNativeGreedyFaces =
+                            0;
+
+                        int mincoNativeRedundancyRemoved =
+                            0;
+
+                        int mincoNativeTrajectoryContained =
+                            0;
+
+                        int mincoNativeSafetyVerified =
+                            0;
+
+                        double mincoNativeWeightedDamage =
+                            0.0;
+
+                        for (const auto &info :
+                             mincoNativeInfos)
+                        {
+                            mincoNativeFaces +=
+                                info.total_face_count;
+
+                            mincoNativeDomainFaces +=
+                                info.domain_face_count;
+
+                            mincoNativeObstacleFaces +=
+                                info.selected_obstacle_face_count;
+
+                            mincoNativeCandidates +=
+                                info.candidate_count;
+
+                            mincoNativeRejectedCandidates +=
+                                info.rejected_candidate_count;
+
+                            mincoNativeGreedyFaces +=
+                                info.greedy_obstacle_face_count;
+
+                            mincoNativeRedundancyRemoved +=
+                                info.redundancy_removed;
+
+                            mincoNativeTrajectoryContained +=
+                                info.trajectory_contained
+                                    ? 1
+                                    : 0;
+
+                            mincoNativeSafetyVerified +=
+                                info.safety_verified
+                                    ? 1
+                                    : 0;
+
+                            mincoNativeWeightedDamage +=
+                                static_cast<double>(
+                                    info.selected_obstacle_face_count) *
+                                info.mean_metric_damage;
+                        }
+
+                        const double mincoNativeMeanDamage =
+                            mincoNativeObstacleFaces > 0
+                                ? mincoNativeWeightedDamage /
+                                      static_cast<double>(
+                                          mincoNativeObstacleFaces)
+                                : 0.0;
+
+                        ROS_INFO_STREAM(
+                            "TF_MINCO_NATIVE_AB "
+                            << "success="
+                            << mincoNativeSuccess
+
+                            << " nominal_pieces="
+                            << traj.getPieceNum()
+
+                            << " completed_corridors="
+                            << mincoNativeHPolys.size()
+
+                            << " info_count="
+                            << mincoNativeInfos.size()
+
+                            << " control_firi_faces="
+                            << controlFaceCount
+
+                            << " route_compact_faces="
+                            << compactTotalFaces
+
+                            << " minco_faces="
+                            << mincoNativeFaces
+
+                            << " minco_domain_faces="
+                            << mincoNativeDomainFaces
+
+                            << " minco_obs_faces="
+                            << mincoNativeObstacleFaces
+
+                            << " candidates="
+                            << mincoNativeCandidates
+
+                            << " rejected_candidates="
+                            << mincoNativeRejectedCandidates
+
+                            << " greedy_faces="
+                            << mincoNativeGreedyFaces
+
+                            << " redundancy_removed="
+                            << mincoNativeRedundancyRemoved
+
+                            << " mean_psi="
+                            << mincoNativeMeanDamage
+
+                            << " trajectory_contained="
+                            << mincoNativeTrajectoryContained
+                            << "/"
+                            << mincoNativeInfos.size()
+
+                            << " safety="
+                            << mincoNativeSafetyVerified
+                            << "/"
+                            << mincoNativeInfos.size()
+
+                            << " adjacent_overlap="
+                            << mincoNativeAdjacentOverlapCount
+                            << "/"
+                            << std::max(
+                                   0,
+                                   static_cast<int>(
+                                       mincoNativeHPolys.size()) -
+                                       1)
+
+                            << " generation_ms="
+                            << mincoNativeMs);
+
                         // Trajectory-relevant compact corridor -> GCOPTER backend.
                         //
                         // Reuse exactly the same backend diagnostic routine as the
