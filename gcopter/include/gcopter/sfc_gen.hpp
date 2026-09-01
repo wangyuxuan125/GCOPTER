@@ -27,6 +27,7 @@
 
 #include "geo_utils.hpp"
 #include "firi.hpp"
+#include "traj_relevant_corridor.hpp"
 
 #include <ompl/util/Console.h>
 #include <ompl/util/RandomNumbers.h>
