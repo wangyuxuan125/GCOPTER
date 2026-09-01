@@ -472,6 +472,286 @@ namespace sfc_gen
         return true;
     }
 
+
+    // ============================================================
+    // Trajectory-relevant compact corridor diagnostics.
+    //
+    // One entry corresponds to one polytope retained after the same
+    // style of overlap shortcut used by the FIRI pipeline.
+    // ============================================================
+    using TrajectoryRelevantCompactInfos =
+        std::vector<
+            traj_relevant::CompactCorridorDiagnostics,
+            Eigen::aligned_allocator<
+                traj_relevant::CompactCorridorDiagnostics>>;
+
+    // ============================================================
+    // Trajectory-relevant compact corridor construction.
+    //
+    // This deliberately reuses:
+    //
+    //   - the same route segmentation,
+    //   - the same raw-segment -> MINCO metric mapping,
+    //   - the same global obstacle cloud,
+    //   - the same overlap shortcut philosophy,
+    //
+    // while replacing the inner FIRI inflation with:
+    //
+    //   CSGN anisotropic domain
+    //       -> batch separating-plane candidates
+    //       -> approximate minimum set cover
+    //       -> redundancy pruning.
+    // ============================================================
+    inline bool trajectoryRelevantCompactCover(
+        const std::vector<Eigen::Vector3d> &path,
+        const std::vector<Eigen::Vector3d> &points,
+        const Eigen::Vector3d &lowCorner,
+        const Eigen::Vector3d &highCorner,
+        const double &progress,
+        const traj_relevant::CompactCorridorOptions &baseOptions,
+        std::vector<Eigen::MatrixX4d> &hpolys,
+        TrajectoryRelevantCompactInfos &infos,
+        const SegmentDeformationMetrics *segmentMetrics =
+            nullptr,
+        const double eps =
+            1.0e-6)
+    {
+        hpolys.clear();
+        infos.clear();
+
+        if (path.size() < 2)
+        {
+            return false;
+        }
+
+        const int n =
+            static_cast<int>(
+                path.size());
+
+        Eigen::Vector3d a;
+        Eigen::Vector3d b =
+            path.front();
+
+        int rawSegmentId =
+            0;
+
+        for (int routeId = 1;
+             routeId < n;)
+        {
+            a =
+                b;
+
+            if ((a - path[routeId]).norm() >
+                progress)
+            {
+                b =
+                    (path[routeId] - a)
+                        .normalized() *
+                    progress +
+                    a;
+            }
+            else
+            {
+                b =
+                    path[routeId];
+
+                ++routeId;
+            }
+
+            traj_relevant::CompactCorridorOptions
+                segmentOptions =
+                    baseOptions;
+
+            segmentOptions.metric_enabled =
+                false;
+
+            segmentOptions.deformation_utility =
+                Eigen::Matrix3d::Identity();
+
+            if (segmentMetrics != nullptr)
+            {
+                if (rawSegmentId >=
+                    static_cast<int>(
+                        segmentMetrics->size()))
+                {
+                    return false;
+                }
+
+                const auto &mappedMetric =
+                    (*segmentMetrics)[
+                        rawSegmentId];
+
+                if (mappedMetric.valid)
+                {
+                    segmentOptions.metric_enabled =
+                        true;
+
+                    segmentOptions.deformation_utility =
+                        mappedMetric.utility;
+                }
+            }
+
+            Eigen::MatrixX4d hp;
+
+            traj_relevant::CompactCorridorDiagnostics
+                diagnostics;
+
+            const bool generated =
+                traj_relevant::
+                    buildCompactSegmentPolytope(
+                        points,
+                        lowCorner,
+                        highCorner,
+                        a,
+                        b,
+                        hp,
+                        segmentOptions,
+                        &diagnostics);
+
+            if (!generated)
+            {
+                infos.push_back(
+                    diagnostics);
+
+                return false;
+            }
+
+            // ----------------------------------------------------
+            // Adjacent raw segments share the same junction point.
+            //
+            // Because every compact polytope explicitly contains a
+            // finite-radius capsule around its seed segment, adjacent
+            // polytopes should have finite-volume overlap.
+            //
+            // Verify it explicitly instead of relying only on the
+            // construction argument.
+            // ----------------------------------------------------
+            if (!hpolys.empty())
+            {
+                const double overlapCheckRadius =
+                    std::max(
+                        eps,
+                        0.5 *
+                            std::max(
+                                0.0,
+                                segmentOptions
+                                    .overlap_radius));
+
+                if (!geo_utils::overlap(
+                        hpolys.back(),
+                        hp,
+                        overlapCheckRadius))
+                {
+                    infos.push_back(
+                        diagnostics);
+
+                    return false;
+                }
+            }
+
+            hpolys.push_back(
+                hp);
+
+            infos.push_back(
+                diagnostics);
+
+            ++rawSegmentId;
+        }
+
+        if (hpolys.empty())
+        {
+            return false;
+        }
+
+        if (segmentMetrics != nullptr &&
+            rawSegmentId !=
+                static_cast<int>(
+                    segmentMetrics->size()))
+        {
+            return false;
+        }
+
+        // --------------------------------------------------------
+        // Apply the same overlap-based shortcut philosophy used by
+        // the existing FIRI corridor pipeline.
+        //
+        // Keep diagnostics aligned with the retained polytopes.
+        // --------------------------------------------------------
+        std::vector<Eigen::MatrixX4d>
+            htemp =
+                hpolys;
+
+        TrajectoryRelevantCompactInfos
+            itemp =
+                infos;
+
+        if (htemp.size() == 1)
+        {
+            htemp.insert(
+                htemp.begin(),
+                htemp.front());
+
+            itemp.insert(
+                itemp.begin(),
+                itemp.front());
+        }
+
+        std::deque<int>
+            indices;
+
+        indices.push_front(
+            static_cast<int>(
+                htemp.size()) -
+            1);
+
+        for (int i =
+                 static_cast<int>(
+                     htemp.size()) -
+                 1;
+             i >= 0;
+             --i)
+        {
+            for (int j = 0;
+                 j < i;
+                 ++j)
+            {
+                const bool overlap =
+                    j < i - 1
+                        ? geo_utils::overlap(
+                              htemp[i],
+                              htemp[j],
+                              0.01)
+                        : true;
+
+                if (overlap)
+                {
+                    indices.push_front(
+                        j);
+
+                    i =
+                        j + 1;
+
+                    break;
+                }
+            }
+        }
+
+        hpolys.clear();
+        infos.clear();
+
+        for (const int index :
+             indices)
+        {
+            hpolys.push_back(
+                htemp[index]);
+
+            infos.push_back(
+                itemp[index]);
+        }
+
+        return true;
+    }
+
     inline void shortCut(std::vector<Eigen::MatrixX4d> &hpolys)
     {
         std::vector<Eigen::MatrixX4d> htemp = hpolys;

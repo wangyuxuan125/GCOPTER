@@ -1897,6 +1897,250 @@ public:
                             << metricFiriMs);
 
                         // ============================================================
+                        // Trajectory-relevant minimum-face corridor experiment.
+                        //
+                        // This is the first test of the NEW construction algorithm.
+                        //
+                        // It does NOT use:
+                        //   - FIRI MVIE,
+                        //   - FIRI inflation iterations,
+                        //   - face_count_weight,
+                        //   - candidate_pool_size,
+                        //   - hard FIRI face budget.
+                        //
+                        // Instead:
+                        //
+                        //   nominal MINCO
+                        //       -> mapped CSGN utility
+                        //       -> anisotropic trajectory-relevant domain
+                        //       -> batch separating-plane set cover
+                        //       -> redundancy pruning.
+                        //
+                        // max_extra_radius uses the same spatial scale as the
+                        // existing FIRI local range.
+                        // ============================================================
+                        traj_relevant::CompactCorridorOptions
+                            compactOptions;
+
+                        compactOptions.max_extra_radius =
+                            std::max(
+                                config.tfFiriRange,
+                                config.voxelWidth);
+
+                        // MVP hypothesis:
+                        //
+                        // low-value MINCO directions receive only 25% of the
+                        // maximum extra expansion.
+                        compactOptions.min_extra_ratio =
+                            0.25;
+
+                        // Explicit finite-radius junction/segment protection.
+                        compactOptions.overlap_radius =
+                            0.01;
+
+                        compactOptions.epsilon =
+                            1.0e-6;
+
+                        std::vector<Eigen::MatrixX4d>
+                            compactHPolys;
+
+                        sfc_gen::TrajectoryRelevantCompactInfos
+                            compactInfos;
+
+                        const auto compactStarted =
+                            std::chrono::steady_clock::now();
+
+                        const bool compactSuccess =
+                            sfc_gen::
+                                trajectoryRelevantCompactCover(
+                                    route,
+                                    pc,
+                                    voxelMap.getOrigin(),
+                                    voxelMap.getCorner(),
+                                    std::max(
+                                        config.tfFiriProgress,
+                                        config.voxelWidth),
+                                    compactOptions,
+                                    compactHPolys,
+                                    compactInfos,
+                                    &mappedFiriMetrics);
+
+                        const double compactMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    compactStarted)
+                                .count();
+
+                        const int compactTotalFaces =
+                            countSecondPassFaces(
+                                compactHPolys);
+
+                        // The currently optimized nominal corridor is native
+                        // FIRI in the fixed debug experiment.
+                        const int nominalFiriTotalFaces =
+                            countSecondPassFaces(
+                                hPolys);
+
+                        int compactDomainFaces =
+                            0;
+
+                        int compactObstacleFaces =
+                            0;
+
+                        int compactCandidates =
+                            0;
+
+                        int compactGreedyFaces =
+                            0;
+
+                        int compactRedundancyRemoved =
+                            0;
+
+                        int compactMetricValidCount =
+                            0;
+
+                        int compactAnisotropicCount =
+                            0;
+
+                        int compactSafetyVerifiedCount =
+                            0;
+
+                        int compactOverlapGuaranteedCount =
+                            0;
+
+                        double compactWeightedDamageSum =
+                            0.0;
+
+                        for (const auto &info :
+                             compactInfos)
+                        {
+                            compactDomainFaces +=
+                                info.domain_face_count;
+
+                            compactObstacleFaces +=
+                                info.selected_obstacle_face_count;
+
+                            compactCandidates +=
+                                info.candidate_count;
+
+                            compactGreedyFaces +=
+                                info.greedy_obstacle_face_count;
+
+                            compactRedundancyRemoved +=
+                                info.redundancy_removed;
+
+                            compactMetricValidCount +=
+                                info.metric_valid
+                                    ? 1
+                                    : 0;
+
+                            compactAnisotropicCount +=
+                                info.anisotropic_domain
+                                    ? 1
+                                    : 0;
+
+                            compactSafetyVerifiedCount +=
+                                info.safety_verified
+                                    ? 1
+                                    : 0;
+
+                            compactOverlapGuaranteedCount +=
+                                info.overlap_guaranteed
+                                    ? 1
+                                    : 0;
+
+                            compactWeightedDamageSum +=
+                                static_cast<double>(
+                                    info.selected_obstacle_face_count) *
+                                info.mean_metric_damage;
+                        }
+
+                        const double compactMeanMetricDamage =
+                            compactObstacleFaces > 0
+                                ? compactWeightedDamageSum /
+                                      static_cast<double>(
+                                          compactObstacleFaces)
+                                : 0.0;
+
+                        ROS_INFO_STREAM(
+                            "TF_MINFACE_AB "
+                            << "success="
+                            << compactSuccess
+
+                            << " mapped_metrics="
+                            << mappedFiriMetrics.size()
+
+                            << " mapped_valid="
+                            << validMappedMetricCount
+
+                            << " nominal_firi_corridors="
+                            << hPolys.size()
+
+                            << " control_firi_corridors="
+                            << controlSecondPassHPolys.size()
+
+                            << " compact_corridors="
+                            << compactHPolys.size()
+
+                            << " nominal_firi_faces="
+                            << nominalFiriTotalFaces
+
+                            << " control_firi_faces="
+                            << controlFaceCount
+
+                            << " compact_faces="
+                            << compactTotalFaces
+
+                            << " control_firi_obs_faces="
+                            << controlObstacleFaceCount
+
+                            << " compact_obs_faces="
+                            << compactObstacleFaces
+
+                            << " compact_domain_faces="
+                            << compactDomainFaces
+
+                            << " compact_candidates="
+                            << compactCandidates
+
+                            << " compact_greedy_faces="
+                            << compactGreedyFaces
+
+                            << " compact_redundancy_removed="
+                            << compactRedundancyRemoved
+
+                            << " control_mean_psi="
+                            << controlMeanMetricDamage
+
+                            << " compact_mean_psi="
+                            << compactMeanMetricDamage
+
+                            << " compact_metric_valid="
+                            << compactMetricValidCount
+                            << "/"
+                            << compactInfos.size()
+
+                            << " compact_anisotropic="
+                            << compactAnisotropicCount
+                            << "/"
+                            << compactInfos.size()
+
+                            << " compact_safety="
+                            << compactSafetyVerifiedCount
+                            << "/"
+                            << compactInfos.size()
+
+                            << " compact_overlap="
+                            << compactOverlapGuaranteedCount
+                            << "/"
+                            << compactInfos.size()
+
+                            << " compact_ms="
+                            << compactMs);
+
+                        // ============================================================
                         // Per-polytope face-budget sweep.
                         //
                         // Goal:
