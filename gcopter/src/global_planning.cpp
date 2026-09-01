@@ -1354,6 +1354,260 @@ public:
                             << supportElapsedMs);
                     }
 
+                    // ============================================================
+                    // Validate exact metric closest-point oracle.
+                    //
+                    // For each nominal MINCO piece, construct query points around
+                    // the curve along CSGN eigen-directions and compare:
+                    //
+                    //     exact metric minimum <= dense sampled minimum.
+                    //
+                    // This validates the degree-9 stationary polynomial before it
+                    // is used for obstacle separating-plane construction.
+                    // ============================================================
+                    if (success &&
+                        traj.getPieceNum() ==
+                            static_cast<int>(
+                                metrics.size()))
+                    {
+                        constexpr int denseClosestSamples =
+                            4001;
+
+                        constexpr double closestTolerance =
+                            1.0e-7;
+
+                        const double queryTimes[3] =
+                        {
+                            0.2,
+                            0.5,
+                            0.8
+                        };
+
+                        const double queryOffsets[2] =
+                        {
+                            0.5,
+                            1.5
+                        };
+
+                        int closestTests =
+                            0;
+
+                        int closestInvalid =
+                            0;
+
+                        int closestOrderingViolations =
+                            0;
+
+                        int maxClosestStationaryPoints =
+                            0;
+
+                        double maxDenseMinusExact =
+                            0.0;
+
+                        double maxExactMinusDense =
+                            0.0;
+
+                        const auto closestStarted =
+                            std::chrono::steady_clock::now();
+
+                        for (int pieceId = 0;
+                             pieceId < traj.getPieceNum();
+                             ++pieceId)
+                        {
+                            if (!metrics[pieceId].valid ||
+                                !metrics[pieceId]
+                                    .corridorUtility
+                                    .allFinite())
+                            {
+                                continue;
+                            }
+
+                            Eigen::SelfAdjointEigenSolver<
+                                Eigen::Matrix3d>
+                                utilitySolver(
+                                    metrics[pieceId]
+                                        .corridorUtility);
+
+                            if (utilitySolver.info() !=
+                                Eigen::Success ||
+                                utilitySolver
+                                        .eigenvalues()
+                                        .minCoeff() <=
+                                    1.0e-12)
+                            {
+                                continue;
+                            }
+
+                            const Eigen::Matrix3d inverseUtility =
+                                utilitySolver
+                                    .eigenvectors() *
+                                utilitySolver
+                                    .eigenvalues()
+                                    .cwiseInverse()
+                                    .asDiagonal() *
+                                utilitySolver
+                                    .eigenvectors()
+                                    .transpose();
+
+                            const auto &piece =
+                                traj[pieceId];
+
+                            int pieceTests =
+                                0;
+
+                            double pieceMaxDenseMinusExact =
+                                0.0;
+
+                            for (const double tauQuery :
+                                 queryTimes)
+                            {
+                                const Eigen::Vector3d basePoint =
+                                    piece.getPos(
+                                        tauQuery *
+                                        piece.getDuration());
+
+                                for (const double offset :
+                                     queryOffsets)
+                                {
+                                    for (int eigenId = 0;
+                                         eigenId < 3;
+                                         ++eigenId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            utilitySolver
+                                                .eigenvectors()
+                                                .col(
+                                                    eigenId);
+
+                                        direction.normalize();
+
+                                        for (const double sign :
+                                             {-1.0, 1.0})
+                                        {
+                                            const Eigen::Vector3d query =
+                                                basePoint +
+                                                sign *
+                                                offset *
+                                                direction;
+
+                                            const auto exactClosest =
+                                                traj_relevant::
+                                                    exactMincoMetricClosestPoint(
+                                                        piece,
+                                                        query,
+                                                        inverseUtility);
+
+                                            const double denseClosest =
+                                                traj_relevant::
+                                                    denseMetricClosestPointUpperBound(
+                                                        piece,
+                                                        query,
+                                                        inverseUtility,
+                                                        denseClosestSamples);
+
+                                            ++closestTests;
+                                            ++pieceTests;
+
+                                            if (!exactClosest.valid ||
+                                                !std::isfinite(
+                                                    denseClosest))
+                                            {
+                                                ++closestInvalid;
+                                                continue;
+                                            }
+
+                                            maxClosestStationaryPoints =
+                                                std::max(
+                                                    maxClosestStationaryPoints,
+                                                    exactClosest
+                                                        .stationary_point_count);
+
+                                            const double denseMinusExact =
+                                                denseClosest -
+                                                exactClosest
+                                                    .metric_distance_squared;
+
+                                            const double exactMinusDense =
+                                                exactClosest
+                                                    .metric_distance_squared -
+                                                denseClosest;
+
+                                            maxDenseMinusExact =
+                                                std::max(
+                                                    maxDenseMinusExact,
+                                                    denseMinusExact);
+
+                                            maxExactMinusDense =
+                                                std::max(
+                                                    maxExactMinusDense,
+                                                    exactMinusDense);
+
+                                            pieceMaxDenseMinusExact =
+                                                std::max(
+                                                    pieceMaxDenseMinusExact,
+                                                    denseMinusExact);
+
+                                            if (exactClosest
+                                                    .metric_distance_squared >
+                                                denseClosest +
+                                                    closestTolerance)
+                                            {
+                                                ++closestOrderingViolations;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            ROS_INFO_STREAM(
+                                "TF_MINCO_CLOSEST_PIECE "
+                                << "piece="
+                                << pieceId
+
+                                << " tests="
+                                << pieceTests
+
+                                << " max_dense_minus_exact="
+                                << pieceMaxDenseMinusExact);
+                        }
+
+                        const double closestElapsedMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::
+                                        steady_clock::now() -
+                                    closestStarted)
+                                .count();
+
+                        ROS_INFO_STREAM(
+                            "TF_MINCO_CLOSEST_VALIDATE "
+                            << "success="
+                            << (closestInvalid == 0 &&
+                                closestOrderingViolations == 0)
+
+                            << " tests="
+                            << closestTests
+
+                            << " invalid="
+                            << closestInvalid
+
+                            << " ordering_violations="
+                            << closestOrderingViolations
+
+                            << " max_stationary_points="
+                            << maxClosestStationaryPoints
+
+                            << " max_dense_minus_exact="
+                            << maxDenseMinusExact
+
+                            << " max_exact_minus_dense="
+                            << maxExactMinusDense
+
+                            << " elapsed_ms="
+                            << closestElapsedMs);
+                    }
+
                     struct MetricAnchor
                     {
                         int pieceId = -1;

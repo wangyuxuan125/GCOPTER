@@ -33,6 +33,32 @@ struct DirectionalSupportResult
         0;
 };
 
+struct MetricClosestPointResult
+{
+    bool valid =
+        false;
+
+    double normalized_time =
+        0.0;
+
+    double physical_time =
+        0.0;
+
+    Eigen::Vector3d point =
+        Eigen::Vector3d::Zero();
+
+    double metric_distance_squared =
+        std::numeric_limits<double>::infinity();
+
+    double euclidean_distance =
+        std::numeric_limits<double>::infinity();
+
+    int stationary_point_count =
+        0;
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
 // ================================================================
 // Continuous-time directional support of one polynomial piece:
 //
@@ -255,6 +281,348 @@ exactMincoDirectionalSupport(
             result.support);
 
     return result;
+}
+
+// ================================================================
+// Exact metric closest point on one MINCO polynomial piece.
+//
+// Solve
+//
+//   min_{tau in [0,1]}
+//       (query - p(tau))^T W (query - p(tau)).
+//
+// For quintic MINCO:
+//
+//   p       : degree 5
+//   p'      : degree 4
+//
+// stationary equation
+//
+//   p'(tau)^T W (p(tau) - query) = 0
+//
+// therefore has degree at most 9.
+//
+// All real roots in (0,1), together with both endpoints, are
+// evaluated explicitly.
+// ================================================================
+template <int D>
+inline MetricClosestPointResult
+exactMincoMetricClosestPoint(
+    const Piece<D> &piece,
+    const Eigen::Vector3d &query,
+    const Eigen::Matrix3d &metric,
+    const double rootTolerance =
+        1.0e-10,
+    const double coefficientTolerance =
+        1.0e-12)
+{
+    static_assert(
+        D >= 1,
+        "Closest point requires polynomial degree >= 1.");
+
+    MetricClosestPointResult result;
+
+    if (!query.allFinite() ||
+        !metric.allFinite())
+    {
+        return result;
+    }
+
+    const double duration =
+        piece.getDuration();
+
+    if (!std::isfinite(duration) ||
+        duration <= 0.0)
+    {
+        return result;
+    }
+
+    // Symmetrize to suppress tiny numerical asymmetry.
+    const Eigen::Matrix3d symmetricMetric =
+        0.5 *
+        (metric +
+         metric.transpose());
+
+    Eigen::SelfAdjointEigenSolver<
+        Eigen::Matrix3d>
+        metricSolver(
+            symmetricMetric);
+
+    if (metricSolver.info() !=
+            Eigen::Success ||
+        metricSolver.eigenvalues()
+                .minCoeff() <=
+            coefficientTolerance)
+    {
+        return result;
+    }
+
+    // ------------------------------------------------------------
+    // Position polynomial in normalized time tau.
+    //
+    // Storage convention:
+    //
+    //   col(0) = tau^D
+    //   ...
+    //   col(D) = constant.
+    //
+    // This is also the descending coefficient order expected by
+    // RootFinder.
+    // ------------------------------------------------------------
+    const auto positionCoeffs =
+        piece.normalizePosCoeffMat();
+
+    Eigen::Matrix<double, 3, D + 1>
+        residualCoeffs =
+            positionCoeffs;
+
+    // Only the constant coefficient changes for p(tau)-query.
+    residualCoeffs.col(D) -=
+        query;
+
+    // p'(tau), also in descending power order.
+    Eigen::Matrix<double, 3, D>
+        velocityCoeffs;
+
+    for (int coefficientId = 0;
+         coefficientId < D;
+         ++coefficientId)
+    {
+        velocityCoeffs.col(
+            coefficientId) =
+            static_cast<double>(
+                D - coefficientId) *
+            positionCoeffs.col(
+                coefficientId);
+    }
+
+    // ------------------------------------------------------------
+    // Construct
+    //
+    //   g(tau) =
+    //       p'(tau)^T W (p(tau)-query).
+    //
+    // Degree:
+    //
+    //   (D-1) + D = 2D-1.
+    //
+    // Hence number of coefficients = 2D.
+    // ------------------------------------------------------------
+    Eigen::VectorXd stationaryCoeffs(
+        2 * D);
+
+    stationaryCoeffs.setZero();
+
+    for (int velocityId = 0;
+         velocityId < D;
+         ++velocityId)
+    {
+        for (int residualId = 0;
+             residualId <= D;
+             ++residualId)
+        {
+            stationaryCoeffs(
+                velocityId +
+                residualId) +=
+                velocityCoeffs
+                    .col(
+                        velocityId)
+                    .dot(
+                        symmetricMetric *
+                        residualCoeffs.col(
+                            residualId));
+        }
+    }
+
+    auto evaluateCandidate =
+        [&](const double rawTau)
+        {
+            const double tau =
+                std::max(
+                    0.0,
+                    std::min(
+                        1.0,
+                        rawTau));
+
+            const Eigen::Vector3d point =
+                piece.getPos(
+                    tau *
+                    duration);
+
+            const Eigen::Vector3d delta =
+                query -
+                point;
+
+            const double metricDistanceSquared =
+                delta.dot(
+                    symmetricMetric *
+                    delta);
+
+            if (!std::isfinite(
+                    metricDistanceSquared))
+            {
+                return;
+            }
+
+            if (metricDistanceSquared <
+                result.metric_distance_squared)
+            {
+                result.metric_distance_squared =
+                    std::max(
+                        0.0,
+                        metricDistanceSquared);
+
+                result.normalized_time =
+                    tau;
+
+                result.point =
+                    point;
+
+                result.euclidean_distance =
+                    delta.norm();
+            }
+        };
+
+    // Endpoints must always be considered.
+    evaluateCandidate(
+        0.0);
+
+    evaluateCandidate(
+        1.0);
+
+    // ------------------------------------------------------------
+    // Polynomial scaling does not change roots.
+    // ------------------------------------------------------------
+    const double coefficientScale =
+        stationaryCoeffs
+            .cwiseAbs()
+            .maxCoeff();
+
+    if (std::isfinite(
+            coefficientScale) &&
+        coefficientScale >
+            coefficientTolerance)
+    {
+        const Eigen::VectorXd scaledCoeffs =
+            stationaryCoeffs /
+            coefficientScale;
+
+        // RootFinder's Sturm isolation requires nonzero boundary
+        // evaluations. Endpoints are already handled explicitly,
+        // therefore search only an open numerical interior.
+        const double boundaryOffset =
+            std::max(
+                1.0e-12,
+                10.0 *
+                    rootTolerance);
+
+        const double lowerBound =
+            boundaryOffset;
+
+        const double upperBound =
+            1.0 -
+            boundaryOffset;
+
+        if (lowerBound <
+            upperBound)
+        {
+            const std::set<double>
+                roots =
+                    RootFinder::
+                        solvePolynomial(
+                            scaledCoeffs,
+                            lowerBound,
+                            upperBound,
+                            rootTolerance);
+
+            result.stationary_point_count =
+                static_cast<int>(
+                    roots.size());
+
+            for (const double tau :
+                 roots)
+            {
+                if (!std::isfinite(tau))
+                {
+                    continue;
+                }
+
+                evaluateCandidate(
+                    tau);
+            }
+        }
+    }
+
+    result.physical_time =
+        result.normalized_time *
+        duration;
+
+    result.valid =
+        std::isfinite(
+            result.metric_distance_squared) &&
+        result.point.allFinite();
+
+    return result;
+}
+
+template <int D>
+inline double
+denseMetricClosestPointUpperBound(
+    const Piece<D> &piece,
+    const Eigen::Vector3d &query,
+    const Eigen::Matrix3d &metric,
+    const int sampleCount =
+        4001)
+{
+    if (!query.allFinite() ||
+        !metric.allFinite() ||
+        sampleCount < 2)
+    {
+        return
+            std::numeric_limits<double>::
+                quiet_NaN();
+    }
+
+    const Eigen::Matrix3d symmetricMetric =
+        0.5 *
+        (metric +
+         metric.transpose());
+
+    const double duration =
+        piece.getDuration();
+
+    double minimumDistanceSquared =
+        std::numeric_limits<double>::
+            infinity();
+
+    for (int sampleId = 0;
+         sampleId < sampleCount;
+         ++sampleId)
+    {
+        const double tau =
+            static_cast<double>(
+                sampleId) /
+            static_cast<double>(
+                sampleCount - 1);
+
+        const Eigen::Vector3d delta =
+            query -
+            piece.getPos(
+                tau *
+                duration);
+
+        const double distanceSquared =
+            delta.dot(
+                symmetricMetric *
+                delta);
+
+        minimumDistanceSquared =
+            std::min(
+                minimumDistanceSquared,
+                distanceSquared);
+    }
+
+    return minimumDistanceSquared;
 }
 
 // ================================================================
