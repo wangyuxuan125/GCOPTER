@@ -2464,7 +2464,7 @@ public:
                             << backendControlResult.max_corridor_violation_final
                             
                             << " metric_violation_final="
-                            << backendMetricResult.max_corridor_violation_final);
+                            << backendMetricResult.max_corridor_violation_final
 
                             << " control_traj_pieces="
                             << backendControlResult.trajectory_pieces
@@ -2488,7 +2488,7 @@ public:
                             << backendControlResult.corridor_slack_final
                                                         
                             << " metric_slack_final="
-                            << backendMetricResult.corridor_slack_final
+                            << backendMetricResult.corridor_slack_final);
 
                         const int minimumFaceBudgetToTest =
                             24;

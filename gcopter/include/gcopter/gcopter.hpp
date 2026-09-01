@@ -337,13 +337,18 @@ namespace gcopter
                         const Eigen::Vector3d normal =
                             hPolytopes[corridorId].row(faceId).head<3>().transpose();
                         const double normalNorm = normal.norm();
-                        if (normalNorm <= 1.0e-12)
+                        if (normalNorm < 1e-9)
                         {
                             continue;
                         }
+
+                        const double violation =
+                            normal.dot(position) +
+                            hPolytopes[corridorId](faceId, 3);
+
                         const double normalizedViolation =
                             violation / normalNorm;
-                                            
+
                         diagnostics.maxViolationM =
                             std::max(
                                 diagnostics.maxViolationM,
@@ -353,16 +358,7 @@ namespace gcopter
                             std::min(
                                 diagnostics.minSlackM,
                                 -normalizedViolation);
-                        const double normalizedViolation =
-                            violation / normalNorm;
-
-                        const double normalizedSlack =
-                            -normalizedViolation;
-
-                        diagnostics.minSlackM =
-                            std::min(
-                                diagnostics.minSlackM,
-                                normalizedSlack);
+                                
                         double smoothedPenalty = 0.0;
                         double smoothedPenaltyDerivative = 0.0;
                         if (smoothedL1(violation, smoothEps, smoothedPenalty,
