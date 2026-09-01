@@ -2095,6 +2095,364 @@ public:
                             return summary;
                         };
 
+                        // ============================================================
+                        // Paired GCOPTER backend experiment.
+                        //
+                        // B = 28 is intentionally selected because, in the current
+                        // deterministic case:
+                        //
+                        //   CONTROL total faces = 171
+                        //   CSGN    total faces = 171
+                        //
+                        // Thus this test isolates corridor GEOMETRY from total
+                        // constraint count as much as possible.
+                        //
+                        // Both corridors are generated from the same route and the
+                        // same nominal-trajectory CSGN metrics.
+                        // ============================================================
+                        const int backendAbFaceBudget =
+                            28;
+
+                        std::vector<Eigen::MatrixX4d>
+                            backendControlHPolys;
+
+                        std::vector<
+                            sfc_gen::TrajectoryFavorableFiriInfo>
+                            backendControlInfos;
+
+                        std::vector<Eigen::MatrixX4d>
+                            backendMetricHPolys;
+
+                        std::vector<
+                            sfc_gen::TrajectoryFavorableFiriInfo>
+                            backendMetricInfos;
+
+                        firi::TrajectoryFavorableOptions
+                            backendControlOptions =
+                                controlOptions;
+
+                        backendControlOptions.max_faces =
+                            backendAbFaceBudget;
+
+                        backendControlOptions.metric_weight =
+                            0.0;
+
+                        firi::TrajectoryFavorableOptions
+                            backendMetricOptions =
+                                backendControlOptions;
+
+                        backendMetricOptions.metric_weight =
+                            1.0;
+
+                        const bool backendControlCorridorSuccess =
+                            sfc_gen::trajectoryFavorableConvexCover(
+                                route,
+                                pc,
+                                voxelMap.getOrigin(),
+                                voxelMap.getCorner(),
+                                std::max(
+                                    config.tfFiriProgress,
+                                    config.voxelWidth),
+                                std::max(
+                                    config.tfFiriRange,
+                                    config.voxelWidth),
+                                backendControlOptions,
+                                backendControlHPolys,
+                                backendControlInfos,
+                                &mappedFiriMetrics);
+                                
+                        const bool backendMetricCorridorSuccess =
+                            sfc_gen::trajectoryFavorableConvexCover(
+                                route,
+                                pc,
+                                voxelMap.getOrigin(),
+                                voxelMap.getCorner(),
+                                std::max(
+                                    config.tfFiriProgress,
+                                    config.voxelWidth),
+                                std::max(
+                                    config.tfFiriRange,
+                                    config.voxelWidth),
+                                backendMetricOptions,
+                                backendMetricHPolys,
+                                backendMetricInfos,
+                                &mappedFiriMetrics);
+
+                        struct BackendAbResult
+                        {
+                            bool setup_success =
+                                false;
+                        
+                            bool optimize_success =
+                                false;
+                        
+                            int corridor_count =
+                                0;
+                        
+                            int total_faces =
+                                0;
+                        
+                            int trajectory_pieces =
+                                0;
+                        
+                            int constrained_pieces =
+                                0;
+                        
+                            double setup_ms =
+                                0.0;
+                        
+                            double optimize_ms =
+                                0.0;
+                        
+                            double final_cost =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double trajectory_duration =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double corridor_penalty_initial =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double corridor_penalty_final =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double max_corridor_violation_initial =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double max_corridor_violation_final =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        };
+
+                        auto runBackendAb =
+                            [&](const std::vector<
+                                    Eigen::MatrixX4d> &corridors)
+                                -> BackendAbResult
+                        {
+                            BackendAbResult result;
+                        
+                            result.corridor_count =
+                                static_cast<int>(
+                                    corridors.size());
+                                
+                            for (const auto &poly :
+                                 corridors)
+                            {
+                                result.total_faces +=
+                                    static_cast<int>(
+                                        poly.rows());
+                            }
+                        
+                            if (corridors.empty())
+                            {
+                                return result;
+                            }
+                        
+                            gcopter::GCOPTER_PolytopeSFC
+                                backendOptimizer;
+                        
+                            Trajectory<5>
+                                backendTrajectory;
+                        
+                            const auto setupStarted =
+                                std::chrono::steady_clock::now();
+                        
+                            result.setup_success =
+                                backendOptimizer.setup(
+                                    config.weightT,
+                                    iniState,
+                                    finState,
+                                    corridors,
+                                    INFINITY,
+                                    config.smoothingEps,
+                                    quadratureRes,
+                                    magnitudeBounds,
+                                    penaltyWeights,
+                                    physicalParams);
+                                
+                            result.setup_ms =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::steady_clock::now() -
+                                        setupStarted)
+                                    .count();
+                                    
+                            if (!result.setup_success)
+                            {
+                                return result;
+                            }
+                        
+                            const auto optimizeStarted =
+                                std::chrono::steady_clock::now();
+                        
+                            result.final_cost =
+                                backendOptimizer.optimize(
+                                    backendTrajectory,
+                                    config.relCostTol);
+                                
+                            result.optimize_ms =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::steady_clock::now() -
+                                        optimizeStarted)
+                                    .count();
+                                    
+                            const auto &initialDiagnostics =
+                                backendOptimizer
+                                    .getInitialCorridorDiagnostics();
+                                    
+                            const auto &finalDiagnostics =
+                                backendOptimizer
+                                    .getFinalCorridorDiagnostics();
+                                    
+                            result.constrained_pieces =
+                                initialDiagnostics
+                                    .constrainedPieceCount;
+                                    
+                            result.corridor_penalty_initial =
+                                initialDiagnostics.penaltyCost;
+                                    
+                            result.corridor_penalty_final =
+                                finalDiagnostics.penaltyCost;
+                                    
+                            result.max_corridor_violation_initial =
+                                initialDiagnostics.maxViolationM;
+                                    
+                            result.max_corridor_violation_final =
+                                finalDiagnostics.maxViolationM;
+                                    
+                            if (std::isfinite(
+                                    result.final_cost) &&
+                                backendTrajectory.getPieceNum() > 0)
+                            {
+                                result.optimize_success =
+                                    true;
+                            
+                                result.trajectory_pieces =
+                                    backendTrajectory.getPieceNum();
+                            
+                                result.trajectory_duration =
+                                    backendTrajectory
+                                        .getTotalDuration();
+                            }
+                        
+                            return result;
+                        };
+
+                        BackendAbResult
+                            backendControlResult;
+
+                        BackendAbResult
+                            backendMetricResult;
+
+                        if (backendControlCorridorSuccess)
+                        {
+                            backendControlResult =
+                                runBackendAb(
+                                    backendControlHPolys);
+                        }
+
+                        if (backendMetricCorridorSuccess)
+                        {
+                            backendMetricResult =
+                                runBackendAb(
+                                    backendMetricHPolys);
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_CSGN_BACKEND_AB "
+                            << "budget="
+                            << backendAbFaceBudget
+                        
+                            << " control_corridor_success="
+                            << backendControlCorridorSuccess
+                        
+                            << " metric_corridor_success="
+                            << backendMetricCorridorSuccess
+                        
+                            << " control_setup_success="
+                            << backendControlResult.setup_success
+                        
+                            << " metric_setup_success="
+                            << backendMetricResult.setup_success
+                        
+                            << " control_opt_success="
+                            << backendControlResult.optimize_success
+                        
+                            << " metric_opt_success="
+                            << backendMetricResult.optimize_success
+                        
+                            << " control_corridors="
+                            << backendControlResult.corridor_count
+                        
+                            << " metric_corridors="
+                            << backendMetricResult.corridor_count
+                        
+                            << " control_faces="
+                            << backendControlResult.total_faces
+                        
+                            << " metric_faces="
+                            << backendMetricResult.total_faces
+                        
+                            << " control_cost="
+                            << backendControlResult.final_cost
+                        
+                            << " metric_cost="
+                            << backendMetricResult.final_cost
+                        
+                            << " delta_cost="
+                            << (backendMetricResult.final_cost -
+                                backendControlResult.final_cost)
+                            
+                            << " control_setup_ms="
+                            << backendControlResult.setup_ms
+                            
+                            << " metric_setup_ms="
+                            << backendMetricResult.setup_ms
+                            
+                            << " control_opt_ms="
+                            << backendControlResult.optimize_ms
+                            
+                            << " metric_opt_ms="
+                            << backendMetricResult.optimize_ms
+                            
+                            << " control_duration="
+                            << backendControlResult.trajectory_duration
+                            
+                            << " metric_duration="
+                            << backendMetricResult.trajectory_duration
+                            
+                            << " control_penalty_initial="
+                            << backendControlResult.corridor_penalty_initial
+                            
+                            << " metric_penalty_initial="
+                            << backendMetricResult.corridor_penalty_initial
+                            
+                            << " control_penalty_final="
+                            << backendControlResult.corridor_penalty_final
+                            
+                            << " metric_penalty_final="
+                            << backendMetricResult.corridor_penalty_final
+                            
+                            << " control_violation_initial="
+                            << backendControlResult.max_corridor_violation_initial
+                            
+                            << " metric_violation_initial="
+                            << backendMetricResult.max_corridor_violation_initial
+                            
+                            << " control_violation_final="
+                            << backendControlResult.max_corridor_violation_final
+                            
+                            << " metric_violation_final="
+                            << backendMetricResult.max_corridor_violation_final);
+
                         const int minimumFaceBudgetToTest =
                             24;
 
