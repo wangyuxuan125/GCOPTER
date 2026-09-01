@@ -1895,6 +1895,357 @@ public:
                             << controlFiriMs
                             << " metric_ms="
                             << metricFiriMs);
+
+                        // ============================================================
+                        // Per-polytope face-budget sweep.
+                        //
+                        // Goal:
+                        //   Measure feasibility, final face complexity, CSGN face
+                        //   damage, and FIRI runtime under the same hard face budget.
+                        //
+                        // IMPORTANT:
+                        //   max_faces is a PER-FIRI-REGION cap, not a global corridor
+                        //   face-count cap.
+                        //
+                        // CONTROL and METRIC use identical settings except:
+                        //   CONTROL: metric_weight = 0
+                        //   METRIC : metric_weight = 1
+                        //
+                        // Native MVIE remains unchanged.
+                        // ============================================================
+                        struct FaceBudgetRunSummary
+                        {
+                            bool success =
+                                false;
+
+                            int budget =
+                                0;
+
+                            int corridorCount =
+                                0;
+
+                            int infoCount =
+                                0;
+
+                            int totalFaces =
+                                0;
+
+                            int obstacleFaces =
+                                0;
+
+                            double meanMetricDamage =
+                                std::numeric_limits<double>::quiet_NaN();
+
+                            double elapsedMs =
+                                0.0;
+
+                            // Valid when success == false and failure info exists.
+                            int failureFaceCount =
+                                0;
+
+                            bool failureBudgetSaturated =
+                                false;
+
+                            int unresolvedTotal =
+                                0;
+
+                            int unresolvedBoundary =
+                                0;
+
+                            int unresolvedObstacle =
+                                0;
+
+                            bool exchangeAttempted =
+                                false;
+
+                            bool exchangeAccepted =
+                                false;
+                        };
+
+                        auto runFaceBudgetCase =
+                            [&](const int faceBudget,
+                                const double metricWeight)
+                                -> FaceBudgetRunSummary
+                        {
+                            FaceBudgetRunSummary summary;
+
+                            summary.budget =
+                                faceBudget;
+
+                            // Start from exactly the same validated CONTROL settings.
+                            firi::TrajectoryFavorableOptions
+                                sweepOptions =
+                                    controlOptions;
+
+                            // Activate the hard PER-REGION face budget.
+                            sweepOptions.max_faces =
+                                faceBudget;
+
+                            // This is the only CONTROL/METRIC difference.
+                            sweepOptions.metric_weight =
+                                metricWeight;
+
+                            std::vector<Eigen::MatrixX4d>
+                                sweepHPolys;
+
+                            std::vector<
+                                sfc_gen::TrajectoryFavorableFiriInfo>
+                                sweepInfos;
+
+                            const auto sweepStarted =
+                                std::chrono::steady_clock::now();
+
+                            summary.success =
+                                sfc_gen::trajectoryFavorableConvexCover(
+                                    route,
+                                    pc,
+                                    voxelMap.getOrigin(),
+                                    voxelMap.getCorner(),
+                                    std::max(
+                                        config.tfFiriProgress,
+                                        config.voxelWidth),
+                                    std::max(
+                                        config.tfFiriRange,
+                                        config.voxelWidth),
+                                    sweepOptions,
+                                    sweepHPolys,
+                                    sweepInfos,
+                                    &mappedFiriMetrics);
+
+                            summary.elapsedMs =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::steady_clock::now() -
+                                        sweepStarted)
+                                    .count();
+
+                            summary.corridorCount =
+                                static_cast<int>(
+                                    sweepHPolys.size());
+
+                            summary.infoCount =
+                                static_cast<int>(
+                                    sweepInfos.size());
+
+                            summary.totalFaces =
+                                countSecondPassFaces(
+                                    sweepHPolys);
+
+                            // --------------------------------------------------------
+                            // Successful complete corridor:
+                            // compute face-count-weighted mean CSGN damage.
+                            // --------------------------------------------------------
+                            if (summary.success)
+                            {
+                                double weightedDamageSum =
+                                    0.0;
+
+                                for (const auto &info :
+                                     sweepInfos)
+                                {
+                                    summary.obstacleFaces +=
+                                        info.obstacle_face_count;
+
+                                    weightedDamageSum +=
+                                        static_cast<double>(
+                                            info.obstacle_face_count) *
+                                        info.mean_metric_damage;
+                                }
+
+                                if (summary.obstacleFaces > 0)
+                                {
+                                    summary.meanMetricDamage =
+                                        weightedDamageSum /
+                                        static_cast<double>(
+                                            summary.obstacleFaces);
+                                }
+                            }
+                            // --------------------------------------------------------
+                            // Failed corridor:
+                            // the last info entry carries the failure diagnostics.
+                            // --------------------------------------------------------
+                            else if (!sweepInfos.empty())
+                            {
+                                const auto &failure =
+                                    sweepInfos.back();
+
+                                summary.failureFaceCount =
+                                    failure.face_count;
+
+                                summary.failureBudgetSaturated =
+                                    failure.face_budget_saturated;
+
+                                summary.unresolvedTotal =
+                                    failure.unresolved_constraint_count;
+
+                                summary.unresolvedBoundary =
+                                    failure.unresolved_boundary_count;
+
+                                summary.unresolvedObstacle =
+                                    failure.unresolved_obstacle_count;
+
+                                summary.exchangeAttempted =
+                                    failure.budget_exchange_attempted;
+
+                                summary.exchangeAccepted =
+                                    failure.budget_exchange_accepted;
+                            }
+
+                            return summary;
+                        };
+
+                        const int minimumFaceBudgetToTest =
+                            24;
+
+                        const int maximumFaceBudgetToTest =
+                            40;
+
+                        // We call this "first successful budget" rather than a
+                        // theoretical minimum because the heuristic candidate
+                        // selection itself changes with the available budget.
+                        int controlFirstSuccessfulBudget =
+                            -1;
+
+                        int metricFirstSuccessfulBudget =
+                            -1;
+
+                        for (int faceBudget =
+                                 minimumFaceBudgetToTest;
+                             faceBudget <=
+                                 maximumFaceBudgetToTest;
+                             ++faceBudget)
+                        {
+                            const FaceBudgetRunSummary
+                                controlBudgetRun =
+                                    runFaceBudgetCase(
+                                        faceBudget,
+                                        0.0);
+
+                            const FaceBudgetRunSummary
+                                metricBudgetRun =
+                                    runFaceBudgetCase(
+                                        faceBudget,
+                                        1.0);
+
+                            if (controlBudgetRun.success &&
+                                controlFirstSuccessfulBudget < 0)
+                            {
+                                controlFirstSuccessfulBudget =
+                                    faceBudget;
+                            }
+
+                            if (metricBudgetRun.success &&
+                                metricFirstSuccessfulBudget < 0)
+                            {
+                                metricFirstSuccessfulBudget =
+                                    faceBudget;
+                            }
+
+                            double deltaMeanMetricDamage =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            if (controlBudgetRun.success &&
+                                metricBudgetRun.success &&
+                                std::isfinite(
+                                    controlBudgetRun.meanMetricDamage) &&
+                                std::isfinite(
+                                    metricBudgetRun.meanMetricDamage))
+                            {
+                                deltaMeanMetricDamage =
+                                    metricBudgetRun.meanMetricDamage -
+                                    controlBudgetRun.meanMetricDamage;
+                            }
+
+                            ROS_INFO_STREAM(
+                                "TF_CSGN_FIRI_BUDGET "
+                                << "budget="
+                                << faceBudget
+
+                                << " control_success="
+                                << controlBudgetRun.success
+
+                                << " metric_success="
+                                << metricBudgetRun.success
+
+                                << " control_corridors="
+                                << controlBudgetRun.corridorCount
+
+                                << " metric_corridors="
+                                << metricBudgetRun.corridorCount
+
+                                << " control_faces="
+                                << controlBudgetRun.totalFaces
+
+                                << " metric_faces="
+                                << metricBudgetRun.totalFaces
+
+                                << " control_obs_faces="
+                                << controlBudgetRun.obstacleFaces
+
+                                << " metric_obs_faces="
+                                << metricBudgetRun.obstacleFaces
+
+                                << " control_mean_psi="
+                                << controlBudgetRun.meanMetricDamage
+
+                                << " metric_mean_psi="
+                                << metricBudgetRun.meanMetricDamage
+
+                                << " delta_mean_psi="
+                                << deltaMeanMetricDamage
+
+                                << " control_ms="
+                                << controlBudgetRun.elapsedMs
+
+                                << " metric_ms="
+                                << metricBudgetRun.elapsedMs
+
+                                << " control_fail_face="
+                                << controlBudgetRun.failureFaceCount
+
+                                << " metric_fail_face="
+                                << metricBudgetRun.failureFaceCount
+
+                                << " control_unresolved_obs="
+                                << controlBudgetRun.unresolvedObstacle
+
+                                << " metric_unresolved_obs="
+                                << metricBudgetRun.unresolvedObstacle
+
+                                << " control_budget_saturated="
+                                << controlBudgetRun.failureBudgetSaturated
+
+                                << " metric_budget_saturated="
+                                << metricBudgetRun.failureBudgetSaturated
+
+                                << " control_exchange_attempted="
+                                << controlBudgetRun.exchangeAttempted
+
+                                << " metric_exchange_attempted="
+                                << metricBudgetRun.exchangeAttempted
+
+                                << " control_exchange_accepted="
+                                << controlBudgetRun.exchangeAccepted
+
+                                << " metric_exchange_accepted="
+                                << metricBudgetRun.exchangeAccepted);
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_CSGN_FIRI_BUDGET_THRESHOLD "
+                            << "control_first_success="
+                            << controlFirstSuccessfulBudget
+
+                            << " metric_first_success="
+                            << metricFirstSuccessfulBudget
+
+                            << " tested_min="
+                            << minimumFaceBudgetToTest
+
+                            << " tested_max="
+                            << maximumFaceBudgetToTest);
                     }
 
                     for (size_t pieceId = 0;
