@@ -2227,6 +2227,13 @@ public:
                             double max_corridor_violation_final =
                                 std::numeric_limits<double>::
                                     quiet_NaN();
+                            double corridor_slack_initial =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            double corridor_slack_final =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
                         };
 
                         auto runBackendAb =
@@ -2327,6 +2334,12 @@ public:
                                     
                             result.max_corridor_violation_final =
                                 finalDiagnostics.maxViolationM;
+
+                            result.corridor_slack_initial =
+                                initialDiagnostics.minSlackM;
+
+                            result.corridor_slack_final =
+                                finalDiagnostics.minSlackM;
                                     
                             if (std::isfinite(
                                     result.final_cost) &&
@@ -2452,6 +2465,30 @@ public:
                             
                             << " metric_violation_final="
                             << backendMetricResult.max_corridor_violation_final);
+
+                            << " control_traj_pieces="
+                            << backendControlResult.trajectory_pieces
+                                                        
+                            << " metric_traj_pieces="
+                            << backendMetricResult.trajectory_pieces
+                                                        
+                            << " control_constrained_pieces="
+                            << backendControlResult.constrained_pieces
+                                                        
+                            << " metric_constrained_pieces="
+                            << backendMetricResult.constrained_pieces
+                                                        
+                            << " control_slack_initial="
+                            << backendControlResult.corridor_slack_initial
+                                                        
+                            << " metric_slack_initial="
+                            << backendMetricResult.corridor_slack_initial
+                                                        
+                            << " control_slack_final="
+                            << backendControlResult.corridor_slack_final
+                                                        
+                            << " metric_slack_final="
+                            << backendMetricResult.corridor_slack_final
 
                         const int minimumFaceBudgetToTest =
                             24;

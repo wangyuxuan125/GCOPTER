@@ -54,8 +54,21 @@ namespace gcopter
         struct CorridorDiagnostics
         {
             int constrainedPieceCount = 0;
-            double penaltyCost = 0.0;
-            double maxViolationM = 0.0;
+        
+            double penaltyCost =
+                0.0;
+        
+            double maxViolationM =
+                0.0;
+        
+            // Minimum normalized distance from sampled trajectory
+            // positions to their assigned corridor faces.
+            //
+            // Positive  : inside the corridor.
+            // Zero      : touching a face.
+            // Negative  : outside / violated.
+            double minSlackM =
+                INFINITY;
         };
 
         enum class DeformationMetricObjective
@@ -328,10 +341,28 @@ namespace gcopter
                         {
                             continue;
                         }
-                        const double violation =
-                            normal.dot(position) + hPolytopes[corridorId](faceId, 3);
-                        diagnostics.maxViolationM = std::max(
-                            diagnostics.maxViolationM, violation / normalNorm);
+                        const double normalizedViolation =
+                            violation / normalNorm;
+                                            
+                        diagnostics.maxViolationM =
+                            std::max(
+                                diagnostics.maxViolationM,
+                                normalizedViolation);
+                            
+                        diagnostics.minSlackM =
+                            std::min(
+                                diagnostics.minSlackM,
+                                -normalizedViolation);
+                        const double normalizedViolation =
+                            violation / normalNorm;
+
+                        const double normalizedSlack =
+                            -normalizedViolation;
+
+                        diagnostics.minSlackM =
+                            std::min(
+                                diagnostics.minSlackM,
+                                normalizedSlack);
                         double smoothedPenalty = 0.0;
                         double smoothedPenaltyDerivative = 0.0;
                         if (smoothedL1(violation, smoothEps, smoothedPenalty,
@@ -345,6 +376,12 @@ namespace gcopter
                     diagnostics.penaltyCost +=
                         quadratureWeight * step * samplePenalty;
                 }
+            }
+            if (!std::isfinite(
+                    diagnostics.minSlackM))
+            {
+                diagnostics.minSlackM =
+                    0.0;
             }
             return diagnostics;
         }
