@@ -343,6 +343,9 @@ public:
 
             bool routeMincoGuideValid =
                 false;
+
+            double routeMincoGuideBuildMs =
+                0.0;
             
             Eigen::Matrix3Xd
                 routeMincoGuideInnerPoints;
@@ -491,7 +494,7 @@ public:
                 guideMinco.getEnergy(
                     guideEnergy);
 
-                const double guideBuildMs =
+                routeMincoGuideBuildMs =
                     std::chrono::duration<
                         double,
                         std::milli>(
@@ -854,7 +857,7 @@ public:
                     << guideEnergy
 
                     << " build_ms="
-                    << guideBuildMs
+                    << routeMincoGuideBuildMs
 
                     << " diagnostic_ms="
                     << guideDiagnosticMs
@@ -4924,6 +4927,484 @@ public:
 
                             << " slack_final="
                             << compactBackendResult.corridor_slack_final);
+
+                        // ============================================================
+                        // Direct MINCO guide CSGN
+                        //       ->
+                        // one CSGN metric per ORIGINAL RRT edge
+                        //       ->
+                        // trajectory-relevant compact corridor.
+                        //
+                        // IMPORTANT:
+                        // progress = infinity deliberately disables further route
+                        // subdivision.  Therefore:
+                        //
+                        //     guide MINCO piece i
+                        //       <-> original RRT edge i
+                        //       <-> guideSegmentMetrics[i]
+                        //
+                        // There is NO nearest-anchor / metric mapping in this path.
+                        // ============================================================
+                        const int guideRawSegmentCount =
+                            std::max(
+                                0,
+                                static_cast<int>(
+                                    route.size()) -
+                                    1);
+
+                        sfc_gen::SegmentDeformationMetrics
+                            guideSegmentMetrics;
+
+                        guideSegmentMetrics.resize(
+                            guideRawSegmentCount);
+
+                        const bool guideMetricCardinalityValid =
+                            guideMetricSuccess &&
+                            routeMincoGuideValid &&
+                            routeMincoGuide.getPieceNum() ==
+                                guideRawSegmentCount &&
+                            static_cast<int>(
+                                guideMetrics.size()) ==
+                                guideRawSegmentCount;
+
+                        int guideSegmentMetricValidCount =
+                            0;
+
+                        for (int segmentId = 0;
+                             segmentId <
+                                 guideRawSegmentCount;
+                             ++segmentId)
+                        {
+                            auto &segmentMetric =
+                                guideSegmentMetrics[
+                                    segmentId];
+
+                            segmentMetric.source_piece_id =
+                                segmentId;
+
+                            // Exact one-to-one correspondence.
+                            // There is no spatial nearest-neighbor mapping.
+                            segmentMetric.mapping_distance =
+                                0.0;
+
+                            segmentMetric.utility =
+                                Eigen::Matrix3d::Identity();
+
+                            segmentMetric.valid =
+                                false;
+
+                            if (!guideMetricCardinalityValid)
+                            {
+                                continue;
+                            }
+
+                            const auto &guideMetric =
+                                guideMetrics[
+                                    segmentId];
+
+                            if (!guideMetric.valid ||
+                                !guideMetric.corridorUtility
+                                     .allFinite())
+                            {
+                                continue;
+                            }
+
+                            segmentMetric.utility =
+                                guideMetric
+                                    .corridorUtility;
+
+                            segmentMetric.valid =
+                                true;
+
+                            ++guideSegmentMetricValidCount;
+                        }
+
+                        const bool guideSegmentMetricsReady =
+                            guideMetricCardinalityValid &&
+                            guideSegmentMetricValidCount ==
+                                guideRawSegmentCount;
+
+                        // ============================================================
+                        // Same compact corridor kernel as the previous route-segment
+                        // experiment, but now driven directly by guide CSGN.
+                        //
+                        // No FIRI-derived metric is used here.
+                        // ============================================================
+                        traj_relevant::CompactCorridorOptions
+                            guideCompactOptions;
+
+                        guideCompactOptions.max_extra_radius =
+                            std::max(
+                                config.tfFiriRange,
+                                config.voxelWidth);
+
+                        guideCompactOptions.min_extra_ratio =
+                            0.25;
+
+                        guideCompactOptions.overlap_radius =
+                            0.01;
+
+                        guideCompactOptions.epsilon =
+                            1.0e-6;
+
+                        std::vector<Eigen::MatrixX4d>
+                            guideCompactHPolys;
+
+                        sfc_gen::TrajectoryRelevantCompactInfos
+                            guideCompactInfos;
+
+                        bool guideCompactSuccess =
+                            false;
+
+                        double guideCompactMs =
+                            0.0;
+
+                        if (guideSegmentMetricsReady)
+                        {
+                            const auto guideCompactStarted =
+                                std::chrono::steady_clock::now();
+
+                            guideCompactSuccess =
+                                sfc_gen::
+                                    trajectoryRelevantCompactCover(
+                                        route,
+                                        pc,
+                                        voxelMap.getOrigin(),
+                                        voxelMap.getCorner(),
+
+                                        // Critical:
+                                        // do NOT subdivide an RRT edge again.
+                                        std::numeric_limits<double>::
+                                            infinity(),
+
+                                        guideCompactOptions,
+                                        guideCompactHPolys,
+                                        guideCompactInfos,
+                                        &guideSegmentMetrics);
+
+                            guideCompactMs =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::steady_clock::now() -
+                                        guideCompactStarted)
+                                    .count();
+                        }
+
+                        int guideCompactTotalFaces =
+                            0;
+
+                        int guideCompactDomainFaces =
+                            0;
+
+                        int guideCompactObstacleFaces =
+                            0;
+
+                        int guideCompactCandidates =
+                            0;
+
+                        int guideCompactGreedyFaces =
+                            0;
+
+                        int guideCompactRedundancyRemoved =
+                            0;
+
+                        int guideCompactMetricValidCount =
+                            0;
+
+                        int guideCompactAnisotropicCount =
+                            0;
+
+                        int guideCompactSafetyCount =
+                            0;
+
+                        int guideCompactSeedOverlapCount =
+                            0;
+
+                        double guideCompactWeightedDamageSum =
+                            0.0;
+
+                        for (const auto &info :
+                             guideCompactInfos)
+                        {
+                            guideCompactTotalFaces +=
+                                info.total_face_count;
+
+                            guideCompactDomainFaces +=
+                                info.domain_face_count;
+
+                            guideCompactObstacleFaces +=
+                                info.selected_obstacle_face_count;
+
+                            guideCompactCandidates +=
+                                info.candidate_count;
+
+                            guideCompactGreedyFaces +=
+                                info.greedy_obstacle_face_count;
+
+                            guideCompactRedundancyRemoved +=
+                                info.redundancy_removed;
+
+                            guideCompactMetricValidCount +=
+                                info.metric_valid
+                                    ? 1
+                                    : 0;
+
+                            guideCompactAnisotropicCount +=
+                                info.anisotropic_domain
+                                    ? 1
+                                    : 0;
+
+                            guideCompactSafetyCount +=
+                                info.safety_verified
+                                    ? 1
+                                    : 0;
+
+                            guideCompactSeedOverlapCount +=
+                                info.overlap_guaranteed
+                                    ? 1
+                                    : 0;
+
+                            guideCompactWeightedDamageSum +=
+                                static_cast<double>(
+                                    info.selected_obstacle_face_count) *
+                                info.mean_metric_damage;
+                        }
+
+                        const double guideCompactMeanPsi =
+                            guideCompactObstacleFaces > 0
+                                ? guideCompactWeightedDamageSum /
+                                      static_cast<double>(
+                                          guideCompactObstacleFaces)
+                                : 0.0;
+
+                        // Explicitly verify actual adjacency after cover/shortcut.
+                        int guideAdjacentOverlapValidCount =
+                            0;
+
+                        for (int corridorId = 1;
+                             corridorId <
+                                 static_cast<int>(
+                                     guideCompactHPolys.size());
+                             ++corridorId)
+                        {
+                            if (geo_utils::overlap(
+                                    guideCompactHPolys[
+                                        corridorId - 1],
+                                    guideCompactHPolys[
+                                        corridorId],
+                                    0.01))
+                            {
+                                ++guideAdjacentOverlapValidCount;
+                            }
+                        }
+
+                        const int guideAdjacentOverlapCount =
+                            std::max(
+                                0,
+                                static_cast<int>(
+                                    guideCompactHPolys.size()) -
+                                    1);
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_COMPACT_AB "
+                            << "success="
+                            << guideCompactSuccess
+
+                            << " metric_cardinality_valid="
+                            << guideMetricCardinalityValid
+
+                            << " route_segments="
+                            << guideRawSegmentCount
+
+                            << " guide_pieces="
+                            << routeMincoGuide.getPieceNum()
+
+                            << " guide_metrics="
+                            << guideMetrics.size()
+
+                            << " valid_metrics="
+                            << guideSegmentMetricValidCount
+
+                            << " corridors="
+                            << guideCompactHPolys.size()
+
+                            << " faces="
+                            << guideCompactTotalFaces
+
+                            << " domain_faces="
+                            << guideCompactDomainFaces
+
+                            << " obs_faces="
+                            << guideCompactObstacleFaces
+
+                            << " candidates="
+                            << guideCompactCandidates
+
+                            << " greedy_faces="
+                            << guideCompactGreedyFaces
+
+                            << " redundancy_removed="
+                            << guideCompactRedundancyRemoved
+
+                            << " mean_psi="
+                            << guideCompactMeanPsi
+
+                            << " metric_valid="
+                            << guideCompactMetricValidCount
+                            << "/"
+                            << guideCompactInfos.size()
+
+                            << " anisotropic="
+                            << guideCompactAnisotropicCount
+                            << "/"
+                            << guideCompactInfos.size()
+
+                            << " safety="
+                            << guideCompactSafetyCount
+                            << "/"
+                            << guideCompactInfos.size()
+
+                            << " seed_overlap="
+                            << guideCompactSeedOverlapCount
+                            << "/"
+                            << guideCompactInfos.size()
+
+                            << " adjacent_overlap="
+                            << guideAdjacentOverlapValidCount
+                            << "/"
+                            << guideAdjacentOverlapCount
+
+                            << " generation_ms="
+                            << guideCompactMs);
+
+                        BackendAbResult
+                            guideCompactBackendResult;
+
+                        if (guideCompactSuccess)
+                        {
+                            guideCompactBackendResult =
+                                runBackendAb(
+                                    guideCompactHPolys);
+                        }
+
+                        const double guideProposedComponentMs =
+                            routeMincoGuideBuildMs +
+                            guideMetricMs +
+                            guideCompactMs +
+                            guideCompactBackendResult.setup_ms +
+                            guideCompactBackendResult.optimize_ms;
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_COMPACT_BACKEND "
+                            << "corridor_success="
+                            << guideCompactSuccess
+
+                            << " setup_success="
+                            << guideCompactBackendResult
+                                   .setup_success
+
+                            << " opt_success="
+                            << guideCompactBackendResult
+                                   .optimize_success
+
+                            << " corridors="
+                            << guideCompactBackendResult
+                                   .corridor_count
+
+                            << " faces="
+                            << guideCompactBackendResult
+                                   .total_faces
+
+                            << " traj_pieces="
+                            << guideCompactBackendResult
+                                   .trajectory_pieces
+
+                            << " constrained_pieces="
+                            << guideCompactBackendResult
+                                   .constrained_pieces
+
+                            << " final_cost="
+                            << guideCompactBackendResult
+                                   .final_cost
+
+                            << " duration="
+                            << guideCompactBackendResult
+                                   .trajectory_duration
+
+                            << " setup_ms="
+                            << guideCompactBackendResult
+                                   .setup_ms
+
+                            << " opt_ms="
+                            << guideCompactBackendResult
+                                   .optimize_ms
+
+                            << " penalty_initial="
+                            << guideCompactBackendResult
+                                   .corridor_penalty_initial
+
+                            << " penalty_final="
+                            << guideCompactBackendResult
+                                   .corridor_penalty_final
+
+                            << " violation_initial="
+                            << guideCompactBackendResult
+                                   .max_corridor_violation_initial
+
+                            << " violation_final="
+                            << guideCompactBackendResult
+                                   .max_corridor_violation_final
+
+                            << " slack_initial="
+                            << guideCompactBackendResult
+                                   .corridor_slack_initial
+
+                            << " slack_final="
+                            << guideCompactBackendResult
+                                   .corridor_slack_final
+
+                            << " baseline_firi_faces="
+                            << record.total_faces
+
+                            << " baseline_firi_cost="
+                            << record.final_cost
+
+                            << " baseline_firi_setup_ms="
+                            << record.optimizer_setup_ms
+
+                            << " baseline_firi_opt_ms="
+                            << record.optimizer_ms);
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_PROPOSED_TIMING "
+                            << "path_ms="
+                            << record.path_search_ms
+
+                            << " guide_build_ms="
+                            << routeMincoGuideBuildMs
+
+                            << " csgn_ms="
+                            << guideMetricMs
+
+                            << " corridor_ms="
+                            << guideCompactMs
+
+                            << " setup_ms="
+                            << guideCompactBackendResult
+                                   .setup_ms
+
+                            << " opt_ms="
+                            << guideCompactBackendResult
+                                   .optimize_ms
+
+                            << " proposed_after_route_component_ms="
+                            << guideProposedComponentMs
+
+                            << " baseline_after_route_ms="
+                            << (record.corridor_generation_ms +
+                                record.optimizer_setup_ms +
+                                record.optimizer_ms));
 
                         const int minimumFaceBudgetToTest =
                             24;
