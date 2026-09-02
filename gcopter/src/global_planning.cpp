@@ -1,5 +1,6 @@
 #include "misc/visualizer.hpp"
 #include "gcopter/trajectory.hpp"
+#include "gcopter/minco.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
@@ -316,6 +317,568 @@ public:
             {
                 finishRecord("path_search_failure", false);
                 return;
+            }
+
+            // ============================================================
+            // RRT -> direct MINCO guide experiment.
+            //
+            // IMPORTANT:
+            // This is currently diagnostic only.  The existing baseline
+            // FIRI + GCOPTER pipeline below is NOT changed.
+            //
+            // Goal:
+            //
+            //   collision-free RRT polyline
+            //           ->
+            //   direct quintic MINCO interpolation
+            //
+            // without constructing a safe flight corridor first.
+            //
+            // If this guide is cheap and geometrically reasonable, it can
+            // later replace the expensive FIRI-derived nominal trajectory
+            // used only for trajectory sensitivity estimation.
+            // ============================================================
+            Trajectory<5> routeMincoGuide;
+
+            bool routeMincoGuideValid =
+                false;
+
+            if (config.experimentTag ==
+                "debug_metric")
+            {
+                const int guidePieceCount =
+                    static_cast<int>(
+                        route.size()) -
+                    1;
+
+                // --------------------------------------------------------
+                // Initial MINCO time allocation.
+                //
+                // This is NOT optimized.  Time is proportional to RRT
+                // segment length using a conservative reference speed.
+                //
+                // Uniform time scaling primarily controls the dynamic
+                // scale; this experiment is intended to evaluate the raw
+                // trajectory geometry first.
+                // --------------------------------------------------------
+                const double guideReferenceSpeed =
+                    std::max(
+                        0.5 *
+                            config.maxVelMag,
+                        1.0e-3);
+
+                Eigen::Matrix3Xd guideInnerPoints(
+                    3,
+                    std::max(
+                        guidePieceCount - 1,
+                        0));
+
+                for (int pointId = 1;
+                     pointId <
+                         static_cast<int>(
+                             route.size()) -
+                             1;
+                     ++pointId)
+                {
+                    guideInnerPoints.col(
+                        pointId - 1) =
+                        route[
+                            pointId];
+                }
+
+                Eigen::VectorXd guideTimes(
+                    guidePieceCount);
+
+                double routeLength =
+                    0.0;
+
+                double minGuideTime =
+                    std::numeric_limits<double>::
+                        infinity();
+
+                double maxGuideTime =
+                    0.0;
+
+                for (int pieceId = 0;
+                     pieceId <
+                         guidePieceCount;
+                     ++pieceId)
+                {
+                    const double segmentLength =
+                        (route[
+                             pieceId + 1] -
+                         route[
+                             pieceId])
+                            .norm();
+
+                    routeLength +=
+                        segmentLength;
+
+                    // 1e-3 is only a numerical floor, not a tuned
+                    // trajectory-planning parameter.
+                    guideTimes(
+                        pieceId) =
+                        std::max(
+                            segmentLength /
+                                guideReferenceSpeed,
+                            1.0e-3);
+
+                    minGuideTime =
+                        std::min(
+                            minGuideTime,
+                            guideTimes(
+                                pieceId));
+
+                    maxGuideTime =
+                        std::max(
+                            maxGuideTime,
+                            guideTimes(
+                                pieceId));
+                }
+
+                Eigen::Matrix3d guideHeadPVA =
+                    Eigen::Matrix3d::Zero();
+
+                Eigen::Matrix3d guideTailPVA =
+                    Eigen::Matrix3d::Zero();
+
+                guideHeadPVA.col(0) =
+                    route.front();
+
+                guideTailPVA.col(0) =
+                    route.back();
+
+                // --------------------------------------------------------
+                // Measure ONLY the direct MINCO construction here.
+                // Collision/dynamics diagnostics are timed separately.
+                // --------------------------------------------------------
+                const auto guideBuildStarted =
+                    std::chrono::steady_clock::now();
+
+                minco::MINCO_S3NU guideMinco;
+
+                guideMinco.setConditions(
+                    guideHeadPVA,
+                    guideTailPVA,
+                    guidePieceCount);
+
+                guideMinco.setParameters(
+                    guideInnerPoints,
+                    guideTimes);
+
+                guideMinco.getTrajectory(
+                    routeMincoGuide);
+
+                double guideEnergy =
+                    std::numeric_limits<double>::
+                        infinity();
+
+                guideMinco.getEnergy(
+                    guideEnergy);
+
+                const double guideBuildMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::steady_clock::now() -
+                            guideBuildStarted)
+                        .count();
+
+                routeMincoGuideValid =
+                    routeMincoGuide.getPieceNum() ==
+                        guidePieceCount &&
+                    guidePieceCount > 0;
+
+                if (routeMincoGuideValid)
+                {
+                    for (int pieceId = 0;
+                         pieceId <
+                             routeMincoGuide
+                                 .getPieceNum();
+                         ++pieceId)
+                    {
+                        const auto &piece =
+                            routeMincoGuide[
+                                pieceId];
+
+                        if (!std::isfinite(
+                                piece.getDuration()) ||
+                            piece.getDuration() <=
+                                0.0 ||
+                            !piece.getCoeffMat()
+                                 .allFinite())
+                        {
+                            routeMincoGuideValid =
+                                false;
+
+                            break;
+                        }
+                    }
+                }
+
+                // ========================================================
+                // Guide diagnostics.
+                //
+                // These diagnostics are NOT counted in guideBuildMs.
+                //
+                // Exact:
+                //   maximum velocity norm
+                //   maximum acceleration norm
+                //
+                // Sampled:
+                //   voxel collision
+                //   body rate / tilt / thrust
+                //
+                // Sample spacing is chosen from the exact piece maximum
+                // velocity so that fast polynomial excursions receive more
+                // samples.  This collision test is diagnostic, NOT a
+                // continuous-time collision certificate.
+                // ========================================================
+                const auto guideDiagnosticStarted =
+                    std::chrono::steady_clock::now();
+
+                int guideTotalSamples =
+                    0;
+
+                int guideCollisionSamples =
+                    0;
+
+                int guideCollisionPieces =
+                    0;
+
+                int guideSamplingCapHits =
+                    0;
+
+                double guideMaxVel =
+                    0.0;
+
+                double guideMaxAcc =
+                    0.0;
+
+                double guideMaxBodyRate =
+                    0.0;
+
+                double guideMaxTilt =
+                    0.0;
+
+                double guideMinThrust =
+                    std::numeric_limits<double>::
+                        infinity();
+
+                double guideMaxThrust =
+                    -std::numeric_limits<double>::
+                        infinity();
+
+                bool guideFlatnessValid =
+                    true;
+
+                flatness::FlatnessMap
+                    guideFlatness;
+
+                guideFlatness.reset(
+                    config.vehicleMass,
+                    config.gravAcc,
+                    config.horizDrag,
+                    config.vertDrag,
+                    config.parasDrag,
+                    config.speedEps);
+
+                if (routeMincoGuideValid)
+                {
+                    const double spatialSampleStep =
+                        std::max(
+                            0.25 *
+                                config.voxelWidth,
+                            1.0e-3);
+
+                    constexpr int
+                        maxSamplesPerPiece =
+                            4096;
+
+                    for (int pieceId = 0;
+                         pieceId <
+                             routeMincoGuide
+                                 .getPieceNum();
+                         ++pieceId)
+                    {
+                        const auto &piece =
+                            routeMincoGuide[
+                                pieceId];
+
+                        const double duration =
+                            piece.getDuration();
+
+                        const double pieceMaxVel =
+                            piece.getMaxVelRate();
+
+                        const double pieceMaxAcc =
+                            piece.getMaxAccRate();
+
+                        if (!std::isfinite(
+                                pieceMaxVel) ||
+                            !std::isfinite(
+                                pieceMaxAcc))
+                        {
+                            routeMincoGuideValid =
+                                false;
+
+                            break;
+                        }
+
+                        guideMaxVel =
+                            std::max(
+                                guideMaxVel,
+                                pieceMaxVel);
+
+                        guideMaxAcc =
+                            std::max(
+                                guideMaxAcc,
+                                pieceMaxAcc);
+
+                        int sampleCount =
+                            std::max(
+                                8,
+                                static_cast<int>(
+                                    std::ceil(
+                                        duration *
+                                        std::max(
+                                            pieceMaxVel,
+                                            1.0e-3) /
+                                        spatialSampleStep)));
+
+                        if (sampleCount >
+                            maxSamplesPerPiece)
+                        {
+                            sampleCount =
+                                maxSamplesPerPiece;
+
+                            ++guideSamplingCapHits;
+                        }
+
+                        bool pieceColliding =
+                            false;
+
+                        for (int sampleId = 0;
+                             sampleId <=
+                                 sampleCount;
+                             ++sampleId)
+                        {
+                            const double alpha =
+                                static_cast<double>(
+                                    sampleId) /
+                                static_cast<double>(
+                                    sampleCount);
+
+                            const double localTime =
+                                alpha *
+                                duration;
+
+                            const Eigen::Vector3d pos =
+                                piece.getPos(
+                                    localTime);
+
+                            const Eigen::Vector3d vel =
+                                piece.getVel(
+                                    localTime);
+
+                            const Eigen::Vector3d acc =
+                                piece.getAcc(
+                                    localTime);
+
+                            const Eigen::Vector3d jer =
+                                piece.getJer(
+                                    localTime);
+
+                            ++guideTotalSamples;
+
+                            if (voxelMap.query(
+                                    pos) !=
+                                0)
+                            {
+                                ++guideCollisionSamples;
+
+                                pieceColliding =
+                                    true;
+                            }
+
+                            double thrust =
+                                0.0;
+
+                            Eigen::Vector4d quat =
+                                Eigen::Vector4d::Zero();
+
+                            Eigen::Vector3d bodyRate =
+                                Eigen::Vector3d::Zero();
+
+                            guideFlatness.forward(
+                                vel,
+                                acc,
+                                jer,
+                                0.0,
+                                0.0,
+                                thrust,
+                                quat,
+                                bodyRate);
+
+                            if (!std::isfinite(
+                                    thrust) ||
+                                !quat.allFinite() ||
+                                !bodyRate.allFinite())
+                            {
+                                guideFlatnessValid =
+                                    false;
+
+                                continue;
+                            }
+
+                            guideMaxBodyRate =
+                                std::max(
+                                    guideMaxBodyRate,
+                                    bodyRate.norm());
+
+                            const double tiltSinHalf =
+                                std::min(
+                                    1.0,
+                                    std::sqrt(
+                                        std::max(
+                                            0.0,
+                                            quat(1) *
+                                                quat(1) +
+                                            quat(2) *
+                                                quat(2))));
+
+                            const double tilt =
+                                2.0 *
+                                std::asin(
+                                    tiltSinHalf);
+
+                            guideMaxTilt =
+                                std::max(
+                                    guideMaxTilt,
+                                    tilt);
+
+                            guideMinThrust =
+                                std::min(
+                                    guideMinThrust,
+                                    thrust);
+
+                            guideMaxThrust =
+                                std::max(
+                                    guideMaxThrust,
+                                    thrust);
+                        }
+
+                        if (pieceColliding)
+                        {
+                            ++guideCollisionPieces;
+                        }
+                    }
+                }
+
+                const double guideDiagnosticMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::steady_clock::now() -
+                            guideDiagnosticStarted)
+                        .count();
+
+                if (!std::isfinite(
+                        guideMinThrust))
+                {
+                    guideMinThrust =
+                        0.0;
+                }
+
+                if (!std::isfinite(
+                        guideMaxThrust))
+                {
+                    guideMaxThrust =
+                        0.0;
+                }
+
+                const double guideCollisionRatio =
+                    guideTotalSamples > 0
+                        ? static_cast<double>(
+                              guideCollisionSamples) /
+                              static_cast<double>(
+                                  guideTotalSamples)
+                        : 0.0;
+
+                ROS_INFO_STREAM(
+                    "TF_ROUTE_MINCO_GUIDE "
+                    << "success="
+                    << routeMincoGuideValid
+
+                    << " route_points="
+                    << route.size()
+
+                    << " pieces="
+                    << routeMincoGuide
+                           .getPieceNum()
+
+                    << " route_length="
+                    << routeLength
+
+                    << " ref_speed="
+                    << guideReferenceSpeed
+
+                    << " duration="
+                    << (routeMincoGuideValid
+                            ? routeMincoGuide
+                                  .getTotalDuration()
+                            : 0.0)
+
+                    << " min_piece_time="
+                    << minGuideTime
+
+                    << " max_piece_time="
+                    << maxGuideTime
+
+                    << " energy="
+                    << guideEnergy
+
+                    << " build_ms="
+                    << guideBuildMs
+
+                    << " diagnostic_ms="
+                    << guideDiagnosticMs
+
+                    << " max_vel="
+                    << guideMaxVel
+
+                    << " max_acc="
+                    << guideMaxAcc
+
+                    << " max_body_rate="
+                    << guideMaxBodyRate
+
+                    << " max_tilt="
+                    << guideMaxTilt
+
+                    << " min_thrust="
+                    << guideMinThrust
+
+                    << " max_thrust="
+                    << guideMaxThrust
+
+                    << " flatness_valid="
+                    << guideFlatnessValid
+
+                    << " total_samples="
+                    << guideTotalSamples
+
+                    << " collision_samples="
+                    << guideCollisionSamples
+
+                    << " collision_ratio="
+                    << guideCollisionRatio
+
+                    << " collision_pieces="
+                    << guideCollisionPieces
+
+                    << " sample_cap_hits="
+                    << guideSamplingCapHits);
             }
 
             std::vector<Eigen::MatrixX4d> hPolys;
