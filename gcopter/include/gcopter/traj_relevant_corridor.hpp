@@ -85,6 +85,9 @@ struct CompactCorridorDiagnostics
     std::int64_t obstacle_face_tests =
         0;
 
+    std::int64_t witness_distance_tests =
+        0;
+
     int greedy_obstacle_face_count =
         0;
 
@@ -1057,6 +1060,9 @@ inline bool buildCompactSegmentPolytope(
                     residual.dot(
                         inverseUtility *
                         residual);
+
+                ++localDiagnostics
+                      .witness_distance_tests;
 
                 if (!std::isfinite(
                         metricDistanceSquared))

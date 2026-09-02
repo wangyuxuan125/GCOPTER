@@ -5162,6 +5162,9 @@ public:
                         int guideCompactRedundancyRemoved =
                             0;
 
+                        std::int64_t guideCompactFaceTests =
+                            0;
+
                         int guideCompactMetricValidCount =
                             0;
 
@@ -5197,6 +5200,9 @@ public:
 
                             guideCompactRedundancyRemoved +=
                                 info.redundancy_removed;
+
+                            guideCompactFaceTests +=
+                                info.obstacle_face_tests;
 
                             guideCompactMetricValidCount +=
                                 info.metric_valid
@@ -5262,6 +5268,9 @@ public:
                         int activeGuideTotalFaces =
                             0;
 
+                        int activeGuideDomainFaces =
+                            0;
+
                         int activeGuideObstacleFaces =
                             0;
 
@@ -5269,6 +5278,12 @@ public:
                             0;
 
                         int activeGuideRounds =
+                            0;
+
+                        int activeGuideRedundancyRemoved =
+                            0;
+
+                        std::int64_t activeGuideWitnessTests =
                             0;
 
                         std::int64_t activeGuideFaceTests =
@@ -5283,6 +5298,9 @@ public:
                             activeGuideTotalFaces +=
                                 info.total_face_count;
 
+                            activeGuideDomainFaces +=
+                                info.domain_face_count;
+
                             activeGuideObstacleFaces +=
                                 info.selected_obstacle_face_count;
 
@@ -5291,6 +5309,12 @@ public:
 
                             activeGuideRounds +=
                                 info.active_witness_rounds;
+
+                            activeGuideRedundancyRemoved +=
+                                info.redundancy_removed;
+
+                            activeGuideWitnessTests +=
+                                info.witness_distance_tests;
 
                             activeGuideFaceTests +=
                                 info.obstacle_face_tests;
@@ -5426,8 +5450,26 @@ public:
                             << " active_candidates="
                             << activeGuideCandidates
 
+                            << " batch_domain_faces="
+                            << guideCompactDomainFaces
+
+                            << " active_domain_faces="
+                            << activeGuideDomainFaces
+
+                            << " batch_redundancy_removed="
+                            << guideCompactRedundancyRemoved
+
+                            << " active_redundancy_removed="
+                            << activeGuideRedundancyRemoved
+
                             << " active_rounds="
                             << activeGuideRounds
+
+                            << " batch_face_tests="
+                            << guideCompactFaceTests
+
+                            << " active_witness_tests="
+                            << activeGuideWitnessTests
 
                             << " active_face_tests="
                             << activeGuideFaceTests
@@ -5474,6 +5516,13 @@ public:
                             guideCompactMs +
                             guideCompactBackendResult.setup_ms +
                             guideCompactBackendResult.optimize_ms;
+
+                        const double activeGuideProposedComponentMs =
+                            routeMincoGuideBuildMs +
+                            guideMetricMs +
+                            activeGuideMs +
+                            activeGuideBackendResult.setup_ms +
+                            activeGuideBackendResult.optimize_ms;
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_COMPACT_BACKEND "
@@ -5673,6 +5722,39 @@ public:
                             << (record.corridor_generation_ms +
                                 record.optimizer_setup_ms +
                                 record.optimizer_ms));
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_ACTIVE_TIMING "
+                            << "path_ms="
+                            << record.path_search_ms
+
+                            << " guide_build_ms="
+                            << routeMincoGuideBuildMs
+
+                            << " csgn_ms="
+                            << guideMetricMs
+
+                            << " corridor_ms="
+                            << activeGuideMs
+
+                            << " setup_ms="
+                            << activeGuideBackendResult
+                                   .setup_ms
+
+                            << " opt_ms="
+                            << activeGuideBackendResult
+                                   .optimize_ms
+
+                            << " proposed_after_route_component_ms="
+                            << activeGuideProposedComponentMs
+
+                            << " baseline_after_route_ms="
+                            << (record.corridor_generation_ms +
+                                record.optimizer_setup_ms +
+                                record.optimizer_ms)
+
+                            << " batch_after_route_component_ms="
+                            << guideProposedComponentMs);
 
                         const int minimumFaceBudgetToTest =
                             24;
