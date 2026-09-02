@@ -3643,7 +3643,59 @@ public:
 
                                         << " unresolved="
                                         << pieceInfo
-                                               .unresolved_obstacle_count);
+                                               .unresolved_obstacle_count
+
+                                        << " projection_valid="
+                                        << pieceInfo
+                                               .unresolved_projection_valid_count
+
+                                        << " projection_separable="
+                                        << pieceInfo
+                                               .unresolved_certified_separable_count
+
+                                        << " projection_ambiguous="
+                                        << pieceInfo
+                                               .unresolved_projection_ambiguous_count
+
+                                        << " first_unresolved="
+                                        << pieceInfo
+                                               .first_unresolved_obstacle
+
+                                        << " first_projection_valid="
+                                        << pieceInfo
+                                               .first_unresolved_projection_valid
+
+                                        << " first_projection_converged="
+                                        << pieceInfo
+                                               .first_unresolved_projection_converged
+
+                                        << " first_certified_separable="
+                                        << pieceInfo
+                                               .first_unresolved_certified_separable
+
+                                        << " first_metric_d2="
+                                        << pieceInfo
+                                               .first_unresolved_metric_distance_squared
+
+                                        << " first_metric_d2_lb="
+                                        << pieceInfo
+                                               .first_unresolved_metric_distance_lower_bound_squared
+
+                                        << " first_euclidean_d="
+                                        << pieceInfo
+                                               .first_unresolved_euclidean_distance
+
+                                        << " first_sep_margin_m="
+                                        << pieceInfo
+                                               .first_unresolved_separation_margin_m
+
+                                        << " first_fw_gap="
+                                        << pieceInfo
+                                               .first_unresolved_fw_gap
+
+                                        << " first_fw_iters="
+                                        << pieceInfo
+                                               .first_unresolved_fw_iterations);
 
                                     break;
                                 }

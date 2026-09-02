@@ -872,6 +872,458 @@ exactMincoMetricClosestPoint(
     return result;
 }
 
+struct ProtectedSetProjectionResult
+{
+    bool valid =
+        false;
+
+    bool converged =
+        false;
+
+    bool certified_separable =
+        false;
+
+    Eigen::Vector3d point =
+        Eigen::Vector3d::Zero();
+
+    Eigen::Vector3d separating_normal =
+        Eigen::Vector3d::Zero();
+
+    double metric_distance_squared =
+        std::numeric_limits<double>::infinity();
+
+    // Frank-Wolfe lower bound on the true squared metric distance.
+    double metric_distance_squared_lower_bound =
+        0.0;
+
+    double euclidean_distance =
+        std::numeric_limits<double>::infinity();
+
+    // Exact support-certified Euclidean separation margin.
+    //
+    // > 0 means a valid separating halfspace definitely exists.
+    double certified_separation_margin_m =
+        -std::numeric_limits<double>::infinity();
+
+    double frank_wolfe_gap =
+        std::numeric_limits<double>::infinity();
+
+    int iterations =
+        0;
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+// ================================================================
+// Project query point o onto the convex protected MINCO set
+//
+//   K = conv(
+//         Gamma
+//         union B(p(0), r)
+//         union B(p(T), r))
+//
+// in metric W:
+//
+//   min_{q in K}
+//       1/2 (q-o)^T W (q-o).
+//
+// Frank-Wolfe linear minimization uses the exact support mapping:
+//
+//   s_k
+//     = argmin_{x in K} grad^T x
+//     = supportPoint_K(-grad).
+//
+// After projection, candidate normal
+//
+//   n = W(o-q)
+//
+// is checked AGAIN using exact support. Therefore
+// certified_separable=true is a genuine separation certificate,
+// independent of Frank-Wolfe approximation error.
+// ================================================================
+template <int D>
+inline ProtectedSetProjectionResult
+projectOntoProtectedMincoSet(
+    const Piece<D> &piece,
+    const Eigen::Vector3d &query,
+    const Eigen::Matrix3d &metric,
+    const double endpointRadius,
+    const int maxIterations =
+        128,
+    const double gapTolerance =
+        1.0e-10,
+    const double distanceTolerance =
+        1.0e-10,
+    const double separationToleranceM =
+        1.0e-6,
+    const double rootTolerance =
+        1.0e-10,
+    const double coefficientTolerance =
+        1.0e-12)
+{
+    ProtectedSetProjectionResult result;
+
+    if (!query.allFinite() ||
+        !metric.allFinite() ||
+        maxIterations <= 0)
+    {
+        return result;
+    }
+
+    const Eigen::Matrix3d symmetricMetric =
+        0.5 *
+        (metric +
+         metric.transpose());
+
+    Eigen::SelfAdjointEigenSolver<
+        Eigen::Matrix3d>
+        metricSolver(
+            symmetricMetric);
+
+    if (metricSolver.info() !=
+            Eigen::Success ||
+        metricSolver.eigenvalues()
+                .minCoeff() <=
+            coefficientTolerance)
+    {
+        return result;
+    }
+
+    // A point on Gamma is already a valid point in K.
+    // The exact curve projection is therefore a useful warm start.
+    const auto curveClosest =
+        exactMincoMetricClosestPoint(
+            piece,
+            query,
+            symmetricMetric,
+            rootTolerance,
+            coefficientTolerance);
+
+    if (!curveClosest.valid)
+    {
+        return result;
+    }
+
+    Eigen::Vector3d q =
+        curveClosest.point;
+
+    double finalGap =
+        std::numeric_limits<double>::
+            infinity();
+
+    for (int iteration = 0;
+         iteration < maxIterations;
+         ++iteration)
+    {
+        const Eigen::Vector3d delta =
+            q -
+            query;
+
+        const Eigen::Vector3d gradient =
+            symmetricMetric *
+            delta;
+
+        const double metricDistanceSquared =
+            delta.dot(
+                gradient);
+
+        if (!std::isfinite(
+                metricDistanceSquared))
+        {
+            return result;
+        }
+
+        if (metricDistanceSquared <=
+            distanceTolerance *
+            distanceTolerance)
+        {
+            finalGap =
+                0.0;
+
+            result.converged =
+                true;
+
+            result.iterations =
+                iteration;
+
+            break;
+        }
+
+        // Linear minimization oracle:
+        //
+        // min grad^T x
+        // =
+        // max (-grad)^T x.
+        const auto linearOracle =
+            protectedMincoPieceDirectionalSupport(
+                piece,
+                -gradient,
+                endpointRadius,
+                rootTolerance,
+                coefficientTolerance);
+
+        if (!linearOracle.valid ||
+            !linearOracle.point.allFinite())
+        {
+            return result;
+        }
+
+        const Eigen::Vector3d direction =
+            linearOracle.point -
+            q;
+
+        double gap =
+            gradient.dot(
+                q -
+                linearOracle.point);
+
+        // The exact FW gap should be nonnegative.
+        if (gap < 0.0 &&
+            gap >
+                -1.0e-12)
+        {
+            gap =
+                0.0;
+        }
+
+        if (!std::isfinite(gap) ||
+            gap < 0.0)
+        {
+            return result;
+        }
+
+        finalGap =
+            gap;
+
+        result.iterations =
+            iteration + 1;
+
+        const double gapScale =
+            std::max(
+                1.0,
+                metricDistanceSquared);
+
+        if (gap <=
+            gapTolerance *
+                gapScale)
+        {
+            result.converged =
+                true;
+
+            break;
+        }
+
+        const double denominator =
+            direction.dot(
+                symmetricMetric *
+                direction);
+
+        if (!std::isfinite(
+                denominator) ||
+            denominator <=
+                coefficientTolerance)
+        {
+            // If the linear oracle cannot provide a meaningful
+            // direction, accept only if the gap is already tiny.
+            if (gap <=
+                gapTolerance *
+                    gapScale)
+            {
+                result.converged =
+                    true;
+
+                break;
+            }
+
+            return result;
+        }
+
+        // Exact line search for the quadratic objective.
+        double alpha =
+            gap /
+            denominator;
+
+        alpha =
+            std::max(
+                0.0,
+                std::min(
+                    1.0,
+                    alpha));
+
+        q +=
+            alpha *
+            direction;
+    }
+
+    // Recompute the final Frank-Wolfe gap.
+    const Eigen::Vector3d finalDelta =
+        q -
+        query;
+
+    const Eigen::Vector3d finalGradient =
+        symmetricMetric *
+        finalDelta;
+
+    const double metricDistanceSquared =
+        finalDelta.dot(
+            finalGradient);
+
+    if (!std::isfinite(
+            metricDistanceSquared))
+    {
+        return result;
+    }
+
+    const auto finalLinearOracle =
+        protectedMincoPieceDirectionalSupport(
+            piece,
+            -finalGradient,
+            endpointRadius,
+            rootTolerance,
+            coefficientTolerance);
+
+    if (finalLinearOracle.valid &&
+        finalLinearOracle.point.allFinite())
+    {
+        finalGap =
+            finalGradient.dot(
+                q -
+                finalLinearOracle.point);
+
+        if (finalGap < 0.0 &&
+            finalGap >
+                -1.0e-12)
+        {
+            finalGap =
+                0.0;
+        }
+    }
+
+    if (!std::isfinite(finalGap) ||
+        finalGap < 0.0)
+    {
+        return result;
+    }
+
+    result.point =
+        q;
+
+    result.metric_distance_squared =
+        std::max(
+            0.0,
+            metricDistanceSquared);
+
+    result.euclidean_distance =
+        finalDelta.norm();
+
+    result.frank_wolfe_gap =
+        finalGap;
+
+    // For f(q) = 1/2 d^2, the FW gap gives
+    //
+    //   f(q) - f* <= gap
+    //
+    // hence
+    //
+    //   d*^2 >= d(q)^2 - 2 gap.
+    result.metric_distance_squared_lower_bound =
+        std::max(
+            0.0,
+            result.metric_distance_squared -
+                2.0 *
+                    finalGap);
+
+    const double finalGapScale =
+        std::max(
+            1.0,
+            result.metric_distance_squared);
+
+    if (finalGap <=
+        gapTolerance *
+            finalGapScale)
+    {
+        result.converged =
+            true;
+    }
+
+    // ------------------------------------------------------------
+    // Exact separation certificate.
+    //
+    // For the exact metric projection:
+    //
+    //   n = W(o-q*)
+    //
+    // satisfies
+    //
+    //   n^T x <= n^T q*,  for all x in K.
+    //
+    // Even with an approximate q, we do NOT assume this relation.
+    // Instead, exact support is queried again.
+    // ------------------------------------------------------------
+    const Eigen::Vector3d normal =
+        symmetricMetric *
+        (query -
+         q);
+
+    const double normalNorm =
+        normal.norm();
+
+    if (normalNorm >
+            coefficientTolerance &&
+        normal.allFinite())
+    {
+        const auto protectedSupport =
+            protectedMincoPieceDirectionalSupport(
+                piece,
+                normal,
+                endpointRadius,
+                rootTolerance,
+                coefficientTolerance);
+
+        if (!protectedSupport.valid)
+        {
+            return result;
+        }
+
+        const double rawSeparation =
+            normal.dot(
+                query) -
+            protectedSupport.support;
+
+        result.separating_normal =
+            normal /
+            normalNorm;
+
+        result.certified_separation_margin_m =
+            rawSeparation /
+            normalNorm;
+
+        result.certified_separable =
+            result.certified_separation_margin_m >
+            separationToleranceM;
+    }
+    else
+    {
+        // Query is numerically on/in K.
+        result.certified_separation_margin_m =
+            0.0;
+
+        result.certified_separable =
+            false;
+    }
+
+    result.valid =
+        result.point.allFinite() &&
+        std::isfinite(
+            result.metric_distance_squared) &&
+        std::isfinite(
+            result.frank_wolfe_gap) &&
+        std::isfinite(
+            result.certified_separation_margin_m);
+
+    return result;
+}
+
 template <int D>
 inline double
 denseMetricClosestPointUpperBound(

@@ -77,6 +77,45 @@ struct MincoPieceCorridorDiagnostics
     int unresolved_obstacle_count =
         0;
 
+    int unresolved_projection_valid_count =
+        0;
+
+    int unresolved_certified_separable_count =
+        0;
+
+    int unresolved_projection_ambiguous_count =
+        0;
+
+    int first_unresolved_obstacle =
+        -1;
+
+    bool first_unresolved_projection_valid =
+        false;
+
+    bool first_unresolved_projection_converged =
+        false;
+
+    bool first_unresolved_certified_separable =
+        false;
+
+    double first_unresolved_metric_distance_squared =
+        std::numeric_limits<double>::infinity();
+
+    double first_unresolved_metric_distance_lower_bound_squared =
+        0.0;
+
+    double first_unresolved_euclidean_distance =
+        std::numeric_limits<double>::infinity();
+
+    double first_unresolved_separation_margin_m =
+        -std::numeric_limits<double>::infinity();
+
+    double first_unresolved_fw_gap =
+        std::numeric_limits<double>::infinity();
+
+    int first_unresolved_fw_iterations =
+        0;
+
     int total_face_count =
         0;
 
@@ -960,6 +999,105 @@ inline bool buildCompactMincoPiecePolytope(
             localDiagnostics
                 .unresolved_obstacle_count =
                 unresolvedCount;
+
+            bool firstUnresolvedStored =
+                false;
+
+            for (int obstacleId = 0;
+                 obstacleId <
+                     obstacleCount;
+                 ++obstacleId)
+            {
+                if (!unresolved[
+                        obstacleId])
+                {
+                    continue;
+                }
+
+                const auto projection =
+                    projectOntoProtectedMincoSet(
+                        piece,
+                        localObstacles[
+                            obstacleId],
+                        inverseUtility,
+                        overlapRadius,
+                        128,
+                        1.0e-10,
+                        1.0e-10,
+                        epsilon,
+                        rootTolerance);
+
+                if (projection.valid)
+                {
+                    ++localDiagnostics
+                          .unresolved_projection_valid_count;
+
+                    if (projection
+                            .certified_separable)
+                    {
+                        ++localDiagnostics
+                              .unresolved_certified_separable_count;
+                    }
+                    else
+                    {
+                        ++localDiagnostics
+                              .unresolved_projection_ambiguous_count;
+                    }
+                }
+                else
+                {
+                    ++localDiagnostics
+                          .unresolved_projection_ambiguous_count;
+                }
+
+                if (!firstUnresolvedStored)
+                {
+                    firstUnresolvedStored =
+                        true;
+
+                    localDiagnostics
+                        .first_unresolved_obstacle =
+                        obstacleId;
+
+                    localDiagnostics
+                        .first_unresolved_projection_valid =
+                        projection.valid;
+
+                    localDiagnostics
+                        .first_unresolved_projection_converged =
+                        projection.converged;
+
+                    localDiagnostics
+                        .first_unresolved_certified_separable =
+                        projection.certified_separable;
+
+                    localDiagnostics
+                        .first_unresolved_metric_distance_squared =
+                        projection.metric_distance_squared;
+
+                    localDiagnostics
+                        .first_unresolved_metric_distance_lower_bound_squared =
+                        projection
+                            .metric_distance_squared_lower_bound;
+
+                    localDiagnostics
+                        .first_unresolved_euclidean_distance =
+                        projection.euclidean_distance;
+
+                    localDiagnostics
+                        .first_unresolved_separation_margin_m =
+                        projection
+                            .certified_separation_margin_m;
+
+                    localDiagnostics
+                        .first_unresolved_fw_gap =
+                        projection.frank_wolfe_gap;
+
+                    localDiagnostics
+                        .first_unresolved_fw_iterations =
+                        projection.iterations;
+                }
+            }
 
             if (diagnostics != nullptr)
             {
