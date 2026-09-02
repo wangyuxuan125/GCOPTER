@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -13,8 +14,17 @@
 namespace traj_relevant
 {
 
+enum class CandidateSelectionMode
+{
+    BATCH_SET_COVER = 0,
+    ACTIVE_WITNESS = 1
+};
+
 struct CompactCorridorOptions
 {
+    CandidateSelectionMode candidate_selection_mode =
+        CandidateSelectionMode::BATCH_SET_COVER;
+
     // Maximum additional expansion beyond the protected seed segment.
     // Easy MINCO deformation directions approach this value.
     double max_extra_radius =
@@ -64,6 +74,15 @@ struct CompactCorridorDiagnostics
         0;
 
     int candidate_count =
+        0;
+
+    int active_witness_rounds =
+        0;
+
+    int generated_candidate_count =
+        0;
+
+    std::int64_t obstacle_face_tests =
         0;
 
     int greedy_obstacle_face_count =
@@ -591,372 +610,700 @@ inline bool buildCompactSegmentPolytope(
 
     CandidateFaces candidates;
 
-    candidates.reserve(
-        obstacleCount);
-
-    // ------------------------------------------------------------
-    // Candidate generation.
-    //
-    // For obstacle o:
-    //
-    //   q = argmin_{x in [a,b]}
-    //           (o-x)^T W (o-x)
-    //
-    //   n ~ W(o-q).
-    //
-    // Candidate plane is placed midway between the protected seed
-    // capsule support and the obstacle support.
-    //
-    // This is deliberately independent of any MVIE state.
-    // ------------------------------------------------------------
-    for (int obstacleId = 0;
-         obstacleId <
-             obstacleCount;
-         ++obstacleId)
-    {
-        const Eigen::Vector3d obstacle =
-            localObstacles[
-                obstacleId];
-
-        double interpolation =
-            0.0;
-
-        if (segmentMetricNormSquared >
-            epsilon *
-                epsilon)
-        {
-            interpolation =
-                segment.dot(
-                    inverseUtility *
-                    (obstacle - a)) /
-                segmentMetricNormSquared;
-
-            interpolation =
-                std::max(
-                    0.0,
-                    std::min(
-                        1.0,
-                        interpolation));
-        }
-
-        const Eigen::Vector3d projection =
-            a +
-            interpolation *
-                segment;
-
-        Eigen::Vector3d normal =
-            inverseUtility *
-            (obstacle -
-             projection);
-
-        const double normalNorm =
-            normal.norm();
-
-        if (!std::isfinite(
-                normalNorm) ||
-            normalNorm <=
-                epsilon)
-        {
-            if (diagnostics != nullptr)
-            {
-                *diagnostics =
-                    localDiagnostics;
-            }
-
-            return false;
-        }
-
-        normal /=
-            normalNorm;
-
-        const double protectedSupport =
-            std::max(
-                normal.dot(a),
-                normal.dot(b)) +
-            overlapRadius;
-
-        const double obstacleSupport =
-            normal.dot(
-                obstacle);
-
-        const double supportGap =
-            obstacleSupport -
-            protectedSupport;
-
-        if (!std::isfinite(
-                supportGap) ||
-            supportGap <=
-                2.0 *
-                    epsilon)
-        {
-            if (diagnostics != nullptr)
-            {
-                *diagnostics =
-                    localDiagnostics;
-            }
-
-            return false;
-        }
-
-        const double threshold =
-            0.5 *
-            (protectedSupport +
-             obstacleSupport);
-
-        CandidateFace candidate;
-
-        candidate.source_obstacle =
-            obstacleId;
-
-        candidate.plane.head<3>() =
-            normal;
-
-        candidate.plane(3) =
-            -threshold;
-
-        candidate.seed_obstacle_clearance =
-            0.5 *
-            supportGap;
-
-        const double rayleigh =
-            normal.dot(
-                utility *
-                normal);
-
-        if (std::isfinite(rayleigh) &&
-            rayleigh >
-                epsilon)
-        {
-            candidate.metric_damage =
-                0.5 *
-                std::log(
-                    rayleigh);
-        }
-
-        // --------------------------------------------------------
-        // Set-cover relation.
-        //
-        // Candidate face covers obstacle k iff that obstacle lies
-        // strictly outside the candidate halfspace.
-        // --------------------------------------------------------
-        for (int pointId = 0;
-             pointId <
-                 obstacleCount;
-             ++pointId)
-        {
-            const double violation =
-                normal.dot(
-                    localObstacles[
-                        pointId]) -
-                threshold;
-
-            if (violation >
-                epsilon)
-            {
-                candidate
-                    .covered_obstacles
-                    .push_back(
-                        pointId);
-            }
-        }
-
-        if (std::find(
-                candidate
-                    .covered_obstacles
-                    .begin(),
-                candidate
-                    .covered_obstacles
-                    .end(),
-                obstacleId) ==
-            candidate
-                .covered_obstacles
-                .end())
-        {
-            if (diagnostics != nullptr)
-            {
-                *diagnostics =
-                    localDiagnostics;
-            }
-
-            return false;
-        }
-
-        candidates.emplace_back(
-            std::move(
-                candidate));
-    }
-
-    localDiagnostics.candidate_count =
-        static_cast<int>(
-            candidates.size());
-
-    // ------------------------------------------------------------
-    // Batch greedy set cover.
-    //
-    // Lexicographic choice:
-    //
-    //   1. maximize number of newly excluded obstacles;
-    //   2. minimize CSGN face damage psi;
-    //   3. maximize seed-obstacle clearance.
-    //
-    // This is an approximate minimum-face solver.
-    // It can later be replaced by branch-and-bound without changing
-    // candidate geometry.
-    // ------------------------------------------------------------
     std::vector<unsigned char>
-        unresolved(
-            obstacleCount,
-            1);
-
-    std::vector<unsigned char>
-        selected(
-            candidates.size(),
-            0);
-
-    int unresolvedCount =
-        obstacleCount;
+        selected;
 
     std::vector<int>
         selectedCandidateIds;
 
-    while (unresolvedCount >
-           0)
+    if (options.candidate_selection_mode ==
+        CandidateSelectionMode::BATCH_SET_COVER)
     {
-        int bestCandidate =
-            -1;
+        candidates.reserve(
+            obstacleCount);
 
-        int bestGain =
-            0;
-
-        double bestDamage =
-            std::numeric_limits<double>::
-                infinity();
-
-        double bestClearance =
-            -std::numeric_limits<double>::
-                infinity();
-
-        for (int candidateId = 0;
-             candidateId <
-                 static_cast<int>(
-                     candidates.size());
-             ++candidateId)
+        // ------------------------------------------------------------
+        // Candidate generation.
+        //
+        // For obstacle o:
+        //
+        //   q = argmin_{x in [a,b]}
+        //           (o-x)^T W (o-x)
+        //
+        //   n ~ W(o-q).
+        //
+        // Candidate plane is placed midway between the protected seed
+        // capsule support and the obstacle support.
+        //
+        // This is deliberately independent of any MVIE state.
+        // ------------------------------------------------------------
+        for (int obstacleId = 0;
+             obstacleId <
+                 obstacleCount;
+             ++obstacleId)
         {
-            if (selected[
-                    candidateId])
+            const Eigen::Vector3d obstacle =
+                localObstacles[
+                    obstacleId];
+
+            double interpolation =
+                0.0;
+
+            if (segmentMetricNormSquared >
+                epsilon *
+                    epsilon)
             {
-                continue;
+                interpolation =
+                    segment.dot(
+                        inverseUtility *
+                        (obstacle - a)) /
+                    segmentMetricNormSquared;
+
+                interpolation =
+                    std::max(
+                        0.0,
+                        std::min(
+                            1.0,
+                            interpolation));
             }
 
-            int gain =
+            const Eigen::Vector3d projection =
+                a +
+                interpolation *
+                    segment;
+
+            Eigen::Vector3d normal =
+                inverseUtility *
+                (obstacle -
+                 projection);
+
+            const double normalNorm =
+                normal.norm();
+
+            if (!std::isfinite(
+                    normalNorm) ||
+                normalNorm <=
+                    epsilon)
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            normal /=
+                normalNorm;
+
+            const double protectedSupport =
+                std::max(
+                    normal.dot(a),
+                    normal.dot(b)) +
+                overlapRadius;
+
+            const double obstacleSupport =
+                normal.dot(
+                    obstacle);
+
+            const double supportGap =
+                obstacleSupport -
+                protectedSupport;
+
+            if (!std::isfinite(
+                    supportGap) ||
+                supportGap <=
+                    2.0 *
+                        epsilon)
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            const double threshold =
+                0.5 *
+                (protectedSupport +
+                 obstacleSupport);
+
+            CandidateFace candidate;
+
+            candidate.source_obstacle =
+                obstacleId;
+
+            candidate.plane.head<3>() =
+                normal;
+
+            candidate.plane(3) =
+                -threshold;
+
+            candidate.seed_obstacle_clearance =
+                0.5 *
+                supportGap;
+
+            const double rayleigh =
+                normal.dot(
+                    utility *
+                    normal);
+
+            if (std::isfinite(rayleigh) &&
+                rayleigh >
+                    epsilon)
+            {
+                candidate.metric_damage =
+                    0.5 *
+                    std::log(
+                        rayleigh);
+            }
+
+            // --------------------------------------------------------
+            // Set-cover relation.
+            //
+            // Candidate face covers obstacle k iff that obstacle lies
+            // strictly outside the candidate halfspace.
+            // --------------------------------------------------------
+            for (int pointId = 0;
+                 pointId <
+                     obstacleCount;
+                 ++pointId)
+            {
+                const double violation =
+                    normal.dot(
+                        localObstacles[
+                            pointId]) -
+                    threshold;
+
+                if (violation >
+                    epsilon)
+                {
+                    candidate
+                        .covered_obstacles
+                        .push_back(
+                            pointId);
+                }
+            }
+
+            if (std::find(
+                    candidate
+                        .covered_obstacles
+                        .begin(),
+                    candidate
+                        .covered_obstacles
+                        .end(),
+                    obstacleId) ==
+                candidate
+                    .covered_obstacles
+                    .end())
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            candidates.emplace_back(
+                std::move(
+                    candidate));
+        }
+
+        localDiagnostics.candidate_count =
+            static_cast<int>(
+                candidates.size());
+
+        // ------------------------------------------------------------
+        // Batch greedy set cover.
+        //
+        // Lexicographic choice:
+        //
+        //   1. maximize number of newly excluded obstacles;
+        //   2. minimize CSGN face damage psi;
+        //   3. maximize seed-obstacle clearance.
+        //
+        // This is an approximate minimum-face solver.
+        // It can later be replaced by branch-and-bound without changing
+        // candidate geometry.
+        // ------------------------------------------------------------
+        std::vector<unsigned char>
+            unresolved(
+                obstacleCount,
+                1);
+
+        selected.assign(
+            candidates.size(),
+            0);
+
+        int unresolvedCount =
+            obstacleCount;
+
+        while (unresolvedCount >
+               0)
+        {
+            int bestCandidate =
+                -1;
+
+            int bestGain =
                 0;
+
+            double bestDamage =
+                std::numeric_limits<double>::
+                    infinity();
+
+            double bestClearance =
+                -std::numeric_limits<double>::
+                    infinity();
+
+            for (int candidateId = 0;
+                 candidateId <
+                     static_cast<int>(
+                         candidates.size());
+                 ++candidateId)
+            {
+                if (selected[
+                        candidateId])
+                {
+                    continue;
+                }
+
+                int gain =
+                    0;
+
+                for (const int obstacleId :
+                     candidates[
+                         candidateId]
+                         .covered_obstacles)
+                {
+                    if (unresolved[
+                            obstacleId])
+                    {
+                        ++gain;
+                    }
+                }
+
+                if (gain <=
+                    0)
+                {
+                    continue;
+                }
+
+                const double damage =
+                    candidates[
+                        candidateId]
+                        .metric_damage;
+
+                const double clearance =
+                    candidates[
+                        candidateId]
+                        .seed_obstacle_clearance;
+
+                const bool prefer =
+                    gain >
+                        bestGain ||
+
+                    (gain ==
+                         bestGain &&
+                     damage <
+                         bestDamage -
+                             epsilon) ||
+
+                    (gain ==
+                         bestGain &&
+                     std::abs(
+                         damage -
+                         bestDamage) <=
+                         epsilon &&
+                     clearance >
+                         bestClearance);
+
+                if (prefer)
+                {
+                    bestCandidate =
+                        candidateId;
+
+                    bestGain =
+                        gain;
+
+                    bestDamage =
+                        damage;
+
+                    bestClearance =
+                        clearance;
+                }
+            }
+
+            if (bestCandidate <
+                    0 ||
+                bestGain <=
+                    0)
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            selected[
+                bestCandidate] =
+                1;
+
+            selectedCandidateIds
+                .push_back(
+                    bestCandidate);
 
             for (const int obstacleId :
                  candidates[
-                     candidateId]
+                     bestCandidate]
                      .covered_obstacles)
             {
                 if (unresolved[
                         obstacleId])
                 {
-                    ++gain;
+                    unresolved[
+                        obstacleId] =
+                        0;
+
+                    --unresolvedCount;
+                }
+            }
+        }
+
+        localDiagnostics
+            .greedy_obstacle_face_count =
+            static_cast<int>(
+                selectedCandidateIds.size());
+    }
+    else
+    {
+        std::vector<unsigned char>
+            unresolved(
+                obstacleCount,
+                1);
+
+        int unresolvedCount =
+            obstacleCount;
+
+        while (unresolvedCount > 0)
+        {
+            int witnessId =
+                -1;
+
+            double witnessMetricDistanceSquared =
+                std::numeric_limits<double>::
+                    infinity();
+
+            double witnessInterpolation =
+                0.0;
+
+            // --------------------------------------------------------
+            // Pricing / witness step:
+            //
+            // Find the closest unresolved obstacle to the protected
+            // segment in the CSGN metric W.
+            // --------------------------------------------------------
+            for (int obstacleId = 0;
+                 obstacleId < obstacleCount;
+                 ++obstacleId)
+            {
+                if (!unresolved[
+                        obstacleId])
+                {
+                    continue;
+                }
+
+                const Eigen::Vector3d &obstacle =
+                    localObstacles[
+                        obstacleId];
+
+                double interpolation =
+                    0.0;
+
+                if (segmentMetricNormSquared >
+                    epsilon * epsilon)
+                {
+                    interpolation =
+                        segment.dot(
+                            inverseUtility *
+                            (obstacle - a)) /
+                        segmentMetricNormSquared;
+
+                    interpolation =
+                        std::max(
+                            0.0,
+                            std::min(
+                                1.0,
+                                interpolation));
+                }
+
+                const Eigen::Vector3d projection =
+                    a +
+                    interpolation *
+                        segment;
+
+                const Eigen::Vector3d residual =
+                    obstacle -
+                    projection;
+
+                const double metricDistanceSquared =
+                    residual.dot(
+                        inverseUtility *
+                        residual);
+
+                if (!std::isfinite(
+                        metricDistanceSquared))
+                {
+                    if (diagnostics != nullptr)
+                    {
+                        *diagnostics =
+                            localDiagnostics;
+                    }
+
+                    return false;
+                }
+
+                if (metricDistanceSquared <
+                    witnessMetricDistanceSquared)
+                {
+                    witnessMetricDistanceSquared =
+                        metricDistanceSquared;
+
+                    witnessId =
+                        obstacleId;
+
+                    witnessInterpolation =
+                        interpolation;
                 }
             }
 
-            if (gain <=
-                0)
+            if (witnessId < 0)
             {
-                continue;
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
             }
 
-            const double damage =
-                candidates[
-                    candidateId]
-                    .metric_damage;
+            const Eigen::Vector3d &witness =
+                localObstacles[
+                    witnessId];
 
-            const double clearance =
-                candidates[
-                    candidateId]
-                    .seed_obstacle_clearance;
+            const Eigen::Vector3d projection =
+                a +
+                witnessInterpolation *
+                    segment;
 
-            const bool prefer =
-                gain >
-                    bestGain ||
+            Eigen::Vector3d normal =
+                inverseUtility *
+                (witness -
+                 projection);
 
-                (gain ==
-                     bestGain &&
-                 damage <
-                     bestDamage -
-                         epsilon) ||
+            const double normalNorm =
+                normal.norm();
 
-                (gain ==
-                     bestGain &&
-                 std::abs(
-                     damage -
-                     bestDamage) <=
-                     epsilon &&
-                 clearance >
-                     bestClearance);
-
-            if (prefer)
+            if (!std::isfinite(
+                    normalNorm) ||
+                normalNorm <=
+                    epsilon)
             {
-                bestCandidate =
-                    candidateId;
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
 
-                bestGain =
-                    gain;
-
-                bestDamage =
-                    damage;
-
-                bestClearance =
-                    clearance;
+                return false;
             }
+
+            normal /=
+                normalNorm;
+
+            const double protectedSupport =
+                std::max(
+                    normal.dot(a),
+                    normal.dot(b)) +
+                overlapRadius;
+
+            const double obstacleSupport =
+                normal.dot(
+                    witness);
+
+            const double supportGap =
+                obstacleSupport -
+                protectedSupport;
+
+            if (!std::isfinite(
+                    supportGap) ||
+                supportGap <=
+                    2.0 * epsilon)
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            const double threshold =
+                0.5 *
+                (protectedSupport +
+                 obstacleSupport);
+
+            CandidateFace candidate;
+
+            candidate.source_obstacle =
+                witnessId;
+
+            candidate.plane.head<3>() =
+                normal;
+
+            candidate.plane(3) =
+                -threshold;
+
+            candidate.seed_obstacle_clearance =
+                0.5 *
+                supportGap;
+
+            const double rayleigh =
+                normal.dot(
+                    utility *
+                    normal);
+
+            if (std::isfinite(rayleigh) &&
+                rayleigh > epsilon)
+            {
+                candidate.metric_damage =
+                    0.5 *
+                    std::log(
+                        rayleigh);
+            }
+
+            // --------------------------------------------------------
+            // One generated face may eliminate MANY unresolved
+            // obstacles.  This is the batch-elimination step.
+            // --------------------------------------------------------
+            for (int obstacleId = 0;
+                 obstacleId < obstacleCount;
+                 ++obstacleId)
+            {
+                if (!unresolved[
+                        obstacleId])
+                {
+                    continue;
+                }
+
+                ++localDiagnostics
+                      .obstacle_face_tests;
+
+                const double violation =
+                    normal.dot(
+                        localObstacles[
+                            obstacleId]) -
+                    threshold;
+
+                if (violation >
+                    epsilon)
+                {
+                    candidate
+                        .covered_obstacles
+                        .push_back(
+                            obstacleId);
+                }
+            }
+
+            if (candidate
+                    .covered_obstacles
+                    .empty())
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            bool witnessCovered =
+                false;
+
+            for (const int obstacleId :
+                 candidate
+                     .covered_obstacles)
+            {
+                if (obstacleId ==
+                    witnessId)
+                {
+                    witnessCovered =
+                        true;
+                }
+
+                if (unresolved[
+                        obstacleId])
+                {
+                    unresolved[
+                        obstacleId] =
+                        0;
+
+                    --unresolvedCount;
+                }
+            }
+
+            if (!witnessCovered)
+            {
+                if (diagnostics != nullptr)
+                {
+                    *diagnostics =
+                        localDiagnostics;
+                }
+
+                return false;
+            }
+
+            candidates.push_back(
+                std::move(
+                    candidate));
+
+            selectedCandidateIds
+                .push_back(
+                    static_cast<int>(
+                        candidates.size()) -
+                    1);
+
+            ++localDiagnostics
+                  .generated_candidate_count;
+
+            ++localDiagnostics
+                  .active_witness_rounds;
         }
 
-        if (bestCandidate <
-                0 ||
-            bestGain <=
-                0)
-        {
-            if (diagnostics != nullptr)
-            {
-                *diagnostics =
-                    localDiagnostics;
-            }
+        localDiagnostics
+            .candidate_count =
+            localDiagnostics
+                .generated_candidate_count;
 
-            return false;
-        }
+        localDiagnostics
+            .greedy_obstacle_face_count =
+            static_cast<int>(
+                selectedCandidateIds.size());
 
-        selected[
-            bestCandidate] =
-            1;
-
-        selectedCandidateIds
-            .push_back(
-                bestCandidate);
-
-        for (const int obstacleId :
-             candidates[
-                 bestCandidate]
-                 .covered_obstacles)
-        {
-            if (unresolved[
-                    obstacleId])
-            {
-                unresolved[
-                    obstacleId] =
-                    0;
-
-                --unresolvedCount;
-            }
-        }
+        selected.assign(
+            candidates.size(),
+            1);
     }
-
-    localDiagnostics
-        .greedy_obstacle_face_count =
-        static_cast<int>(
-            selectedCandidateIds.size());
 
     // ------------------------------------------------------------
     // Reverse-delete redundancy pruning.

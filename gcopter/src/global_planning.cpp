@@ -5047,6 +5047,11 @@ public:
                         guideCompactOptions.epsilon =
                             1.0e-6;
 
+                        guideCompactOptions.candidate_selection_mode =
+                            traj_relevant::
+                                CandidateSelectionMode::
+                                    BATCH_SET_COVER;
+
                         std::vector<Eigen::MatrixX4d>
                             guideCompactHPolys;
 
@@ -5088,6 +5093,54 @@ public:
                                     std::milli>(
                                         std::chrono::steady_clock::now() -
                                         guideCompactStarted)
+                                    .count();
+                        }
+
+                        auto activeGuideOptions =
+                            guideCompactOptions;
+
+                        activeGuideOptions.candidate_selection_mode =
+                            traj_relevant::
+                                CandidateSelectionMode::
+                                    ACTIVE_WITNESS;
+
+                        std::vector<Eigen::MatrixX4d>
+                            activeGuideHPolys;
+
+                        sfc_gen::TrajectoryRelevantCompactInfos
+                            activeGuideInfos;
+
+                        bool activeGuideSuccess =
+                            false;
+
+                        double activeGuideMs =
+                            0.0;
+
+                        if (guideSegmentMetricsReady)
+                        {
+                            const auto activeGuideStarted =
+                                std::chrono::steady_clock::now();
+
+                            activeGuideSuccess =
+                                sfc_gen::
+                                    trajectoryRelevantCompactCover(
+                                        route,
+                                        pc,
+                                        voxelMap.getOrigin(),
+                                        voxelMap.getCorner(),
+                                        std::numeric_limits<double>::
+                                            infinity(),
+                                        activeGuideOptions,
+                                        activeGuideHPolys,
+                                        activeGuideInfos,
+                                        &guideSegmentMetrics);
+
+                            activeGuideMs =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::steady_clock::now() -
+                                        activeGuideStarted)
                                     .count();
                         }
 
@@ -5206,6 +5259,75 @@ public:
                                     guideCompactHPolys.size()) -
                                     1);
 
+                        int activeGuideTotalFaces =
+                            0;
+
+                        int activeGuideObstacleFaces =
+                            0;
+
+                        int activeGuideCandidates =
+                            0;
+
+                        int activeGuideRounds =
+                            0;
+
+                        std::int64_t activeGuideFaceTests =
+                            0;
+
+                        int activeGuideSafetyCount =
+                            0;
+
+                        for (const auto &info :
+                             activeGuideInfos)
+                        {
+                            activeGuideTotalFaces +=
+                                info.total_face_count;
+
+                            activeGuideObstacleFaces +=
+                                info.selected_obstacle_face_count;
+
+                            activeGuideCandidates +=
+                                info.candidate_count;
+
+                            activeGuideRounds +=
+                                info.active_witness_rounds;
+
+                            activeGuideFaceTests +=
+                                info.obstacle_face_tests;
+
+                            activeGuideSafetyCount +=
+                                info.safety_verified
+                                    ? 1
+                                    : 0;
+                        }
+
+                        int activeGuideAdjacentOverlapValidCount =
+                            0;
+
+                        for (int corridorId = 1;
+                             corridorId <
+                                 static_cast<int>(
+                                     activeGuideHPolys.size());
+                             ++corridorId)
+                        {
+                            if (geo_utils::overlap(
+                                    activeGuideHPolys[
+                                        corridorId - 1],
+                                    activeGuideHPolys[
+                                        corridorId],
+                                    0.01))
+                            {
+                                ++activeGuideAdjacentOverlapValidCount;
+                            }
+                        }
+
+                        const int activeGuideAdjacentOverlapCount =
+                            std::max(
+                                0,
+                                static_cast<int>(
+                                    activeGuideHPolys.size()) -
+                                    1);
+
                         ROS_INFO_STREAM(
                             "TF_GUIDE_COMPACT_AB "
                             << "success="
@@ -5278,6 +5400,54 @@ public:
                             << " generation_ms="
                             << guideCompactMs);
 
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_ACTIVE_AB "
+                            << "batch_success="
+                            << guideCompactSuccess
+
+                            << " active_success="
+                            << activeGuideSuccess
+
+                            << " batch_faces="
+                            << guideCompactTotalFaces
+
+                            << " active_faces="
+                            << activeGuideTotalFaces
+
+                            << " batch_obs_faces="
+                            << guideCompactObstacleFaces
+
+                            << " active_obs_faces="
+                            << activeGuideObstacleFaces
+
+                            << " batch_candidates="
+                            << guideCompactCandidates
+
+                            << " active_candidates="
+                            << activeGuideCandidates
+
+                            << " active_rounds="
+                            << activeGuideRounds
+
+                            << " active_face_tests="
+                            << activeGuideFaceTests
+
+                            << " batch_ms="
+                            << guideCompactMs
+
+                            << " active_ms="
+                            << activeGuideMs
+
+                            << " active_safety="
+                            << activeGuideSafetyCount
+                            << "/"
+                            << activeGuideInfos.size()
+
+                            << " active_overlap="
+                            << activeGuideAdjacentOverlapValidCount
+                            << "/"
+                            << activeGuideAdjacentOverlapCount);
+
                         BackendAbResult
                             guideCompactBackendResult;
 
@@ -5286,6 +5456,16 @@ public:
                             guideCompactBackendResult =
                                 runBackendAb(
                                     guideCompactHPolys);
+                        }
+
+                        BackendAbResult
+                            activeGuideBackendResult;
+
+                        if (activeGuideSuccess)
+                        {
+                            activeGuideBackendResult =
+                                runBackendAb(
+                                    activeGuideHPolys);
                         }
 
                         const double guideProposedComponentMs =
@@ -5375,6 +5555,94 @@ public:
 
                             << " baseline_firi_opt_ms="
                             << record.optimizer_ms);
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_ACTIVE_BACKEND "
+                            << "corridor_success="
+                            << activeGuideSuccess
+
+                            << " setup_success="
+                            << activeGuideBackendResult
+                                   .setup_success
+
+                            << " opt_success="
+                            << activeGuideBackendResult
+                                   .optimize_success
+
+                            << " corridors="
+                            << activeGuideBackendResult
+                                   .corridor_count
+
+                            << " faces="
+                            << activeGuideBackendResult
+                                   .total_faces
+
+                            << " traj_pieces="
+                            << activeGuideBackendResult
+                                   .trajectory_pieces
+
+                            << " constrained_pieces="
+                            << activeGuideBackendResult
+                                   .constrained_pieces
+
+                            << " final_cost="
+                            << activeGuideBackendResult
+                                   .final_cost
+
+                            << " duration="
+                            << activeGuideBackendResult
+                                   .trajectory_duration
+
+                            << " setup_ms="
+                            << activeGuideBackendResult
+                                   .setup_ms
+
+                            << " opt_ms="
+                            << activeGuideBackendResult
+                                   .optimize_ms
+
+                            << " penalty_initial="
+                            << activeGuideBackendResult
+                                   .corridor_penalty_initial
+
+                            << " penalty_final="
+                            << activeGuideBackendResult
+                                   .corridor_penalty_final
+
+                            << " violation_initial="
+                            << activeGuideBackendResult
+                                   .max_corridor_violation_initial
+
+                            << " violation_final="
+                            << activeGuideBackendResult
+                                   .max_corridor_violation_final
+
+                            << " slack_initial="
+                            << activeGuideBackendResult
+                                   .corridor_slack_initial
+
+                            << " slack_final="
+                            << activeGuideBackendResult
+                                   .corridor_slack_final
+
+                            << " batch_corridor_success="
+                            << guideCompactSuccess
+
+                            << " batch_faces="
+                            << guideCompactBackendResult
+                                   .total_faces
+
+                            << " batch_final_cost="
+                            << guideCompactBackendResult
+                                   .final_cost
+
+                            << " batch_setup_ms="
+                            << guideCompactBackendResult
+                                   .setup_ms
+
+                            << " batch_opt_ms="
+                            << guideCompactBackendResult
+                                   .optimize_ms);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_PROPOSED_TIMING "
