@@ -283,6 +283,159 @@ exactMincoDirectionalSupport(
     return result;
 }
 
+struct ProtectedDirectionalSupportResult
+{
+    bool valid =
+        false;
+
+    double support =
+        -std::numeric_limits<double>::infinity();
+
+    Eigen::Vector3d point =
+        Eigen::Vector3d::Zero();
+
+    // 0: curve
+    // 1: start endpoint ball
+    // 2: end endpoint ball
+    int source =
+        -1;
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+// ================================================================
+// Exact support mapping of
+//
+//   K = conv(
+//         Gamma
+//         union B(p(0), r)
+//         union B(p(T), r)).
+//
+// Only the endpoint balls are protected for corridor overlap.
+// The complete trajectory itself is contained exactly, but is NOT
+// unnecessarily thickened by the overlap radius.
+// ================================================================
+template <int D>
+inline ProtectedDirectionalSupportResult
+protectedMincoPieceDirectionalSupport(
+    const Piece<D> &piece,
+    const Eigen::Vector3d &normal,
+    const double endpointRadius,
+    const double rootTolerance =
+        1.0e-10,
+    const double coefficientTolerance =
+        1.0e-12)
+{
+    ProtectedDirectionalSupportResult result;
+
+    if (!normal.allFinite())
+    {
+        return result;
+    }
+
+    const double normalNorm =
+        normal.norm();
+
+    if (!std::isfinite(normalNorm) ||
+        normalNorm <=
+            coefficientTolerance)
+    {
+        return result;
+    }
+
+    const auto curveSupport =
+        exactMincoDirectionalSupport(
+            piece,
+            normal,
+            rootTolerance,
+            coefficientTolerance);
+
+    if (!curveSupport.valid)
+    {
+        return result;
+    }
+
+    const double duration =
+        piece.getDuration();
+
+    const Eigen::Vector3d startPoint =
+        piece.getPos(
+            0.0);
+
+    const Eigen::Vector3d endPoint =
+        piece.getPos(
+            duration);
+
+    const double radius =
+        std::max(
+            0.0,
+            endpointRadius);
+
+    const Eigen::Vector3d unitNormal =
+        normal /
+        normalNorm;
+
+    // Curve support.
+    result.valid =
+        true;
+
+    result.support =
+        curveSupport.support;
+
+    result.point =
+        piece.getPos(
+            curveSupport.physical_time);
+
+    result.source =
+        0;
+
+    // Start junction ball.
+    const double startBallSupport =
+        normal.dot(
+            startPoint) +
+        radius *
+            normalNorm;
+
+    if (startBallSupport >
+        result.support)
+    {
+        result.support =
+            startBallSupport;
+
+        result.point =
+            startPoint +
+            radius *
+                unitNormal;
+
+        result.source =
+            1;
+    }
+
+    // End junction ball.
+    const double endBallSupport =
+        normal.dot(
+            endPoint) +
+        radius *
+            normalNorm;
+
+    if (endBallSupport >
+        result.support)
+    {
+        result.support =
+            endBallSupport;
+
+        result.point =
+            endPoint +
+            radius *
+                unitNormal;
+
+        result.source =
+            2;
+    }
+
+    return result;
+}
+
 // ================================================================
 // Exact metric closest point on one MINCO polynomial piece.
 //

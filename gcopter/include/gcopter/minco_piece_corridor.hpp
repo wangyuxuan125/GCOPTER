@@ -149,19 +149,23 @@ using MincoCandidateFaces =
 //
 // Protected set:
 //
-//   K = Gamma (+) B(0, r)
+//   K = conv(
+//         Gamma
+//         union B(p(0), r_overlap)
+//         union B(p(T), r_overlap)).
 //
-// where
+// Therefore:
 //
-//   Gamma = { p(t) : 0 <= t <= T }.
+//   Gamma subset K
 //
-// For every halfspace
+// and adjacent MINCO pieces sharing junction q satisfy
 //
-//   n^T x + d <= 0
+//   B(q, r_overlap)
+//       subset P_i intersection P_{i+1}.
 //
-// containment is certified continuously in time by
-//
-//   h_Gamma(n) + r ||n|| + d <= 0.
+// The overlap radius is NOT applied along the complete trajectory,
+// because obstacle clearance has already been handled by the dilated
+// voxel map.
 //
 // Candidate normal for obstacle o:
 //
@@ -235,15 +239,17 @@ inline bool buildCompactMincoPiecePolytope(
                 axis);
 
         const auto positiveSupport =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 direction,
+                overlapRadius,
                 rootTolerance);
 
         const auto negativeSupport =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 -direction,
+                overlapRadius,
                 rootTolerance);
 
         if (!positiveSupport.valid ||
@@ -258,14 +264,12 @@ inline bool buildCompactMincoPiecePolytope(
             return false;
         }
 
-        if (positiveSupport.support +
-                overlapRadius >
-            highCorner(axis) +
-                epsilon ||
-            negativeSupport.support +
-                overlapRadius >
-            -lowCorner(axis) +
-                epsilon)
+        if (positiveSupport.support >
+                highCorner(axis) +
+                    epsilon ||
+            negativeSupport.support >
+                -lowCorner(axis) +
+                    epsilon)
         {
             if (diagnostics != nullptr)
             {
@@ -426,15 +430,17 @@ inline bool buildCompactMincoPiecePolytope(
                 directionId);
 
         const auto positiveSupport =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 direction,
+                overlapRadius,
                 rootTolerance);
 
         const auto negativeSupport =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 -direction,
+                overlapRadius,
                 rootTolerance);
 
         if (!positiveSupport.valid ||
@@ -451,12 +457,10 @@ inline bool buildCompactMincoPiecePolytope(
 
         const double upperCoordinate =
             positiveSupport.support +
-            overlapRadius +
             extraRadii(directionId);
 
         const double lowerCoordinate =
             -negativeSupport.support -
-            overlapRadius -
             extraRadii(directionId);
 
         domainCenterCoordinates(
@@ -488,7 +492,6 @@ inline bool buildCompactMincoPiecePolytope(
 
         lowerPlane(3) =
             -negativeSupport.support -
-            overlapRadius -
             extraRadii(directionId);
 
         fixedPlanes.push_back(
@@ -698,9 +701,10 @@ inline bool buildCompactMincoPiecePolytope(
         // polynomial by exact support.
         // --------------------------------------------------------
         const auto support =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 normal,
+                overlapRadius,
                 rootTolerance);
 
         if (!support.valid)
@@ -712,8 +716,7 @@ inline bool buildCompactMincoPiecePolytope(
         }
 
         const double protectedSupport =
-            support.support +
-            overlapRadius;
+            support.support;
 
         const double obstacleSupport =
             normal.dot(
@@ -1236,9 +1239,10 @@ inline bool buildCompactMincoPiecePolytope(
         }
 
         const auto support =
-            exactMincoDirectionalSupport(
+            protectedMincoPieceDirectionalSupport(
                 piece,
                 normal,
+                overlapRadius,
                 rootTolerance);
 
         if (!support.valid)
@@ -1254,8 +1258,6 @@ inline bool buildCompactMincoPiecePolytope(
 
         const double protectedValue =
             support.support +
-            overlapRadius *
-                normalNorm +
             hPoly(
                 faceId,
                 3);
@@ -1276,8 +1278,8 @@ inline bool buildCompactMincoPiecePolytope(
     localDiagnostics.trajectory_contained =
         true;
 
-    // Since both endpoints belong to Gamma, containment of
-    // Gamma (+) B(0,r) implies both endpoint balls are contained.
+    // The protected support explicitly contains the start and end
+    // endpoint balls in every verified halfspace.
     localDiagnostics.endpoint_ball_guaranteed =
         true;
 
