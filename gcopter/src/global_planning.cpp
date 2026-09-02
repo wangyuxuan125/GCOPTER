@@ -4114,6 +4114,41 @@ public:
                             double corridor_slack_final =
                                 std::numeric_limits<double>::
                                     quiet_NaN();
+
+                            bool exact_mapping_valid =
+                                false;
+
+                            bool exact_certificate_valid =
+                                false;
+
+                            bool exact_contained =
+                                false;
+
+                            int exact_checked_faces =
+                                0;
+
+                            int exact_worst_piece =
+                                -1;
+
+                            int exact_worst_face =
+                                -1;
+
+                            double exact_max_violation_m =
+                                -std::numeric_limits<double>::
+                                    infinity();
+
+                            double exact_min_margin_m =
+                                std::numeric_limits<double>::
+                                    infinity();
+
+                            double exact_worst_tau =
+                                0.0;
+
+                            double exact_worst_t =
+                                0.0;
+
+                            double exact_certificate_ms =
+                                0.0;
                         };
 
                         auto runBackendAb =
@@ -4227,13 +4262,124 @@ public:
                             {
                                 result.optimize_success =
                                     true;
-                            
+
                                 result.trajectory_pieces =
                                     backendTrajectory.getPieceNum();
-                            
+
                                 result.trajectory_duration =
                                     backendTrajectory
                                         .getTotalDuration();
+
+                                // ========================================================
+                                // Exact continuous-time corridor certificate.
+                                //
+                                // In the current backend experiment:
+                                //
+                                //     lengthPerPiece = infinity
+                                //
+                                // and we require one trajectory piece per corridor before
+                                // using the direct piece-id <-> corridor-id certificate.
+                                // ========================================================
+                                if (backendTrajectory.getPieceNum() ==
+                                    static_cast<int>(
+                                        corridors.size()))
+                                {
+                                    result.exact_mapping_valid =
+                                        true;
+
+                                    const auto certificateStarted =
+                                        std::chrono::steady_clock::now();
+
+                                    bool allValid =
+                                        true;
+
+                                    bool allContained =
+                                        true;
+
+                                    for (int pieceId = 0;
+                                         pieceId <
+                                             backendTrajectory
+                                                 .getPieceNum();
+                                         ++pieceId)
+                                    {
+                                        const auto certificate =
+                                            traj_relevant::
+                                                certifyMincoPieceInPolytope(
+                                                    backendTrajectory[
+                                                        pieceId],
+                                                    corridors[
+                                                        pieceId],
+                                                    1.0e-6,
+                                                    1.0e-10,
+                                                    1.0e-12);
+
+                                        result.exact_checked_faces +=
+                                            certificate
+                                                .checked_face_count;
+
+                                        if (!certificate.valid)
+                                        {
+                                            allValid =
+                                                false;
+
+                                            allContained =
+                                                false;
+
+                                            continue;
+                                        }
+
+                                        if (!certificate.contained)
+                                        {
+                                            allContained =
+                                                false;
+                                        }
+
+                                        if (certificate
+                                                .max_signed_violation_m >
+                                            result
+                                                .exact_max_violation_m)
+                                        {
+                                            result.exact_max_violation_m =
+                                                certificate
+                                                    .max_signed_violation_m;
+
+                                            result.exact_min_margin_m =
+                                                certificate
+                                                    .min_margin_m;
+
+                                            result.exact_worst_piece =
+                                                pieceId;
+
+                                            result.exact_worst_face =
+                                                certificate
+                                                    .worst_face;
+
+                                            result.exact_worst_tau =
+                                                certificate
+                                                    .worst_normalized_time;
+
+                                            result.exact_worst_t =
+                                                certificate
+                                                    .worst_physical_time;
+                                        }
+                                    }
+
+                                    result.exact_certificate_valid =
+                                        allValid;
+
+                                    result.exact_contained =
+                                        allValid &&
+                                        allContained;
+
+                                    result.exact_certificate_ms =
+                                        std::chrono::duration<
+                                            double,
+                                            std::milli>(
+                                                std::chrono::
+                                                    steady_clock::now() -
+                                                certificateStarted)
+                                            .count();
+                                }
                             }
                         
                             return result;
@@ -5603,7 +5749,51 @@ public:
                             << record.optimizer_setup_ms
 
                             << " baseline_firi_opt_ms="
-                            << record.optimizer_ms);
+                            << record.optimizer_ms
+
+                            << " exact_mapping_valid="
+                            << guideCompactBackendResult
+                                   .exact_mapping_valid
+
+                            << " exact_cert_valid="
+                            << guideCompactBackendResult
+                                   .exact_certificate_valid
+
+                            << " exact_contained="
+                            << guideCompactBackendResult
+                                   .exact_contained
+
+                            << " exact_faces_checked="
+                            << guideCompactBackendResult
+                                   .exact_checked_faces
+
+                            << " exact_max_violation_m="
+                            << guideCompactBackendResult
+                                   .exact_max_violation_m
+
+                            << " exact_min_margin_m="
+                            << guideCompactBackendResult
+                                   .exact_min_margin_m
+
+                            << " exact_worst_piece="
+                            << guideCompactBackendResult
+                                   .exact_worst_piece
+
+                            << " exact_worst_face="
+                            << guideCompactBackendResult
+                                   .exact_worst_face
+
+                            << " exact_worst_tau="
+                            << guideCompactBackendResult
+                                   .exact_worst_tau
+
+                            << " exact_worst_t="
+                            << guideCompactBackendResult
+                                   .exact_worst_t
+
+                            << " exact_cert_ms="
+                            << guideCompactBackendResult
+                                   .exact_certificate_ms);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_ACTIVE_BACKEND "
@@ -5691,7 +5881,51 @@ public:
 
                             << " batch_opt_ms="
                             << guideCompactBackendResult
-                                   .optimize_ms);
+                                   .optimize_ms
+
+                            << " exact_mapping_valid="
+                            << activeGuideBackendResult
+                                   .exact_mapping_valid
+
+                            << " exact_cert_valid="
+                            << activeGuideBackendResult
+                                   .exact_certificate_valid
+
+                            << " exact_contained="
+                            << activeGuideBackendResult
+                                   .exact_contained
+
+                            << " exact_faces_checked="
+                            << activeGuideBackendResult
+                                   .exact_checked_faces
+
+                            << " exact_max_violation_m="
+                            << activeGuideBackendResult
+                                   .exact_max_violation_m
+
+                            << " exact_min_margin_m="
+                            << activeGuideBackendResult
+                                   .exact_min_margin_m
+
+                            << " exact_worst_piece="
+                            << activeGuideBackendResult
+                                   .exact_worst_piece
+
+                            << " exact_worst_face="
+                            << activeGuideBackendResult
+                                   .exact_worst_face
+
+                            << " exact_worst_tau="
+                            << activeGuideBackendResult
+                                   .exact_worst_tau
+
+                            << " exact_worst_t="
+                            << activeGuideBackendResult
+                                   .exact_worst_t
+
+                            << " exact_cert_ms="
+                            << activeGuideBackendResult
+                                   .exact_certificate_ms);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_PROPOSED_TIMING "
