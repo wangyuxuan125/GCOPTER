@@ -1096,6 +1096,36 @@ inline bool buildCompactMincoPiecePolytope(
                     localDiagnostics
                         .first_unresolved_fw_iterations =
                         projection.iterations;
+
+                    const int projectionIterationBudgets[] = {128, 512, 2048, 8192};
+                    for (const int iterationBudget : projectionIterationBudgets)
+                    {
+                        const auto projectionSweep =
+                            projectOntoProtectedMincoSet(
+                                piece,
+                                localObstacles[obstacleId],
+                                inverseUtility,
+                                overlapRadius,
+                                iterationBudget,
+                                1.0e-10,
+                                1.0e-10,
+                                epsilon,
+                                rootTolerance);
+                            
+                        ROS_WARN_STREAM(
+                            "TF_MINCO_PROJECTION_SWEEP "
+                            << "obstacle=" << obstacleId
+                            << " max_iters=" << iterationBudget
+                            << " valid=" << projectionSweep.valid
+                            << " converged=" << projectionSweep.converged
+                            << " iters=" << projectionSweep.iterations
+                            << " metric_d2=" << projectionSweep.metric_distance_squared
+                            << " metric_d2_lb=" << projectionSweep.metric_distance_squared_lower_bound
+                            << " euclidean_d=" << projectionSweep.euclidean_distance
+                            << " sep_margin_m=" << projectionSweep.certified_separation_margin_m
+                            << " separable=" << projectionSweep.certified_separable
+                            << " fw_gap=" << projectionSweep.frank_wolfe_gap);
+                    }
                 }
             }
 
