@@ -3755,6 +3755,15 @@ public:
                         int mincoNativeRejectedCandidates =
                             0;
 
+                        int mincoNativeProjectionAttempts =
+                            0;
+
+                        int mincoNativeProjectionSuccesses =
+                            0;
+
+                        int mincoNativeProjectionIterations =
+                            0;
+
                         int mincoNativeGreedyFaces =
                             0;
 
@@ -3787,6 +3796,15 @@ public:
 
                             mincoNativeRejectedCandidates +=
                                 info.rejected_candidate_count;
+
+                            mincoNativeProjectionAttempts +=
+                                info.projection_fallback_attempt_count;
+
+                            mincoNativeProjectionSuccesses +=
+                                info.projection_fallback_success_count;
+
+                            mincoNativeProjectionIterations +=
+                                info.projection_fallback_iteration_count;
 
                             mincoNativeGreedyFaces +=
                                 info.greedy_obstacle_face_count;
@@ -3851,6 +3869,15 @@ public:
 
                             << " rejected_candidates="
                             << mincoNativeRejectedCandidates
+
+                            << " projection_attempts="
+                            << mincoNativeProjectionAttempts
+
+                            << " projection_successes="
+                            << mincoNativeProjectionSuccesses
+
+                            << " projection_iterations="
+                            << mincoNativeProjectionIterations
 
                             << " greedy_faces="
                             << mincoNativeGreedyFaces

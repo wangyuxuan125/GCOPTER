@@ -77,6 +77,18 @@ struct MincoPieceCorridorDiagnostics
     int unresolved_obstacle_count =
         0;
 
+    int projection_fallback_attempt_count =
+        0;
+
+    int projection_fallback_success_count =
+        0;
+
+    int projection_fallback_iteration_count =
+        0;
+
+    double projection_fallback_max_margin_m =
+        0.0;
+
     int unresolved_projection_valid_count =
         0;
 
@@ -688,6 +700,16 @@ inline bool buildCompactMincoPiecePolytope(
             localObstacles[
                 obstacleId];
 
+        Eigen::Vector3d normal =
+            Eigen::Vector3d::Zero();
+
+        bool normalAvailable =
+            false;
+
+        // ============================================================
+        // Stage 1:
+        // Fast candidate from closest point on the actual MINCO curve.
+        // ============================================================
         const auto closest =
             exactMincoMetricClosestPoint(
                 piece,
@@ -695,81 +717,186 @@ inline bool buildCompactMincoPiecePolytope(
                 inverseUtility,
                 rootTolerance);
 
-        if (!closest.valid)
+        if (closest.valid)
         {
-            ++localDiagnostics
-                  .rejected_candidate_count;
+            localDiagnostics
+                .max_closest_stationary_points =
+                std::max(
+                    localDiagnostics
+                        .max_closest_stationary_points,
+                    closest
+                        .stationary_point_count);
 
-            continue;
-        }
+            normal =
+                inverseUtility *
+                (obstacle -
+                 closest.point);
 
-        localDiagnostics
-            .max_closest_stationary_points =
-            std::max(
-                localDiagnostics
-                    .max_closest_stationary_points,
-                closest
-                    .stationary_point_count);
+            const double normalNorm =
+                normal.norm();
 
-        Eigen::Vector3d normal =
-            inverseUtility *
-            (obstacle -
-             closest.point);
-
-        const double normalNorm =
-            normal.norm();
-
-        if (!std::isfinite(
-                normalNorm) ||
-            normalNorm <=
-                epsilon)
-        {
-            ++localDiagnostics
-                  .rejected_candidate_count;
-
-            continue;
-        }
-
-        normal /=
-            normalNorm;
-
-        // --------------------------------------------------------
-        // IMPORTANT:
-        // closest.point generates the candidate normal, but the
-        // actual separating plane is certified against the COMPLETE
-        // polynomial by exact support.
-        // --------------------------------------------------------
-        const auto support =
-            protectedMincoPieceDirectionalSupport(
-                piece,
-                normal,
-                overlapRadius,
-                rootTolerance);
-
-        if (!support.valid)
-        {
-            ++localDiagnostics
-                  .rejected_candidate_count;
-
-            continue;
-        }
-
-        const double protectedSupport =
-            support.support;
-
-        const double obstacleSupport =
-            normal.dot(
-                obstacle);
-
-        const double separationMargin =
-            obstacleSupport -
-            protectedSupport;
-
-        if (!std::isfinite(
-                separationMargin) ||
-            separationMargin <=
-                2.0 *
+            if (normal.allFinite() &&
+                std::isfinite(normalNorm) &&
+                normalNorm >
                     epsilon)
+            {
+                normal /=
+                    normalNorm;
+
+                normalAvailable =
+                    true;
+            }
+        }
+
+        // ------------------------------------------------------------
+        // Check whether the fast curve-derived normal is actually a
+        // separator of the COMPLETE convex protected set.
+        // ------------------------------------------------------------
+        bool separatorCertified =
+            false;
+
+        double protectedSupport =
+            0.0;
+
+        double obstacleSupport =
+            0.0;
+
+        double separationMargin =
+            -std::numeric_limits<double>::
+                infinity();
+
+        if (normalAvailable)
+        {
+            const auto support =
+                protectedMincoPieceDirectionalSupport(
+                    piece,
+                    normal,
+                    overlapRadius,
+                    rootTolerance);
+
+            if (support.valid)
+            {
+                protectedSupport =
+                    support.support;
+
+                obstacleSupport =
+                    normal.dot(
+                        obstacle);
+
+                separationMargin =
+                    obstacleSupport -
+                    protectedSupport;
+
+                separatorCertified =
+                    std::isfinite(
+                        separationMargin) &&
+                    separationMargin >
+                        2.0 *
+                            epsilon;
+            }
+        }
+
+        // ============================================================
+        // Stage 2:
+        // If projection onto the non-convex polynomial curve does not
+        // provide a legal separator, refine against the actual convex
+        // protected set K.
+        //
+        // IMPORTANT:
+        // We do NOT require Frank-Wolfe convergence.
+        // Once exact support certifies:
+        //
+        //     n^T o - h_K(n) > eps
+        //
+        // a legal separating face has already been found.
+        // ============================================================
+        if (!separatorCertified)
+        {
+            ++localDiagnostics
+                  .projection_fallback_attempt_count;
+
+            const auto projection =
+                projectOntoProtectedMincoSet(
+                    piece,
+                    obstacle,
+                    inverseUtility,
+                    overlapRadius,
+                    512,
+                    1.0e-10,
+                    1.0e-10,
+                    epsilon,
+                    rootTolerance);
+
+            localDiagnostics
+                .projection_fallback_iteration_count +=
+                projection.iterations;
+
+            if (projection.valid &&
+                projection.certified_separable &&
+                projection.separating_normal.allFinite())
+            {
+                normal =
+                    projection
+                        .separating_normal;
+
+                const double normalNorm =
+                    normal.norm();
+
+                if (std::isfinite(
+                        normalNorm) &&
+                    normalNorm >
+                        epsilon)
+                {
+                    normal /=
+                        normalNorm;
+
+                    // Never rely only on values saved by the numerical
+                    // projection routine. Re-certify the final face here.
+                    const auto support =
+                        protectedMincoPieceDirectionalSupport(
+                            piece,
+                            normal,
+                            overlapRadius,
+                            rootTolerance);
+
+                    if (support.valid)
+                    {
+                        protectedSupport =
+                            support.support;
+
+                        obstacleSupport =
+                            normal.dot(
+                                obstacle);
+
+                        separationMargin =
+                            obstacleSupport -
+                            protectedSupport;
+
+                        separatorCertified =
+                            std::isfinite(
+                                separationMargin) &&
+                            separationMargin >
+                                2.0 *
+                                    epsilon;
+
+                        if (separatorCertified)
+                        {
+                            ++localDiagnostics
+                                  .projection_fallback_success_count;
+
+                            localDiagnostics
+                                .projection_fallback_max_margin_m =
+                                std::max(
+                                    localDiagnostics
+                                        .projection_fallback_max_margin_m,
+                                    separationMargin);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!separatorCertified)
         {
             ++localDiagnostics
                   .rejected_candidate_count;
