@@ -970,6 +970,213 @@ public:
                         std::chrono::steady_clock::now() - optimizerStarted)
                         .count();
 
+                // ============================================================
+                // Exact continuous-time certificate of the nominal MINCO
+                // trajectory against the ORIGINAL baseline SFC.
+                //
+                // Current production setup uses lengthPerPiece = INFINITY,
+                // hence one baseline corridor corresponds to one MINCO piece.
+                //
+                // This check is deliberately performed BEFORE CSGN and before
+                // any trajectory-relevant corridor reconstruction.
+                // ============================================================
+                const auto nominalCertStarted =
+                    std::chrono::steady_clock::now();
+
+                constexpr double nominalContainmentToleranceM =
+                    1.0e-6;
+
+                bool nominalMappingValid =
+                    traj.getPieceNum() ==
+                    static_cast<int>(
+                        hPolys.size());
+
+                bool nominalCertificateValid =
+                    nominalMappingValid &&
+                    traj.getPieceNum() > 0;
+
+                bool nominalContained =
+                    nominalCertificateValid;
+
+                int nominalFacesChecked =
+                    0;
+
+                int nominalWorstPiece =
+                    -1;
+
+                int nominalWorstFace =
+                    -1;
+
+                double nominalMaxSignedViolationM =
+                    -std::numeric_limits<double>::
+                        infinity();
+
+                double nominalMinMarginM =
+                    std::numeric_limits<double>::
+                        infinity();
+
+                double nominalWorstNormalizedTime =
+                    0.0;
+
+                double nominalWorstPhysicalTime =
+                    0.0;
+
+                if (nominalCertificateValid)
+                {
+                    for (int pieceId = 0;
+                         pieceId < traj.getPieceNum();
+                         ++pieceId)
+                    {
+                        const auto certificate =
+                            traj_relevant::
+                                certifyMincoPieceInPolytope(
+                                    traj[pieceId],
+                                    hPolys[pieceId],
+                                    nominalContainmentToleranceM,
+                                    1.0e-10);
+
+                        nominalFacesChecked +=
+                            certificate.checked_face_count;
+
+                        if (!certificate.valid)
+                        {
+                            nominalCertificateValid =
+                                false;
+
+                            nominalContained =
+                                false;
+
+                            nominalWorstPiece =
+                                pieceId;
+
+                            break;
+                        }
+
+                        if (!certificate.contained)
+                        {
+                            nominalContained =
+                                false;
+                        }
+
+                        if (certificate.max_signed_violation_m >
+                            nominalMaxSignedViolationM)
+                        {
+                            nominalMaxSignedViolationM =
+                                certificate
+                                    .max_signed_violation_m;
+
+                            nominalWorstPiece =
+                                pieceId;
+
+                            nominalWorstFace =
+                                certificate.worst_face;
+
+                            nominalWorstNormalizedTime =
+                                certificate
+                                    .worst_normalized_time;
+
+                            nominalWorstPhysicalTime =
+                                certificate
+                                    .worst_physical_time;
+                        }
+
+                        nominalMinMarginM =
+                            std::min(
+                                nominalMinMarginM,
+                                certificate.min_margin_m);
+                    }
+                }
+
+                const double nominalCertMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::steady_clock::now() -
+                            nominalCertStarted)
+                        .count();
+
+                const bool nominalCertSuccess =
+                    nominalCertificateValid &&
+                    nominalContained;
+
+                ROS_INFO_STREAM(
+                    "TF_NOMINAL_CERT "
+                    << "success="
+                    << nominalCertSuccess
+
+                    << " mapping_valid="
+                    << nominalMappingValid
+
+                    << " certificate_valid="
+                    << nominalCertificateValid
+
+                    << " contained="
+                    << nominalContained
+
+                    << " traj_pieces="
+                    << traj.getPieceNum()
+
+                    << " corridors="
+                    << hPolys.size()
+
+                    << " faces_checked="
+                    << nominalFacesChecked
+
+                    << " max_signed_violation_m="
+                    << nominalMaxSignedViolationM
+
+                    << " min_margin_m="
+                    << nominalMinMarginM
+
+                    << " worst_piece="
+                    << nominalWorstPiece
+
+                    << " worst_face="
+                    << nominalWorstFace
+
+                    << " worst_tau="
+                    << nominalWorstNormalizedTime
+
+                    << " worst_t="
+                    << nominalWorstPhysicalTime
+
+                    << " cert_ms="
+                    << nominalCertMs);
+
+                // ------------------------------------------------------------
+                // Nominal-stage timing.
+                //
+                // path_search_ms is common to both original and proposed
+                // pipelines and is printed separately.
+                //
+                // nominal_after_route_ms is the extra cost required to obtain
+                // the baseline FIRI + optimized nominal MINCO trajectory.
+                // ------------------------------------------------------------
+                const double nominalAfterRouteMs =
+                    record.corridor_generation_ms +
+                    record.optimizer_setup_ms +
+                    record.optimizer_ms;
+
+                ROS_INFO_STREAM(
+                    "TF_NOMINAL_TIMING "
+                    << "path_ms="
+                    << record.path_search_ms
+
+                    << " corridor_ms="
+                    << record.corridor_generation_ms
+
+                    << " setup_ms="
+                    << record.optimizer_setup_ms
+
+                    << " opt_ms="
+                    << record.optimizer_ms
+
+                    << " nominal_after_route_ms="
+                    << nominalAfterRouteMs
+
+                    << " cert_ms="
+                    << nominalCertMs);
+
                 // Temporary debug tool for validating the MINCO-induced
                 // deformation metric.  It only runs when the experiment tag
                 // is exactly "debug_metric", so normal benchmarks are not

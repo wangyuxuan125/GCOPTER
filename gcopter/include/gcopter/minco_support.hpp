@@ -436,6 +436,160 @@ protectedMincoPieceDirectionalSupport(
     return result;
 }
 
+struct MincoPolytopeContainmentCertificate
+{
+    bool valid =
+        false;
+
+    bool contained =
+        false;
+
+    int checked_face_count =
+        0;
+
+    int worst_face =
+        -1;
+
+    // Signed Euclidean violation:
+    //
+    // > 0 : trajectory leaves the halfspace
+    // = 0 : touches the face
+    // < 0 : inside
+    double max_signed_violation_m =
+        -std::numeric_limits<double>::infinity();
+
+    // Positive when contained.
+    double min_margin_m =
+        std::numeric_limits<double>::infinity();
+
+    double worst_normalized_time =
+        0.0;
+
+    double worst_physical_time =
+        0.0;
+};
+
+// ================================================================
+// Exact continuous-time certificate:
+//
+//   Gamma = {p(t) : 0 <= t <= T}
+//
+//   P = intersection_f {x : n_f^T x + d_f <= 0}
+//
+// For each face:
+//
+//   max_t [n_f^T p(t) + d_f]
+//      = h_Gamma(n_f) + d_f.
+//
+// Therefore:
+//
+//   Gamma subset P
+//
+// iff every face has non-positive maximum violation.
+//
+// The returned violation is divided by ||n_f|| so that it is in
+// meters even if input halfspaces are not normalized.
+// ================================================================
+template <int D>
+inline MincoPolytopeContainmentCertificate
+certifyMincoPieceInPolytope(
+    const Piece<D> &piece,
+    const Eigen::MatrixX4d &hPoly,
+    const double containmentToleranceM =
+        1.0e-6,
+    const double rootTolerance =
+        1.0e-10,
+    const double coefficientTolerance =
+        1.0e-12)
+{
+    MincoPolytopeContainmentCertificate result;
+
+    if (hPoly.rows() <= 0 ||
+        hPoly.cols() != 4 ||
+        !hPoly.allFinite())
+    {
+        return result;
+    }
+
+    for (int faceId = 0;
+         faceId < hPoly.rows();
+         ++faceId)
+    {
+        const Eigen::Vector3d normal =
+            hPoly.block<1, 3>(
+                    faceId,
+                    0)
+                .transpose();
+
+        const double normalNorm =
+            normal.norm();
+
+        if (!normal.allFinite() ||
+            !std::isfinite(normalNorm) ||
+            normalNorm <=
+                coefficientTolerance)
+        {
+            return result;
+        }
+
+        const auto support =
+            exactMincoDirectionalSupport(
+                piece,
+                normal,
+                rootTolerance,
+                coefficientTolerance);
+
+        if (!support.valid)
+        {
+            return result;
+        }
+
+        const double rawViolation =
+            support.support +
+            hPoly(
+                faceId,
+                3);
+
+        const double signedViolationM =
+            rawViolation /
+            normalNorm;
+
+        ++result.checked_face_count;
+
+        if (signedViolationM >
+            result.max_signed_violation_m)
+        {
+            result.max_signed_violation_m =
+                signedViolationM;
+
+            result.worst_face =
+                faceId;
+
+            result.worst_normalized_time =
+                support.normalized_time;
+
+            result.worst_physical_time =
+                support.physical_time;
+        }
+
+        result.min_margin_m =
+            std::min(
+                result.min_margin_m,
+                -signedViolationM);
+    }
+
+    result.valid =
+        result.checked_face_count ==
+        hPoly.rows();
+
+    result.contained =
+        result.valid &&
+        result.max_signed_violation_m <=
+            containmentToleranceM;
+
+    return result;
+}
+
 // ================================================================
 // Exact metric closest point on one MINCO polynomial piece.
 //
