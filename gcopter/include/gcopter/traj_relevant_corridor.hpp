@@ -88,9 +88,6 @@ struct CompactCorridorDiagnostics
     std::int64_t witness_distance_tests =
         0;
 
-    std::int64_t witness_distance_tests =
-        0;
-
     int greedy_obstacle_face_count =
         0;
 
@@ -1030,8 +1027,6 @@ inline bool buildCompactSegmentPolytope(
                 {
                     continue;
                 }
-                +localDiagnostics.witness_distance_tests;
-
                 const Eigen::Vector3d &obstacle =
                     localObstacles[
                         obstacleId];
