@@ -382,7 +382,7 @@ public:
                             config.maxVelMag,
                         1.0e-3);
 
-                Eigen::Matrix3Xd guideInnerPoints(
+                routeMincoGuideInnerPoints.resize(
                     3,
                     std::max(
                         guidePieceCount - 1,
@@ -395,13 +395,13 @@ public:
                              1;
                      ++pointId)
                 {
-                    guideInnerPoints.col(
+                    routeMincoGuideInnerPoints.col(
                         pointId - 1) =
                         route[
                             pointId];
                 }
 
-                Eigen::VectorXd guideTimes(
+                routeMincoGuideTimes.resize(
                     guidePieceCount);
 
                 double routeLength =
@@ -431,7 +431,7 @@ public:
 
                     // 1e-3 is only a numerical floor, not a tuned
                     // trajectory-planning parameter.
-                    guideTimes(
+                    routeMincoGuideTimes(
                         pieceId) =
                         std::max(
                             segmentLength /
@@ -441,26 +441,26 @@ public:
                     minGuideTime =
                         std::min(
                             minGuideTime,
-                            guideTimes(
+                            routeMincoGuideTimes(
                                 pieceId));
 
                     maxGuideTime =
                         std::max(
                             maxGuideTime,
-                            guideTimes(
+                            routeMincoGuideTimes(
                                 pieceId));
                 }
 
-                Eigen::Matrix3d guideHeadPVA =
+                routeMincoGuideHeadPVA =
                     Eigen::Matrix3d::Zero();
 
-                Eigen::Matrix3d guideTailPVA =
+                routeMincoGuideTailPVA =
                     Eigen::Matrix3d::Zero();
 
-                guideHeadPVA.col(0) =
+                routeMincoGuideHeadPVA.col(0) =
                     route.front();
 
-                guideTailPVA.col(0) =
+                routeMincoGuideTailPVA.col(0) =
                     route.back();
 
                 // --------------------------------------------------------
@@ -473,13 +473,13 @@ public:
                 minco::MINCO_S3NU guideMinco;
 
                 guideMinco.setConditions(
-                    guideHeadPVA,
-                    guideTailPVA,
+                    routeMincoGuideHeadPVA,
+                    routeMincoGuideTailPVA,
                     guidePieceCount);
 
                 guideMinco.setParameters(
-                    guideInnerPoints,
-                    guideTimes);
+                    routeMincoGuideInnerPoints,
+                    routeMincoGuideTimes);
 
                 guideMinco.getTrajectory(
                     routeMincoGuide);
