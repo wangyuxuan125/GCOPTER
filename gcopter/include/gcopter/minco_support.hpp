@@ -1092,6 +1092,100 @@ projectOntoProtectedMincoSet(
             return result;
         }
 
+        // --------------------------------------------------------
+        // Early exit:
+        //
+        // The goal of this oracle is NOT an exact projection.
+        // We only need a separating direction n satisfying
+        //
+        //     n^T query > h_K(n).
+        //
+        // Since
+        //
+        //     n = -gradient = W(query - q),
+        //
+        // and linearOracle was obtained using support direction
+        // -gradient, its stored support is exactly h_K(n).
+        //
+        // Therefore separator validity can be certified immediately
+        // without waiting for Frank-Wolfe convergence.
+        // --------------------------------------------------------
+        const Eigen::Vector3d candidateNormal =
+            -gradient;
+
+        const double candidateNormalNorm =
+            candidateNormal.norm();
+
+        if (candidateNormal.allFinite() &&
+            std::isfinite(candidateNormalNorm) &&
+            candidateNormalNorm >
+                coefficientTolerance)
+        {
+            const double rawSeparation =
+                candidateNormal.dot(
+                    query) -
+                linearOracle.support;
+
+            const double separationMarginM =
+                rawSeparation /
+                candidateNormalNorm;
+
+            if (std::isfinite(
+                    separationMarginM) &&
+                separationMarginM >
+                    separationToleranceM)
+            {
+                result.point =
+                    q;
+
+                result.separating_normal =
+                    candidateNormal /
+                    candidateNormalNorm;
+
+                result.metric_distance_squared =
+                    std::max(
+                        0.0,
+                        metricDistanceSquared);
+
+                result.euclidean_distance =
+                    delta.norm();
+
+                result.frank_wolfe_gap =
+                    gap;
+
+                result.metric_distance_squared_lower_bound =
+                    std::max(
+                        0.0,
+                        result.metric_distance_squared -
+                            2.0 *
+                                gap);
+
+                result.certified_separation_margin_m =
+                    separationMarginM;
+
+                result.certified_separable =
+                    true;
+
+                result.iterations =
+                    iteration + 1;
+
+                const double gapScale =
+                    std::max(
+                        1.0,
+                        metricDistanceSquared);
+
+                result.converged =
+                    gap <=
+                    gapTolerance *
+                        gapScale;
+
+                result.valid =
+                    true;
+
+                return result;
+            }
+        }
+
         finalGap =
             gap;
 
