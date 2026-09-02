@@ -84,6 +84,9 @@ struct CompactCorridorDiagnostics
 
     std::int64_t obstacle_face_tests =
         0;
+    
+    std::int64_t witness_distance_tests =
+        0;
 
     std::int64_t witness_distance_tests =
         0;
@@ -781,6 +784,8 @@ inline bool buildCompactSegmentPolytope(
                             pointId]) -
                     threshold;
 
+                ++localDiagnostics.obstacle_face_tests; 
+
                 if (violation >
                     epsilon)
                 {
@@ -817,9 +822,12 @@ inline bool buildCompactSegmentPolytope(
                     candidate));
         }
 
-        localDiagnostics.candidate_count =
+        localDiagnostics.generated_candidate_count =
             static_cast<int>(
                 candidates.size());
+            
+        localDiagnostics.candidate_count =
+            localDiagnostics.generated_candidate_count;
 
         // ------------------------------------------------------------
         // Batch greedy set cover.
@@ -1022,6 +1030,7 @@ inline bool buildCompactSegmentPolytope(
                 {
                     continue;
                 }
+                +localDiagnostics.witness_distance_tests;
 
                 const Eigen::Vector3d &obstacle =
                     localObstacles[
@@ -1294,6 +1303,53 @@ inline bool buildCompactSegmentPolytope(
 
             ++localDiagnostics
                   .active_witness_rounds;
+        }
+
+        // ============================================================
+        // Rebuild COMPLETE coverage relations for active candidates.
+        //
+        // During active generation, candidate.covered_obstacles contains
+        // only obstacles that were unresolved at the moment the face was
+        // generated.  Those lists are therefore nearly disjoint and are
+        // insufficient for the common reverse-delete stage.
+        //
+        // Recompute every selected face against the complete local cloud.
+        // Complexity is O(F * N), with F equal to the number of generated
+        // active faces.
+        // ============================================================
+        for (auto &candidate :
+             candidates)
+        {
+            candidate.covered_obstacles.clear();
+        
+            const Eigen::Vector3d normal =
+                candidate.plane.head<3>();
+        
+            const double threshold =
+                -candidate.plane(3);
+        
+            for (int obstacleId = 0;
+                 obstacleId < obstacleCount;
+                 ++obstacleId)
+            {
+                ++localDiagnostics
+                      .obstacle_face_tests;
+            
+                const double violation =
+                    normal.dot(
+                        localObstacles[
+                            obstacleId]) -
+                    threshold;
+                        
+                if (violation >
+                    epsilon)
+                {
+                    candidate
+                        .covered_obstacles
+                        .push_back(
+                            obstacleId);
+                }
+            }
         }
 
         localDiagnostics

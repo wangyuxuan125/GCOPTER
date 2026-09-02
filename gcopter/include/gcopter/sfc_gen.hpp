@@ -498,9 +498,15 @@ namespace sfc_gen
     // while replacing the inner FIRI inflation with:
     //
     //   CSGN anisotropic domain
-    //       -> batch separating-plane candidates
-    //       -> approximate minimum set cover
-    //       -> redundancy pruning.
+    //       ->
+    //   candidate construction:
+    //       BATCH_SET_COVER
+    //       or
+    //       ACTIVE_WITNESS constraint generation
+    //       ->
+    //   redundancy pruning
+    //       ->
+    //   explicit full-cloud safety verification.
     // ============================================================
     inline bool trajectoryRelevantCompactCover(
         const std::vector<Eigen::Vector3d> &path,
