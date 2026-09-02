@@ -1,6 +1,7 @@
 #include "misc/visualizer.hpp"
 #include "gcopter/trajectory.hpp"
 #include "gcopter/minco.hpp"
+#include "gcopter/route_minco_guide.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
@@ -342,6 +343,20 @@ public:
 
             bool routeMincoGuideValid =
                 false;
+            
+            Eigen::Matrix3Xd
+                routeMincoGuideInnerPoints;
+                    
+            Eigen::VectorXd
+                routeMincoGuideTimes;
+                    
+            Eigen::Matrix3d
+                routeMincoGuideHeadPVA =
+                    Eigen::Matrix3d::Zero();
+                    
+            Eigen::Matrix3d
+                routeMincoGuideTailPVA =
+                    Eigen::Matrix3d::Zero();
 
             if (config.experimentTag ==
                 "debug_metric")
@@ -879,6 +894,118 @@ public:
 
                     << " sample_cap_hits="
                     << guideSamplingCapHits);
+
+                    Trajectory<5>
+                        repairedRouteMincoGuide;
+
+                    std::vector<Eigen::Vector3d>
+                        repairedGuideWaypoints;
+
+                    traj_relevant::
+                        RouteMincoGuideOptions
+                            repairOptions;
+
+                    repairOptions.reference_speed =
+                        std::max(
+                            0.5 *
+                                config.maxVelMag,
+                            1.0e-3);
+                        
+                    repairOptions.spatial_sample_step =
+                        std::max(
+                            0.25 *
+                                config.voxelWidth,
+                            1.0e-3);
+                        
+                    repairOptions.max_refinement_rounds =
+                        4;
+                        
+                    traj_relevant::
+                        RouteMincoGuideDiagnostics
+                            repairDiagnostics;
+                        
+                    const bool repairedGuideSuccess =
+                        traj_relevant::
+                            buildCollisionAwareRouteMincoGuide(
+                                route,
+                                voxelMap,
+                                repairOptions,
+                                repairedRouteMincoGuide,
+                                repairedGuideWaypoints,
+                                &repairDiagnostics);
+                            
+                    ROS_INFO_STREAM(
+                        "TF_ROUTE_MINCO_REFINE "
+                        << "success="
+                        << repairedGuideSuccess
+                    
+                        << " collision_free="
+                        << repairDiagnostics
+                               .collision_free
+                    
+                        << " initial_waypoints="
+                        << repairDiagnostics
+                               .initial_waypoint_count
+                    
+                        << " final_waypoints="
+                        << repairDiagnostics
+                               .final_waypoint_count
+                    
+                        << " initial_pieces="
+                        << repairDiagnostics
+                               .initial_piece_count
+                    
+                        << " final_pieces="
+                        << repairDiagnostics
+                               .final_piece_count
+                    
+                        << " rounds="
+                        << repairDiagnostics
+                               .refinement_rounds
+                    
+                        << " inserted="
+                        << repairDiagnostics
+                               .inserted_waypoint_count
+                    
+                        << " initial_collision_pieces="
+                        << repairDiagnostics
+                               .initial_collision_piece_count
+                    
+                        << " final_collision_pieces="
+                        << repairDiagnostics
+                               .final_collision_piece_count
+                    
+                        << " initial_collision_samples="
+                        << repairDiagnostics
+                               .initial_collision_sample_count
+                    
+                        << " final_collision_samples="
+                        << repairDiagnostics
+                               .final_collision_sample_count
+                    
+                        << " final_samples="
+                        << repairDiagnostics
+                               .final_total_samples
+                    
+                        << " build_ms="
+                        << repairDiagnostics
+                               .build_ms
+                    
+                        << " check_ms="
+                        << repairDiagnostics
+                               .collision_check_ms
+                    
+                        << " max_vel="
+                        << repairDiagnostics
+                               .final_max_vel
+                    
+                        << " max_acc="
+                        << repairDiagnostics
+                               .final_max_acc
+                    
+                        << " sample_cap_hits="
+                        << repairDiagnostics
+                               .sample_cap_hits);
             }
 
             std::vector<Eigen::MatrixX4d> hPolys;

@@ -4040,6 +4040,104 @@ namespace gcopter
 
             return anyValid;
         }
+            
+        inline bool setGaussNewtonReferenceState(
+            const Eigen::Matrix3d &referenceHeadPVA,
+            const Eigen::Matrix3d &referenceTailPVA,
+            const Eigen::Matrix3Xd &referencePoints,
+            const Eigen::VectorXd &referenceTimes,
+            const int integrationResolution,
+            const Eigen::VectorXd &magnitudeBounds,
+            const Eigen::VectorXd &physicalParams)
+        {
+            optimizedStateValid =
+                false;
+        
+            const int referencePieceCount =
+                referenceTimes.size();
+        
+            if (referencePieceCount <= 0 ||
+                referencePoints.rows() != 3 ||
+                referencePoints.cols() !=
+                    referencePieceCount - 1 ||
+                integrationResolution <= 0 ||
+                magnitudeBounds.size() < 5 ||
+                physicalParams.size() < 6 ||
+                !referenceHeadPVA.allFinite() ||
+                !referenceTailPVA.allFinite() ||
+                !referencePoints.allFinite() ||
+                !referenceTimes.allFinite() ||
+                !magnitudeBounds.allFinite() ||
+                !physicalParams.allFinite())
+            {
+                return false;
+            }
+        
+            for (int pieceId = 0;
+                 pieceId <
+                     referencePieceCount;
+                 ++pieceId)
+            {
+                if (!std::isfinite(
+                        referenceTimes(pieceId)) ||
+                    referenceTimes(pieceId) <=
+                        0.0)
+                {
+                    return false;
+                }
+            }
+        
+            headPVA =
+                referenceHeadPVA;
+        
+            tailPVA =
+                referenceTailPVA;
+        
+            pieceN =
+                referencePieceCount;
+        
+            integralRes =
+                integrationResolution;
+        
+            magnitudeBd =
+                magnitudeBounds;
+        
+            physicalPm =
+                physicalParams;
+        
+            optimizedPoints =
+                referencePoints;
+        
+            optimizedTimes =
+                referenceTimes;
+        
+            optimizedCost =
+                0.0;
+        
+            optimizedX.resize(0);
+        
+            minco.setConditions(
+                headPVA,
+                tailPVA,
+                pieceN);
+            
+            minco.setParameters(
+                optimizedPoints,
+                optimizedTimes);
+            
+            flatmap.reset(
+                physicalPm(0),
+                physicalPm(1),
+                physicalPm(2),
+                physicalPm(3),
+                physicalPm(4),
+                physicalPm(5));
+            
+            optimizedStateValid =
+                true;
+            
+            return true;
+        }
 
         inline bool computeGaussNewtonDeformationMetrics(
             GaussNewtonDeformationMetrics &metrics,
