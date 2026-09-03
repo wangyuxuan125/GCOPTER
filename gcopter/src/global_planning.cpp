@@ -4152,8 +4152,8 @@ public:
                         };
 
                         auto runBackendAb =
-                            [&](const std::vector<
-                                    Eigen::MatrixX4d> &corridors)
+                            [&](const std::vector<Eigen::MatrixX4d> &corridors,
+                                const double corridorPenaltyScale = 1.0)
                                 -> BackendAbResult
                         {
                             BackendAbResult result;
@@ -4184,6 +4184,12 @@ public:
                             const auto setupStarted =
                                 std::chrono::steady_clock::now();
                         
+                            Eigen::VectorXd backendPenaltyWeights = penaltyWeights;
+                            if (backendPenaltyWeights.size() > 0)
+                            {
+                                backendPenaltyWeights(0) *= corridorPenaltyScale;
+                            }
+
                             result.setup_success =
                                 backendOptimizer.setup(
                                     config.weightT,
@@ -4194,7 +4200,7 @@ public:
                                     config.smoothingEps,
                                     quadratureRes,
                                     magnitudeBounds,
-                                    penaltyWeights,
+                                    backendPenaltyWeights,   // 使用调整后的权重
                                     physicalParams);
                                 
                             result.setup_ms =
@@ -5646,14 +5652,16 @@ public:
                                     guideCompactHPolys);
                         }
 
-                        BackendAbResult
-                            activeGuideBackendResult;
-
+                        BackendAbResult activeGuideBackendResult;
                         if (activeGuideSuccess)
                         {
-                            activeGuideBackendResult =
-                                runBackendAb(
-                                    activeGuideHPolys);
+                            activeGuideBackendResult = runBackendAb(activeGuideHPolys);
+                        }
+                        
+                        BackendAbResult activeGuidePenalty10Result;
+                        if (activeGuideSuccess)
+                        {
+                            activeGuidePenalty10Result = runBackendAb(activeGuideHPolys, 10.0);
                         }
 
                         const double guideProposedComponentMs =
@@ -5926,6 +5934,25 @@ public:
                             << " exact_cert_ms="
                             << activeGuideBackendResult
                                    .exact_certificate_ms);
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_ACTIVE_PENALTY_DIAG "
+                            << "base_exact_violation="
+                            << activeGuideBackendResult.exact_max_violation_m
+                            << " x10_exact_violation="
+                            << activeGuidePenalty10Result.exact_max_violation_m
+                            << " base_exact_contained="
+                            << activeGuideBackendResult.exact_contained
+                            << " x10_exact_contained="
+                            << activeGuidePenalty10Result.exact_contained
+                            << " base_cost="
+                            << activeGuideBackendResult.final_cost
+                            << " x10_cost="
+                            << activeGuidePenalty10Result.final_cost
+                            << " base_opt_ms="
+                            << activeGuideBackendResult.optimize_ms
+                            << " x10_opt_ms="
+                            << activeGuidePenalty10Result.optimize_ms);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_PROPOSED_TIMING "
