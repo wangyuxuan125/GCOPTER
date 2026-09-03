@@ -41,6 +41,8 @@
 #include <cstdint>
 #include <memory>
 #include <Eigen/Eigen>
+#include <algorithm>
+#include <cmath>
 
 namespace sfc_gen
 {
@@ -118,6 +120,28 @@ namespace sfc_gen
         bounds.setLow(2, 0.0);
         bounds.setHigh(2, hb(2) - lb(2));
         space->setBounds(bounds);
+
+        const double desiredMotionResolution =
+            std::max(
+                0.25 *
+                    mapPtr->getScale(),
+                1.0e-4);
+            
+        const double stateSpaceExtent =
+            space->getMaximumExtent();
+            
+        if (std::isfinite(stateSpaceExtent) &&
+            stateSpaceExtent > 0.0)
+        {
+            const double validSegmentFraction =
+                std::min(
+                    1.0,
+                    desiredMotionResolution /
+                        stateSpaceExtent);
+                
+            space->setLongestValidSegmentFraction(
+                validSegmentFraction);
+        }
 
         auto si(std::make_shared<ompl::base::SpaceInformation>(space));
 
