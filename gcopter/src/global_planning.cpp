@@ -2,6 +2,8 @@
 #include "gcopter/trajectory.hpp"
 #include "gcopter/minco.hpp"
 #include "gcopter/route_minco_guide.hpp"
+#include "gcopter/minco_affine_map.hpp"
+#include "gcopter/exact_sfc_projection.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
@@ -937,6 +939,115 @@ public:
                                 repairedGuideWaypoints,
                                 &repairDiagnostics);
                             
+                // ============================================================
+                // Fixed-time MINCO waypoint-affinity validation.
+                //
+                // This validates the mathematical foundation of the future
+                // continuous-time hard-SFC backend:
+                //
+                //     p_i(tau; P)
+                //       = c_i(tau)
+                //       + sum_j beta_ij(tau) P_j.
+                //
+                // No corridor or optimizer behavior is changed here.
+                // ============================================================
+                traj_relevant::
+                    MincoWaypointAffineMap
+                        guideAffineMap;
+                                            
+                traj_relevant::
+                    MincoAffineValidationResult
+                        guideAffineValidation;
+                                            
+                bool guideAffineBuildSuccess =
+                    false;
+                                            
+                double guideAffineBuildMs =
+                    0.0;
+                                            
+                if (config.experimentTag ==
+                        "debug_metric" &&
+                    routeMincoGuideValid)
+                {
+                    const auto affineBuildStarted =
+                        std::chrono::
+                            steady_clock::now();
+                
+                    guideAffineBuildSuccess =
+                        guideAffineMap.build(
+                            routeMincoGuideHeadPVA,
+                            routeMincoGuideTailPVA,
+                            routeMincoGuideTimes);
+                        
+                    guideAffineBuildMs =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::
+                                    steady_clock::now() -
+                                affineBuildStarted)
+                            .count();
+                            
+                    if (guideAffineBuildSuccess)
+                    {
+                        guideAffineValidation =
+                            traj_relevant::
+                                validateMincoWaypointAffineMap(
+                                    guideAffineMap,
+                                    routeMincoGuideHeadPVA,
+                                    routeMincoGuideTailPVA,
+                                    routeMincoGuideTimes,
+                                    routeMincoGuideInnerPoints,
+                                    16,
+                                    12,
+                                    0.5);
+                    }
+                
+                    ROS_INFO_STREAM(
+                        "TF_MINCO_AFFINE_MAP "
+                        << "success="
+                        << (guideAffineBuildSuccess &&
+                            guideAffineValidation.valid)
+                        
+                        << " build_success="
+                        << guideAffineBuildSuccess
+                        
+                        << " pieces="
+                        << guideAffineMap
+                               .pieceCount()
+                        
+                        << " inner_waypoints="
+                        << guideAffineMap
+                               .waypointCount()
+                        
+                        << " variable_dim="
+                        << guideAffineMap
+                               .variableDimension()
+                        
+                        << " test_trajectories="
+                        << guideAffineValidation
+                               .test_trajectory_count
+                        
+                        << " position_tests="
+                        << guideAffineValidation
+                               .position_test_count
+                        
+                        << " max_position_error_m="
+                        << guideAffineValidation
+                               .max_position_error_m
+                        
+                        << " max_relative_error="
+                        << guideAffineValidation
+                               .max_relative_error
+                        
+                        << " map_build_ms="
+                        << guideAffineBuildMs
+                        
+                        << " validation_ms="
+                        << guideAffineValidation
+                               .validation_ms);
+                }
+
                     ROS_INFO_STREAM(
                         "TF_ROUTE_MINCO_REFINE "
                         << "success="
@@ -5657,7 +5768,7 @@ public:
                         {
                             activeGuideBackendResult = runBackendAb(activeGuideHPolys);
                         }
-                        
+
                         BackendAbResult activeGuidePenalty10Result;
                         if (activeGuideSuccess)
                         {
@@ -6098,6 +6209,237 @@ public:
                             << " exact_cert_ms="
                             << activeGuideBackendResult
                                    .exact_certificate_ms);
+
+                    bool hardProjectionSetupSuccess =
+                        false;
+
+                    bool hardProjectionBaseSuccess =
+                        false;
+
+                    double hardProjectionBaseOptMs =
+                        0.0;
+
+                    double hardProjectionBaseCost =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    traj_relevant::
+                        ExactSfcProjectionResult
+                            hardProjectionResult;
+
+                    Trajectory<5>
+                        hardProjectedTrajectory;
+
+                    Eigen::Matrix3Xd
+                        hardProjectedPoints;
+
+                    if (activeGuideSuccess)
+                    {
+                        gcopter::GCOPTER_PolytopeSFC
+                            hardProjectionOptimizer;
+                    
+                        // IMPORTANT:
+                        // Use EXACTLY the same setup arguments as runBackendAb().
+                        hardProjectionSetupSuccess =
+                            hardProjectionOptimizer.setup(
+                                config.weightT,
+                                iniState,
+                                finState,
+                                activeGuideHPolys,
+                                INFINITY,
+                                config.smoothingEps,
+                                quadratureRes,
+                                magnitudeBounds,
+                                penaltyWeights,
+                                physicalParams);
+                            
+                        if (hardProjectionSetupSuccess)
+                        {
+                            Trajectory<5>
+                                hardProjectionBaseTrajectory;
+                        
+                            const auto baseStarted =
+                                std::chrono::
+                                    steady_clock::now();
+                        
+                            hardProjectionBaseCost =
+                                hardProjectionOptimizer.optimize(
+                                    hardProjectionBaseTrajectory,
+                                    config.relCostTol);
+                                
+                            hardProjectionBaseOptMs =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::
+                                            steady_clock::now() -
+                                        baseStarted)
+                                    .count();
+                                    
+                            hardProjectionBaseSuccess =
+                                std::isfinite(
+                                    hardProjectionBaseCost) &&
+                                hardProjectionBaseTrajectory
+                                        .getPieceNum() ==
+                                    static_cast<int>(
+                                        activeGuideHPolys
+                                            .size());
+                                    
+                            if (hardProjectionBaseSuccess)
+                            {
+                                traj_relevant::
+                                    ExactSfcProjectionOptions
+                                        projectionOptions;
+                            
+                                projectionOptions
+                                    .containment_tolerance_m =
+                                        1.0e-6;
+                            
+                                hardProjectionResult =
+                                    traj_relevant::
+                                        projectMincoToExactSfc(
+                                            iniState,
+                                            finState,
+                                            hardProjectionOptimizer
+                                                .getOptimizedPoints(),
+                                            hardProjectionOptimizer
+                                                .getOptimizedTimes(),
+                                            activeGuideHPolys,
+                                            hardProjectedTrajectory,
+                                            hardProjectedPoints,
+                                            projectionOptions);
+                            }
+                        }
+                    }
+
+                        ROS_INFO_STREAM(
+                            "TF_EXACT_HARD_SFC "
+                            << "setup_success="
+                            << hardProjectionSetupSuccess
+                        
+                            << " base_success="
+                            << hardProjectionBaseSuccess
+                        
+                            << " projection_success="
+                            << hardProjectionResult.success
+                        
+                            << " affine_valid="
+                            << hardProjectionResult
+                                   .affine_map_valid
+                        
+                            << " initial_cert_valid="
+                            << hardProjectionResult
+                                   .initial_certificate_valid
+                        
+                            << " initial_contained="
+                            << hardProjectionResult
+                                   .initial_contained
+                        
+                            << " final_cert_valid="
+                            << hardProjectionResult
+                                   .final_certificate_valid
+                        
+                            << " final_contained="
+                            << hardProjectionResult
+                                   .final_contained
+                        
+                            << " initial_violation_m="
+                            << hardProjectionResult
+                                   .initial_max_violation_m
+                        
+                            << " final_violation_m="
+                            << hardProjectionResult
+                                   .final_max_violation_m
+                        
+                            << " exchange_iterations="
+                            << hardProjectionResult
+                                   .exchange_iterations
+                        
+                            << " active_constraints="
+                            << hardProjectionResult
+                                   .active_constraint_count
+                        
+                            << " qp_sweeps="
+                            << hardProjectionResult
+                                   .total_qp_sweeps
+                        
+                            << " duplicate_witnesses="
+                            << hardProjectionResult
+                                   .duplicate_witness_count
+                        
+                            << " correction_l2_m="
+                            << hardProjectionResult
+                                   .correction_l2_m
+                        
+                            << " max_waypoint_disp_m="
+                            << hardProjectionResult
+                                   .max_waypoint_displacement_m
+                        
+                            << " initial_energy="
+                            << hardProjectionResult
+                                   .initial_energy
+                        
+                            << " final_energy="
+                            << hardProjectionResult
+                                   .final_energy
+                        
+                            << " base_opt_ms="
+                            << hardProjectionBaseOptMs
+                        
+                            << " projection_ms="
+                            << hardProjectionResult
+                                   .total_ms
+                        
+                            << " qp_ms="
+                            << hardProjectionResult
+                                   .qp_ms
+                        
+                            << " cert_ms="
+                            << hardProjectionResult
+                                   .certificate_ms);
+
+                        const double proposedHardAfterRouteMs =
+                            routeMincoGuideBuildMs +
+                            guideMetricMs +
+                            activeGuideMs +
+                            activeGuideBackendResult.setup_ms +
+                            activeGuideBackendResult.optimize_ms +
+                            hardProjectionResult.total_ms;
+                                                
+                        ROS_INFO_STREAM(
+                            "TF_PROPOSED_HARD_TIMING "
+                            << "guide_ms="
+                            << routeMincoGuideBuildMs
+                        
+                            << " csgn_ms="
+                            << guideMetricMs
+                        
+                            << " corridor_ms="
+                            << activeGuideMs
+                        
+                            << " setup_ms="
+                            << activeGuideBackendResult
+                                   .setup_ms
+                        
+                            << " optimize_ms="
+                            << activeGuideBackendResult
+                                   .optimize_ms
+                        
+                            << " hard_projection_ms="
+                            << hardProjectionResult
+                                   .total_ms
+                        
+                            << " after_route_ms="
+                            << proposedHardAfterRouteMs
+                        
+                            << " baseline_after_route_ms="
+                            << (record.corridor_generation_ms +
+                                record.optimizer_setup_ms +
+                                record.optimizer_ms)
+                            
+                            << " exact_feasible="
+                            << hardProjectionResult
+                                   .success);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_ACTIVE_PENALTY_DIAG "
