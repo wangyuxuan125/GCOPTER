@@ -8,6 +8,8 @@
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
 #include "gcopter/experiment_logger.hpp"
+#include "gcopter/route_replay.hpp"
+#include "gcopter/benchmark_logger.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
@@ -65,6 +67,14 @@ struct Config
     std::string experimentTag;
     int mapSeed;
     int routeSeed;
+    std::string benchmarkCaseId;
+    std::string benchmarkEnvironmentFamily;
+    std::string benchmarkDifficulty;
+    int benchmarkRepeatId;
+    bool benchmarkRouteReplayEnabled;
+    std::string benchmarkRouteReplayFile;
+    bool benchmarkRouteSaveEnabled;
+    std::string benchmarkRouteSaveFile;
     bool fixedStartGoalEnabled;
     double fixedStartX;
     double fixedStartY;
@@ -125,6 +135,38 @@ struct Config
         nh_priv.param<std::string>("Experiment/Tag", experimentTag, "default");
         nh_priv.param("Experiment/MapSeed", mapSeed, 1024);
         nh_priv.param("Experiment/RouteSeed", routeSeed, 0);
+        nh_priv.param<std::string>(
+            "Benchmark/CaseId",
+            benchmarkCaseId,
+            "");
+        nh_priv.param<std::string>(
+            "Benchmark/EnvironmentFamily",
+            benchmarkEnvironmentFamily,
+            "mockamap");
+        nh_priv.param<std::string>(
+            "Benchmark/Difficulty",
+            benchmarkDifficulty,
+            "development");
+        nh_priv.param(
+            "Benchmark/RepeatId",
+            benchmarkRepeatId,
+            0);
+        nh_priv.param(
+            "Benchmark/RouteReplayEnabled",
+            benchmarkRouteReplayEnabled,
+            false);
+        nh_priv.param<std::string>(
+            "Benchmark/RouteReplayFile",
+            benchmarkRouteReplayFile,
+            "");
+        nh_priv.param(
+            "Benchmark/RouteSaveEnabled",
+            benchmarkRouteSaveEnabled,
+            false);
+        nh_priv.param<std::string>(
+            "Benchmark/RouteSaveFile",
+            benchmarkRouteSaveFile,
+            "");
         nh_priv.param("Experiment/FixedStartGoalEnabled", fixedStartGoalEnabled, false);
         nh_priv.param("Experiment/FixedStartX", fixedStartX, 0.0);
         nh_priv.param("Experiment/FixedStartY", fixedStartY, 0.0);
@@ -175,7 +217,7 @@ private:
     Trajectory<5> traj;
     double trajStamp;
     gcopter_experiment::CsvLogger experimentLogger;
-
+    gcopter_benchmark::CaseCsvLogger benchmarkCaseLogger;
 public:
     GlobalPlanner(const Config &conf,
                   ros::NodeHandle &nh_)
@@ -184,9 +226,14 @@ public:
           mapInitialized(false),
           fixedPlanTriggered(false),
           visualizer(nh),
-          experimentLogger(config.experimentLogEnabled,
-                           config.experimentLogDirectory,
-                           config.experimentTag)
+          experimentLogger(
+              config.experimentLogEnabled,
+              config.experimentLogDirectory,
+              config.experimentTag),
+          
+          benchmarkCaseLogger(
+              config.experimentLogEnabled,
+              config.experimentLogDirectory)
     {
         const Eigen::Vector3i xyz((config.mapBound[1] - config.mapBound[0]) / config.voxelWidth,
                                   (config.mapBound[3] - config.mapBound[2]) / config.voxelWidth,
@@ -301,26 +348,480 @@ public:
                 }
             };
 
-            std::vector<Eigen::Vector3d> route;
-            const auto pathStarted = std::chrono::steady_clock::now();
-            sfc_gen::planPath<voxel_map::VoxelMap>(startGoal[0],
-                                                   startGoal[1],
-                                                   voxelMap.getOrigin(),
-                                                   voxelMap.getCorner(),
-                                                   &voxelMap, config.timeoutRRT,
-                                                   route,
-                                                   static_cast<std::uint_fast32_t>(
-                                                       std::max(config.routeSeed, 0)));
-            record.path_search_ms =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - pathStarted)
-                    .count();
-            record.route_point_count = static_cast<int>(route.size());
-            if (route.size() <= 1)
+            // ============================================================
+            // Deterministic benchmark route infrastructure.
+            //
+            // Generation mode:
+            //     RRT -> validate -> optionally save.
+            //
+            // Replay mode:
+            //     load fixed route -> validate -> downstream benchmark.
+            //
+            // The route itself is excluded from the paired comparison
+            // between different SFC methods.
+            // ============================================================
+            std::vector<Eigen::Vector3d>
+                route;
+                    
+            bool routeLoadedFromReplay =
+                false;
+                    
+            bool routeSaved =
+                false;
+                    
+            double routeIoMs =
+                0.0;
+                    
+            if (config.benchmarkRouteReplayEnabled &&
+                config.benchmarkRouteSaveEnabled)
             {
-                finishRecord("path_search_failure", false);
+                ROS_ERROR(
+                    "Benchmark route replay and route save "
+                    "cannot be enabled simultaneously.");
+                
+                finishRecord(
+                    "benchmark_route_mode_conflict",
+                    false);
+                
                 return;
             }
+            
+            if (config.benchmarkRouteReplayEnabled)
+            {
+                if (config
+                        .benchmarkRouteReplayFile
+                        .empty())
+                {
+                    ROS_ERROR(
+                        "Benchmark route replay enabled "
+                        "but replay file is empty.");
+                    
+                    finishRecord(
+                        "route_replay_file_missing",
+                        false);
+                    
+                    return;
+                }
+            
+                const auto ioStarted =
+                    std::chrono::
+                        steady_clock::now();
+            
+                routeLoadedFromReplay =
+                    gcopter_benchmark::
+                        loadRoute(
+                            config
+                                .benchmarkRouteReplayFile,
+                            route);
+                        
+                routeIoMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            ioStarted)
+                        .count();
+                        
+                // Route loading is benchmark input preparation,
+                // NOT path-search runtime.
+                record.path_search_ms =
+                    0.0;
+                        
+                if (!routeLoadedFromReplay)
+                {
+                    ROS_ERROR_STREAM(
+                        "Failed to load benchmark route: "
+                        << config
+                               .benchmarkRouteReplayFile);
+                    
+                    finishRecord(
+                        "route_replay_load_failure",
+                        false);
+                    
+                    return;
+                }
+            }
+            else
+            {
+                const auto pathStarted =
+                    std::chrono::
+                        steady_clock::now();
+            
+                sfc_gen::
+                    planPath<
+                        voxel_map::VoxelMap>(
+                            startGoal[0],
+                            startGoal[1],
+                            voxelMap
+                                .getOrigin(),
+                            voxelMap
+                                .getCorner(),
+                            &voxelMap,
+                            config.timeoutRRT,
+                            route,
+                            static_cast<
+                                std::uint_fast32_t>(
+                                    std::max(
+                                        config
+                                            .routeSeed,
+                                        0)));
+                                    
+                record.path_search_ms =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            pathStarted)
+                        .count();
+            }
+            
+            record.route_point_count =
+                static_cast<int>(
+                    route.size());
+                
+            if (route.size() <= 1)
+            {
+                finishRecord(
+                    routeLoadedFromReplay
+                        ? "route_replay_invalid_size"
+                        : "path_search_failure",
+                    false);
+                
+                return;
+            }
+            
+            // ------------------------------------------------------------
+            // The replayed route must correspond to the same start/goal
+            // state used by the benchmark case.
+            // ------------------------------------------------------------
+            constexpr double
+                endpointToleranceM =
+                    1.0e-6;
+            
+            const double startMismatch =
+                (route.front() -
+                 startGoal[0])
+                    .norm();
+            
+            const double goalMismatch =
+                (route.back() -
+                 startGoal[1])
+                    .norm();
+            
+            if (startMismatch >
+                    endpointToleranceM ||
+                goalMismatch >
+                    endpointToleranceM)
+            {
+                ROS_ERROR_STREAM(
+                    "Benchmark route endpoint mismatch: "
+                    << "start_error_m="
+                    << startMismatch
+                    << " goal_error_m="
+                    << goalMismatch);
+                
+                finishRecord(
+                    "route_endpoint_mismatch",
+                    false);
+                
+                return;
+            }
+            
+            // ------------------------------------------------------------
+            // Validate the complete piecewise-linear route against the
+            // CURRENT dilated voxel map.
+            //
+            // This is benchmark-input validation and is NOT included in
+            // path_search_ms or after-route planning time.
+            // ------------------------------------------------------------
+            const double routeValidationStepM =
+                std::max(
+                    0.25 *
+                        config.voxelWidth,
+                    1.0e-4);
+                
+            const auto routeValidation =
+                gcopter_benchmark::
+                    validateRoute(
+                        route,
+                        voxelMap,
+                        routeValidationStepM);
+                    
+            if (!routeValidation.valid)
+            {
+                ROS_ERROR_STREAM(
+                    "Benchmark route validation failed: "
+                    << "occupied_samples="
+                    << routeValidation
+                           .occupied_samples
+                    << " first_bad_segment="
+                    << routeValidation
+                           .first_bad_segment);
+                
+                finishRecord(
+                    routeLoadedFromReplay
+                        ? "route_replay_collision"
+                        : "generated_route_validation_failure",
+                    false);
+                
+                return;
+            }
+            
+            const std::string
+                routeFingerprint =
+                    gcopter_benchmark::
+                        routeFingerprint(
+                            route);
+                        
+            // ------------------------------------------------------------
+            // Create a deterministic case ID when the caller does not
+            // explicitly provide one.
+            // ------------------------------------------------------------
+            const std::string
+                effectiveCaseId =
+                    config
+                            .benchmarkCaseId
+                            .empty()
+                        ? (
+                              config
+                                  .benchmarkEnvironmentFamily +
+                              "_" +
+                              config
+                                  .benchmarkDifficulty +
+                              "_m" +
+                              std::to_string(
+                                  config.mapSeed) +
+                              "_r" +
+                              std::to_string(
+                                  config.routeSeed))
+                        : config
+                              .benchmarkCaseId;
+                            
+            // ------------------------------------------------------------
+            // Save the generated route when creating the route bank.
+            // ------------------------------------------------------------
+            if (config.benchmarkRouteSaveEnabled)
+            {
+                if (config
+                        .benchmarkRouteSaveFile
+                        .empty())
+                {
+                    ROS_ERROR(
+                        "Benchmark route save enabled "
+                        "but save file is empty.");
+                    
+                    finishRecord(
+                        "route_save_file_missing",
+                        false);
+                    
+                    return;
+                }
+            
+                const auto ioStarted =
+                    std::chrono::
+                        steady_clock::now();
+            
+                routeSaved =
+                    gcopter_benchmark::
+                        saveRoute(
+                            config
+                                .benchmarkRouteSaveFile,
+                            route);
+                        
+                routeIoMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            ioStarted)
+                        .count();
+                        
+                if (!routeSaved)
+                {
+                    ROS_ERROR_STREAM(
+                        "Failed to save benchmark route: "
+                        << config
+                               .benchmarkRouteSaveFile);
+                    
+                    finishRecord(
+                        "route_save_failure",
+                        false);
+                    
+                    return;
+                }
+            
+                // --------------------------------------------------------
+                // One case-table row is created when the immutable route
+                // bank entry is created.
+                // --------------------------------------------------------
+                gcopter_benchmark::
+                    CaseRecord
+                        caseRecord;
+            
+                caseRecord.case_id =
+                    effectiveCaseId;
+            
+                caseRecord
+                    .environment_family =
+                        config
+                            .benchmarkEnvironmentFamily;
+            
+                caseRecord.difficulty =
+                    config
+                        .benchmarkDifficulty;
+            
+                caseRecord.map_id =
+                    "mockamap_seed_" +
+                    std::to_string(
+                        config.mapSeed);
+                    
+                caseRecord.map_seed =
+                    config.mapSeed;
+                    
+                caseRecord.route_id =
+                    effectiveCaseId;
+                    
+                caseRecord.source_route_seed =
+                    config.routeSeed;
+                    
+                caseRecord.route_file =
+                    config
+                        .benchmarkRouteSaveFile;
+                    
+                caseRecord.route_fingerprint =
+                    routeFingerprint;
+                    
+                caseRecord.route_length_m =
+                    routeValidation
+                        .route_length_m;
+                    
+                caseRecord.route_point_count =
+                    routeValidation
+                        .point_count;
+                    
+                caseRecord.route_segment_count =
+                    routeValidation
+                        .segment_count;
+                    
+                caseRecord.start_x =
+                    startGoal[0].x();
+                    
+                caseRecord.start_y =
+                    startGoal[0].y();
+                    
+                caseRecord.start_z =
+                    startGoal[0].z();
+                    
+                caseRecord.goal_x =
+                    startGoal[1].x();
+                    
+                caseRecord.goal_y =
+                    startGoal[1].y();
+                    
+                caseRecord.goal_z =
+                    startGoal[1].z();
+                    
+                caseRecord.voxel_width_m =
+                    config.voxelWidth;
+                    
+                caseRecord.dilate_radius_m =
+                    config.dilateRadius;
+                    
+                caseRecord
+                    .route_validation_success =
+                        routeValidation.valid;
+                    
+                caseRecord
+                    .route_validation_samples =
+                        routeValidation
+                            .checked_samples;
+                    
+                caseRecord
+                    .max_route_segment_m =
+                        routeValidation
+                            .max_segment_length_m;
+                    
+                caseRecord
+                    .creation_timestamp_s =
+                        ros::Time::
+                            now()
+                                .toSec();
+                    
+                if (!benchmarkCaseLogger
+                         .logCase(
+                             caseRecord))
+                {
+                    ROS_ERROR(
+                        "Failed to append "
+                        "benchmark_cases_v1.csv.");
+                    
+                    finishRecord(
+                        "benchmark_case_log_failure",
+                        false);
+                    
+                    return;
+                }
+            }
+            
+            // ------------------------------------------------------------
+            // Single diagnostic used to verify route-bank generation and
+            // deterministic replay.
+            // ------------------------------------------------------------
+            ROS_INFO_STREAM(
+                "TF_ROUTE_SOURCE "
+                << "case_id="
+                << effectiveCaseId
+            
+                << " mode="
+                << (routeLoadedFromReplay
+                        ? "replay"
+                        : "generated")
+                
+                << " route_file="
+                << (routeLoadedFromReplay
+                        ? config
+                              .benchmarkRouteReplayFile
+                        : config
+                              .benchmarkRouteSaveFile)
+                
+                << " fingerprint="
+                << routeFingerprint
+                
+                << " points="
+                << route.size()
+                
+                << " segments="
+                << routeValidation
+                       .segment_count
+                
+                << " length_m="
+                << routeValidation
+                       .route_length_m
+                
+                << " max_segment_m="
+                << routeValidation
+                       .max_segment_length_m
+                
+                << " validation_success="
+                << routeValidation.valid
+                
+                << " validation_samples="
+                << routeValidation
+                       .checked_samples
+                
+                << " validation_ms="
+                << routeValidation
+                       .validation_ms
+                
+                << " route_io_ms="
+                << routeIoMs
+                
+                << " path_search_ms="
+                << record
+                       .path_search_ms);
 
             // ============================================================
             // RRT -> direct MINCO guide experiment.
@@ -6405,7 +6906,7 @@ public:
                             activeGuideBackendResult.setup_ms +
                             activeGuideBackendResult.optimize_ms +
                             hardProjectionResult.total_ms;
-                                                
+
                         ROS_INFO_STREAM(
                             "TF_PROPOSED_HARD_TIMING "
                             << "guide_ms="

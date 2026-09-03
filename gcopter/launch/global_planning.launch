@@ -34,6 +34,16 @@
   <arg name="decomp_local_bbox_vertical" default="3.0"/>
   <arg name="decomp_max_segment_length" default="3.0"/>
   <arg name="decomp_min_overlap_radius" default="0.01"/>
+  <arg name="benchmark_case_id" default=""/>
+  <arg name="benchmark_environment_family" default="mockamap"/>
+  <arg name="benchmark_difficulty" default="development"/>
+  <arg name="benchmark_repeat_id" default="0"/>
+
+  <arg name="benchmark_route_replay_enabled" default="false"/>
+  <arg name="benchmark_route_replay_file" default=""/>
+
+  <arg name="benchmark_route_save_enabled" default="false"/>
+  <arg name="benchmark_route_save_file" default=""/>
 
    <node name="rviz" pkg="rviz" type="rviz" output="screen"
     args="-d $(find gcopter)/config/global_planning.rviz"> 
@@ -94,6 +104,14 @@
   <param name="Decomp/LocalBBoxVertical" value="$(arg decomp_local_bbox_vertical)" type="double"/>
   <param name="Decomp/MaxSegmentLength" value="$(arg decomp_max_segment_length)" type="double"/>
   <param name="Decomp/MinOverlapRadius" value="$(arg decomp_min_overlap_radius)" type="double"/>
+  <param name="Benchmark/CaseId" value="$(arg benchmark_case_id)" type="string"/>
+  <param name="Benchmark/EnvironmentFamily" value="$(arg benchmark_environment_family)" type="string"/>
+  <param name="Benchmark/Difficulty" value="$(arg benchmark_difficulty)" type="string"/>
+  <param name="Benchmark/RepeatId" value="$(arg benchmark_repeat_id)" type="int"/>
+  <param name="Benchmark/RouteReplayEnabled" value="$(arg benchmark_route_replay_enabled)" type="bool"/>
+  <param name="Benchmark/RouteReplayFile" value="$(arg benchmark_route_replay_file)" type="string"/>
+  <param name="Benchmark/RouteSaveEnabled" value="$(arg benchmark_route_save_enabled)" type="bool"/>
+  <param name="Benchmark/RouteSaveFile" value="$(arg benchmark_route_save_file)" type="string"/>
   </node>
 
 </launch>
