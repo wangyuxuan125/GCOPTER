@@ -5664,6 +5664,170 @@ public:
                             activeGuidePenalty10Result = runBackendAb(activeGuideHPolys, 10.0);
                         }
 
+                        bool warmContinuationSetupSuccess =
+                            false;
+
+                        bool warmContinuationBaseSuccess =
+                            false;
+
+                        bool warmContinuationSuccess =
+                            false;
+
+                        bool warmContinuationExactValid =
+                            false;
+
+                        bool warmContinuationExactContained =
+                            false;
+
+                        double warmContinuationBaseMs =
+                            0.0;
+
+                        double warmContinuationMs =
+                            0.0;
+
+                        double warmContinuationExactViolation =
+                            std::numeric_limits<double>::
+                                infinity();
+
+                        double warmContinuationFinalCost =
+                            std::numeric_limits<double>::
+                                infinity();
+
+                        Trajectory<5>
+                            warmContinuationTrajectory;
+
+                        if (activeGuideSuccess)
+                        {
+                            gcopter::GCOPTER_PolytopeSFC
+                                warmOptimizer;
+
+                            warmContinuationSetupSuccess =
+                                warmOptimizer.setup(
+                                    config.weightT,
+                                    iniState,
+                                    finState,
+                                    activeGuideHPolys,
+                                    INFINITY,
+                                    config.smoothingEps,
+                                    quadratureRes,
+                                    magnitudeBounds,
+                                    penaltyWeights,
+                                    physicalParams);
+
+                            if (warmContinuationSetupSuccess)
+                            {
+                                Trajectory<5>
+                                    baseTrajectory;
+
+                                const auto baseStarted =
+                                    std::chrono::
+                                        steady_clock::now();
+
+                                const double baseCost =
+                                    warmOptimizer.optimize(
+                                        baseTrajectory,
+                                        config.relCostTol);
+
+                                warmContinuationBaseMs =
+                                    std::chrono::duration<
+                                        double,
+                                        std::milli>(
+                                            std::chrono::
+                                                steady_clock::now() -
+                                            baseStarted)
+                                        .count();
+
+                                warmContinuationBaseSuccess =
+                                    std::isfinite(
+                                        baseCost) &&
+                                    baseTrajectory.getPieceNum() ==
+                                        static_cast<int>(
+                                            activeGuideHPolys.size());
+
+                                if (warmContinuationBaseSuccess)
+                                {
+                                    const auto continuationStarted =
+                                        std::chrono::
+                                            steady_clock::now();
+
+                                    warmContinuationFinalCost =
+                                        warmOptimizer
+                                            .continueOptimizeWithCorridorPenaltyScale(
+                                                warmContinuationTrajectory,
+                                                config.relCostTol,
+                                                10.0);
+
+                                    warmContinuationMs =
+                                        std::chrono::duration<
+                                            double,
+                                            std::milli>(
+                                                std::chrono::
+                                                    steady_clock::now() -
+                                                continuationStarted)
+                                            .count();
+
+                                    warmContinuationSuccess =
+                                        std::isfinite(
+                                            warmContinuationFinalCost) &&
+                                        warmContinuationTrajectory
+                                                .getPieceNum() ==
+                                            static_cast<int>(
+                                                activeGuideHPolys.size());
+
+                                    if (warmContinuationSuccess)
+                                    {
+                                        warmContinuationExactValid =
+                                            true;
+
+                                        warmContinuationExactContained =
+                                            true;
+
+                                        warmContinuationExactViolation =
+                                            -std::numeric_limits<double>::
+                                                infinity();
+
+                                        for (int pieceId = 0;
+                                             pieceId <
+                                                 warmContinuationTrajectory
+                                                     .getPieceNum();
+                                             ++pieceId)
+                                        {
+                                            const auto cert =
+                                                traj_relevant::
+                                                    certifyMincoPieceInPolytope(
+                                                        warmContinuationTrajectory[
+                                                            pieceId],
+                                                        activeGuideHPolys[
+                                                            pieceId],
+                                                        1.0e-6,
+                                                        1.0e-10,
+                                                        1.0e-12);
+
+                                            if (!cert.valid)
+                                            {
+                                                warmContinuationExactValid =
+                                                    false;
+
+                                                warmContinuationExactContained =
+                                                    false;
+
+                                                break;
+                                            }
+
+                                            warmContinuationExactContained =
+                                                warmContinuationExactContained &&
+                                                cert.contained;
+
+                                            warmContinuationExactViolation =
+                                                std::max(
+                                                    warmContinuationExactViolation,
+                                                    cert.max_signed_violation_m);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         const double guideProposedComponentMs =
                             routeMincoGuideBuildMs +
                             guideMetricMs +
@@ -5953,6 +6117,47 @@ public:
                             << activeGuideBackendResult.optimize_ms
                             << " x10_opt_ms="
                             << activeGuidePenalty10Result.optimize_ms);
+
+                        ROS_INFO_STREAM(
+                            "TF_GUIDE_ACTIVE_WARM_CONTINUATION "
+                            << "setup_success="
+                            << warmContinuationSetupSuccess
+
+                            << " base_success="
+                            << warmContinuationBaseSuccess
+
+                            << " continuation_success="
+                            << warmContinuationSuccess
+
+                            << " exact_valid="
+                            << warmContinuationExactValid
+
+                            << " exact_contained="
+                            << warmContinuationExactContained
+
+                            << " exact_violation="
+                            << warmContinuationExactViolation
+
+                            << " base_ms="
+                            << warmContinuationBaseMs
+
+                            << " continuation_ms="
+                            << warmContinuationMs
+
+                            << " total_opt_ms="
+                            << (warmContinuationBaseMs +
+                                warmContinuationMs)
+
+                            << " final_cost="
+                            << warmContinuationFinalCost
+
+                            << " cold_x10_opt_ms="
+                            << activeGuidePenalty10Result
+                                   .optimize_ms
+
+                            << " cold_x10_cost="
+                            << activeGuidePenalty10Result
+                                   .final_cost);
 
                         ROS_INFO_STREAM(
                             "TF_GUIDE_PROPOSED_TIMING "

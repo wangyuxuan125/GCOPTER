@@ -285,7 +285,14 @@ namespace gcopter
         double smoothEps;
         int integralRes;
         Eigen::VectorXd magnitudeBd;
+
         Eigen::VectorXd penaltyWt;
+
+        // Baseline penalty weights supplied by setup().
+        // Continuation scales only the corridor-position term
+        // relative to this immutable reference.
+        Eigen::VectorXd basePenaltyWt;
+
         Eigen::VectorXd physicalPm;
         double allocSpeed;
 
@@ -3875,9 +3882,17 @@ namespace gcopter
             polyN = hPolytopes.size();
             smoothEps = smoothingFactor;
             integralRes = integralResolution;
-            magnitudeBd = magnitudeBounds;
-            penaltyWt = penaltyWeights;
-            physicalPm = physicalParams;
+            magnitudeBd =
+                magnitudeBounds;
+
+            basePenaltyWt =
+                penaltyWeights;
+
+            penaltyWt =
+                basePenaltyWt;
+
+            physicalPm =
+                physicalParams;
             allocSpeed = magnitudeBd(0) * 3.0;
 
             getShortestPath(headPVA.col(0), tailPVA.col(0),
@@ -3991,6 +4006,213 @@ namespace gcopter
             }
 
             return minCostFunctional;
+        }
+
+        inline double continueOptimizeWithCorridorPenaltyScale(
+            Trajectory<5> &traj,
+            const double &relCostTol,
+            const double corridorPenaltyScale)
+        {
+            if (!optimizedStateValid ||
+                optimizedX.size() !=
+                    temporalDim + spatialDim ||
+                !optimizedX.allFinite() ||
+                basePenaltyWt.size() !=
+                    penaltyWt.size() ||
+                basePenaltyWt.size() <= 0 ||
+                !std::isfinite(
+                    corridorPenaltyScale) ||
+                corridorPenaltyScale <= 0.0)
+            {
+                traj.clear();
+                return INFINITY;
+            }
+
+            // --------------------------------------------------------
+            // Preserve the converged state so a failed continuation
+            // cannot destroy the previous valid solution.
+            // --------------------------------------------------------
+            const Eigen::VectorXd
+                previousOptimizedX =
+                    optimizedX;
+
+            const Eigen::Matrix3Xd
+                previousOptimizedPoints =
+                    optimizedPoints;
+
+            const Eigen::VectorXd
+                previousOptimizedTimes =
+                    optimizedTimes;
+
+            const double previousOptimizedCost =
+                optimizedCost;
+
+            const Eigen::VectorXd
+                previousPenaltyWt =
+                    penaltyWt;
+
+            // --------------------------------------------------------
+            // Scale ONLY the corridor-position penalty.
+            //
+            // All dynamic penalties remain identical to the original
+            // planning problem.
+            // --------------------------------------------------------
+            penaltyWt =
+                basePenaltyWt;
+
+            penaltyWt(0) =
+                basePenaltyWt(0) *
+                corridorPenaltyScale;
+
+            // --------------------------------------------------------
+            // Critical difference from optimize():
+            //
+            //     DO NOT call setInitial().
+            //
+            // Start directly from the converged optimization variable
+            // x* from the previous solve.
+            // --------------------------------------------------------
+            Eigen::VectorXd x =
+                optimizedX;
+
+            Eigen::Map<Eigen::VectorXd>
+                tau(
+                    x.data(),
+                    temporalDim);
+
+            Eigen::Map<Eigen::VectorXd>
+                xi(
+                    x.data() +
+                        temporalDim,
+                    spatialDim);
+
+            // Reconstruct the Cartesian MINCO state represented by x*.
+            forwardT(
+                tau,
+                times);
+
+            forwardP(
+                xi,
+                vPolyIdx,
+                vPolytopes,
+                points);
+
+            minco.setParameters(
+                points,
+                times);
+
+            Trajectory<5>
+                continuationInitialTrajectory;
+
+            minco.getTrajectory(
+                continuationInitialTrajectory);
+
+            initialCorridorDiagnostics =
+                evaluateCorridorDiagnostics(
+                    continuationInitialTrajectory);
+
+            finalCorridorDiagnostics =
+                CorridorDiagnostics();
+
+            double minCostFunctional =
+                INFINITY;
+
+            lbfgs_params.mem_size =
+                256;
+
+            lbfgs_params.past =
+                3;
+
+            lbfgs_params.min_step =
+                1.0e-32;
+
+            lbfgs_params.g_epsilon =
+                0.0;
+
+            lbfgs_params.delta =
+                relCostTol;
+
+            const int ret =
+                lbfgs::lbfgs_optimize(
+                    x,
+                    minCostFunctional,
+                    &GCOPTER_PolytopeSFC::
+                        costFunctional,
+                    nullptr,
+                    nullptr,
+                    this,
+                    lbfgs_params);
+
+            if (ret >= 0)
+            {
+                forwardT(
+                    tau,
+                    times);
+
+                forwardP(
+                    xi,
+                    vPolyIdx,
+                    vPolytopes,
+                    points);
+
+                minco.setParameters(
+                    points,
+                    times);
+
+                minco.getTrajectory(
+                    traj);
+
+                finalCorridorDiagnostics =
+                    evaluateCorridorDiagnostics(
+                        traj);
+
+                optimizedX =
+                    x;
+
+                optimizedPoints =
+                    points;
+
+                optimizedTimes =
+                    times;
+
+                optimizedCost =
+                    minCostFunctional;
+
+                optimizedStateValid =
+                    true;
+
+                return minCostFunctional;
+            }
+
+            // --------------------------------------------------------
+            // Continuation failed:
+            // restore the previous converged optimization state.
+            // --------------------------------------------------------
+            optimizedX =
+                previousOptimizedX;
+
+            optimizedPoints =
+                previousOptimizedPoints;
+
+            optimizedTimes =
+                previousOptimizedTimes;
+
+            optimizedCost =
+                previousOptimizedCost;
+
+            optimizedStateValid =
+                true;
+
+            penaltyWt =
+                previousPenaltyWt;
+
+            minco.setParameters(
+                optimizedPoints,
+                optimizedTimes);
+
+            traj.clear();
+
+            return INFINITY;
         }
 
         inline bool computeDeformationMetrics(
