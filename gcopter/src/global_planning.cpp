@@ -864,6 +864,33 @@ public:
             // later replace the expensive FIRI-derived nominal trajectory
             // used only for trajectory sensitivity estimation.
             // ============================================================
+            
+            // ============================================================
+            // Benchmark execution gates.
+            //
+            // benchmarkProposedMode:
+            //     paper benchmark execution of the proposed pipeline.
+            //
+            // legacyDebugMode:
+            //     historical diagnostic/A-B experiments.
+            //
+            // runProposedCore:
+            //     functionality required by the proposed algorithm itself.
+            // ============================================================
+            const bool benchmarkProposedMode =
+                config.benchmarkEnabled &&
+                config.benchmarkMethod ==
+                    "proposed";
+                            
+            const bool legacyDebugMode =
+                !config.benchmarkEnabled &&
+                config.experimentTag ==
+                    "debug_metric";
+                            
+            const bool runProposedCore =
+                benchmarkProposedMode ||
+                legacyDebugMode;
+            
             Trajectory<5> routeMincoGuide;
 
             bool routeMincoGuideValid =
@@ -886,8 +913,7 @@ public:
                 routeMincoGuideTailPVA =
                     Eigen::Matrix3d::Zero();
 
-            if (config.experimentTag ==
-                "debug_metric")
+            if (runProposedCore)
             {
                 const int guidePieceCount =
                     static_cast<int>(
@@ -1423,6 +1449,8 @@ public:
                     << " sample_cap_hits="
                     << guideSamplingCapHits);
 
+                if (legacyDebugMode)
+                {
                     Trajectory<5>
                         repairedRouteMincoGuide;
 
@@ -1643,8 +1671,8 @@ public:
                         << " sample_cap_hits="
                         << repairDiagnostics
                                .sample_cap_hits);
+                }
             }
-
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
             voxelMap.getSurf(pc);
@@ -2520,8 +2548,7 @@ public:
                 double guideMetricMs =
                     0.0;
 
-                if (config.experimentTag ==
-                        "debug_metric" &&
+                if (runProposedCore &&
                     routeMincoGuideValid)
                 {
                     guideMetricStateReady =
@@ -2669,17 +2696,21 @@ public:
                 // ------------------------------------------------------------
                 // Debug gate diagnostic.
                 // ------------------------------------------------------------
-                ROS_INFO_STREAM(
-                    "TF_GN_DEBUG_GATE "
-                    << "experiment_tag="
-                    << config.experimentTag
-                    << " final_cost="
-                    << record.final_cost
-                    << " finite_cost="
-                    << std::isfinite(record.final_cost));
-                    
-                if (config.experimentTag == "debug_metric" &&
-                    std::isfinite(record.final_cost))
+                if (legacyDebugMode)
+                {
+                    ROS_INFO_STREAM(
+                        "TF_GN_DEBUG_GATE "
+                        << "experiment_tag="
+                        << config.experimentTag
+                        << " final_cost="
+                        << record.final_cost
+                        << " finite_cost="
+                        << std::isfinite(
+                               record.final_cost));
+                }
+                if (runProposedCore &&
+                    std::isfinite(
+                        record.final_cost))
                 {
                     gcopter::GCOPTER_PolytopeSFC::
                         GaussNewtonDeformationMetrics metrics;
@@ -5878,11 +5909,12 @@ public:
                         double guideCompactMs =
                             0.0;
 
-                        if (guideSegmentMetricsReady)
+                        if (legacyDebugMode &&
+                            guideSegmentMetricsReady)
                         {
                             const auto guideCompactStarted =
                                 std::chrono::steady_clock::now();
-
+                        
                             guideCompactSuccess =
                                 sfc_gen::
                                     trajectoryRelevantCompactCover(
@@ -5890,22 +5922,19 @@ public:
                                         pc,
                                         voxelMap.getOrigin(),
                                         voxelMap.getCorner(),
-
-                                        // Critical:
-                                        // do NOT subdivide an RRT edge again.
                                         std::numeric_limits<double>::
                                             infinity(),
-
                                         guideCompactOptions,
                                         guideCompactHPolys,
                                         guideCompactInfos,
                                         &guideSegmentMetrics);
-
+                                    
                             guideCompactMs =
                                 std::chrono::duration<
                                     double,
                                     std::milli>(
-                                        std::chrono::steady_clock::now() -
+                                        std::chrono::
+                                            steady_clock::now() -
                                         guideCompactStarted)
                                     .count();
                         }
@@ -6165,7 +6194,8 @@ public:
                                 static_cast<int>(
                                     activeGuideHPolys.size()) -
                                     1);
-
+                    if (legacyDebugMode)
+                    {
                         ROS_INFO_STREAM(
                             "TF_GUIDE_COMPACT_AB "
                             << "success="
@@ -6303,11 +6333,12 @@ public:
                             << activeGuideAdjacentOverlapValidCount
                             << "/"
                             << activeGuideAdjacentOverlapCount);
-
+                    }
                         BackendAbResult
                             guideCompactBackendResult;
 
-                        if (guideCompactSuccess)
+                        if (legacyDebugMode &&
+                            guideCompactSuccess)
                         {
                             guideCompactBackendResult =
                                 runBackendAb(
@@ -6320,10 +6351,16 @@ public:
                             activeGuideBackendResult = runBackendAb(activeGuideHPolys);
                         }
 
-                        BackendAbResult activeGuidePenalty10Result;
-                        if (activeGuideSuccess)
+                        BackendAbResult
+                            activeGuidePenalty10Result;
+
+                        if (legacyDebugMode &&
+                            activeGuideSuccess)
                         {
-                            activeGuidePenalty10Result = runBackendAb(activeGuideHPolys, 10.0);
+                            activeGuidePenalty10Result =
+                                runBackendAb(
+                                    activeGuideHPolys,
+                                    10.0);
                         }
 
                         bool warmContinuationSetupSuccess =
@@ -6358,7 +6395,7 @@ public:
                         Trajectory<5>
                             warmContinuationTrajectory;
 
-                        if (activeGuideSuccess)
+                        if (legacyDebugMode && activeGuideSuccess)
                         {
                             gcopter::GCOPTER_PolytopeSFC
                                 warmOptimizer;
@@ -6503,7 +6540,8 @@ public:
                             activeGuideMs +
                             activeGuideBackendResult.setup_ms +
                             activeGuideBackendResult.optimize_ms;
-
+                        if (legacyDebugMode)
+                        {
                         ROS_INFO_STREAM(
                             "TF_GUIDE_COMPACT_BACKEND "
                             << "corridor_success="
@@ -6628,7 +6666,7 @@ public:
                             << " exact_cert_ms="
                             << guideCompactBackendResult
                                    .exact_certificate_ms);
-
+                        }
                         ROS_INFO_STREAM(
                             "TF_GUIDE_ACTIVE_BACKEND "
                             << "corridor_success="
@@ -7172,7 +7210,8 @@ public:
                                 << " active_time_constraints="
                                 << benchmarkRun.active_time_constraints);
                         }
-
+                        if (legacyDebugMode)
+                        {
                         ROS_INFO_STREAM(
                             "TF_GUIDE_ACTIVE_PENALTY_DIAG "
                             << "base_exact_violation="
@@ -7232,7 +7271,9 @@ public:
                             << " cold_x10_cost="
                             << activeGuidePenalty10Result
                                    .final_cost);
-
+                        }
+                        if (legacyDebugMode)
+                        {
                         ROS_INFO_STREAM(
                             "TF_GUIDE_PROPOSED_TIMING "
                             << "path_ms="
@@ -7262,7 +7303,7 @@ public:
                             << (record.corridor_generation_ms +
                                 record.optimizer_setup_ms +
                                 record.optimizer_ms));
-
+                        }
                         ROS_INFO_STREAM(
                             "TF_GUIDE_ACTIVE_TIMING "
                             << "path_ms="
