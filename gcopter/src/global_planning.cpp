@@ -4699,6 +4699,13 @@ public:
                         
                             bool optimize_success =
                                 false;
+
+                            bool optimized_state_ready =
+                                false;
+
+                            Eigen::Matrix3Xd optimized_points;
+
+                            Eigen::VectorXd optimized_times;
                         
                             int corridor_count =
                                 0;
@@ -4718,9 +4725,7 @@ public:
                             double optimize_ms =
                                 0.0;
                         
-                            double final_cost =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
+                            double soft_optimizer_cost = std::numeric_limits<double>::quiet_NaN();
                         
                             double trajectory_duration =
                                 std::numeric_limits<double>::
@@ -4909,6 +4914,27 @@ public:
                                 result.trajectory_duration =
                                     backendTrajectory
                                         .getTotalDuration();
+                                
+                                const Eigen::Matrix3Xd &optimizedPoints =
+                                    backendOptimizer.getOptimizedPoints();
+                                const Eigen::VectorXd &optimizedTimes =
+                                    backendOptimizer.getOptimizedTimes();
+
+                                const int expectedInnerPointCount =
+                                    std::max(result.trajectory_pieces - 1, 0);
+
+                                result.optimized_state_ready =
+                                    optimizedPoints.rows() == 3 &&
+                                    optimizedPoints.cols() == expectedInnerPointCount &&
+                                    optimizedTimes.size() == result.trajectory_pieces &&
+                                    optimizedPoints.allFinite() &&
+                                    optimizedTimes.allFinite();
+
+                                if (result.optimized_state_ready)
+                                {
+                                    result.optimized_points = optimizedPoints;
+                                    result.optimized_times = optimizedTimes;
+                                }
 
                                 // ========================================================
                                 // Exact continuous-time corridor certificate.
@@ -6756,170 +6782,127 @@ public:
                     Eigen::Matrix3Xd
                         hardProjectedPoints;
 
-                    if (activeGuideSuccess)
+                    bool hardProjectionSourceReady =
+                        activeGuideSuccess &&
+                        activeGuideBackendResult
+                            .setup_success &&
+                        activeGuideBackendResult
+                            .optimize_success &&
+                        activeGuideBackendResult
+                            .optimized_state_ready;
+
+                    traj_relevant::
+                        ExactSfcProjectionResult
+                            hardProjectionResult;
+
+                    Trajectory<5>
+                        hardProjectedTrajectory;
+
+                    Eigen::Matrix3Xd
+                        hardProjectedPoints;
+
+                    if (hardProjectionSourceReady)
                     {
-                        gcopter::GCOPTER_PolytopeSFC
-                            hardProjectionOptimizer;
+                        traj_relevant::
+                            ExactSfcProjectionOptions
+                                projectionOptions;
                     
-                        // IMPORTANT:
-                        // Use EXACTLY the same setup arguments as runBackendAb().
-                        hardProjectionSetupSuccess =
-                            hardProjectionOptimizer.setup(
-                                config.weightT,
-                                iniState,
-                                finState,
-                                activeGuideHPolys,
-                                INFINITY,
-                                config.smoothingEps,
-                                quadratureRes,
-                                magnitudeBounds,
-                                penaltyWeights,
-                                physicalParams);
-                            
-                        if (hardProjectionSetupSuccess)
-                        {
-                            Trajectory<5>
-                                hardProjectionBaseTrajectory;
-                        
-                            const auto baseStarted =
-                                std::chrono::
-                                    steady_clock::now();
-                        
-                            hardProjectionBaseCost =
-                                hardProjectionOptimizer.optimize(
-                                    hardProjectionBaseTrajectory,
-                                    config.relCostTol);
-                                
-                            hardProjectionBaseOptMs =
-                                std::chrono::duration<
-                                    double,
-                                    std::milli>(
-                                        std::chrono::
-                                            steady_clock::now() -
-                                        baseStarted)
-                                    .count();
-                                    
-                            hardProjectionBaseSuccess =
-                                std::isfinite(
-                                    hardProjectionBaseCost) &&
-                                hardProjectionBaseTrajectory
-                                        .getPieceNum() ==
-                                    static_cast<int>(
-                                        activeGuideHPolys
-                                            .size());
-                                    
-                            if (hardProjectionBaseSuccess)
-                            {
-                                traj_relevant::
-                                    ExactSfcProjectionOptions
-                                        projectionOptions;
-                            
-                                projectionOptions
-                                    .containment_tolerance_m =
-                                        1.0e-6;
-                            
-                                hardProjectionResult =
-                                    traj_relevant::
-                                        projectMincoToExactSfc(
-                                            iniState,
-                                            finState,
-                                            hardProjectionOptimizer
-                                                .getOptimizedPoints(),
-                                            hardProjectionOptimizer
-                                                .getOptimizedTimes(),
-                                            activeGuideHPolys,
-                                            hardProjectedTrajectory,
-                                            hardProjectedPoints,
-                                            projectionOptions);
-                            }
-                        }
+                        projectionOptions
+                            .containment_tolerance_m =
+                                1.0e-6;
+                    
+                        hardProjectionResult =
+                            traj_relevant::
+                                projectMincoToExactSfc(
+                                    iniState,
+                                    finState,
+                                    activeGuideBackendResult
+                                        .optimized_points,
+                                    activeGuideBackendResult
+                                        .optimized_times,
+                                    activeGuideHPolys,
+                                    hardProjectedTrajectory,
+                                    hardProjectedPoints,
+                                    projectionOptions);
                     }
 
-                        ROS_INFO_STREAM(
-                            "TF_EXACT_HARD_SFC "
-                            << "setup_success="
-                            << hardProjectionSetupSuccess
-                        
-                            << " base_success="
-                            << hardProjectionBaseSuccess
-                        
-                            << " projection_success="
-                            << hardProjectionResult.success
-                        
-                            << " affine_valid="
-                            << hardProjectionResult
-                                   .affine_map_valid
-                        
-                            << " initial_cert_valid="
-                            << hardProjectionResult
-                                   .initial_certificate_valid
-                        
-                            << " initial_contained="
-                            << hardProjectionResult
-                                   .initial_contained
-                        
-                            << " final_cert_valid="
-                            << hardProjectionResult
-                                   .final_certificate_valid
-                        
-                            << " final_contained="
-                            << hardProjectionResult
-                                   .final_contained
-                        
-                            << " initial_violation_m="
-                            << hardProjectionResult
-                                   .initial_max_violation_m
-                        
-                            << " final_violation_m="
-                            << hardProjectionResult
-                                   .final_max_violation_m
-                        
-                            << " exchange_iterations="
-                            << hardProjectionResult
-                                   .exchange_iterations
-                        
-                            << " active_constraints="
-                            << hardProjectionResult
-                                   .active_constraint_count
-                        
-                            << " qp_sweeps="
-                            << hardProjectionResult
-                                   .total_qp_sweeps
-                        
-                            << " duplicate_witnesses="
-                            << hardProjectionResult
-                                   .duplicate_witness_count
-                        
-                            << " correction_l2_m="
-                            << hardProjectionResult
-                                   .correction_l2_m
-                        
-                            << " max_waypoint_disp_m="
-                            << hardProjectionResult
-                                   .max_waypoint_displacement_m
-                        
-                            << " initial_energy="
-                            << hardProjectionResult
-                                   .initial_energy
-                        
-                            << " final_energy="
-                            << hardProjectionResult
-                                   .final_energy
-                        
-                            << " base_opt_ms="
-                            << hardProjectionBaseOptMs
-                        
-                            << " projection_ms="
-                            << hardProjectionResult
-                                   .total_ms
-                        
-                            << " qp_ms="
-                            << hardProjectionResult
-                                   .qp_ms
-                        
-                            << " cert_ms="
-                            << hardProjectionResult
-                                   .certificate_ms);
+                    double hardSourceCertificateMismatchM =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+
+                    if (activeGuideBackendResult
+                            .exact_certificate_valid &&
+                        hardProjectionResult
+                            .initial_certificate_valid)
+                    {
+                        hardSourceCertificateMismatchM =
+                            std::abs(
+                                activeGuideBackendResult
+                                    .exact_max_violation_m -
+                                hardProjectionResult
+                                    .initial_max_violation_m);
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_EXACT_HARD_SFC "
+                        << "setup_success="
+                        << hardProjectionSetupSuccess
+                    
+                        // ---- 源轨迹信息（来自 runBackendAb） ----
+                        << " source_backend_ready="
+                        << hardProjectionSourceReady
+                        << " source_opt_ms="
+                        << activeGuideBackendResult.optimize_ms
+                        << " source_cert_mismatch_m="
+                        << hardSourceCertificateMismatchM
+                    
+                        // ---- 硬投影核心结果 ----
+                        << " projection_success="
+                        << hardProjectionResult.success
+                        << " affine_valid="
+                        << hardProjectionResult.affine_map_valid
+                    
+                        << " initial_cert_valid="
+                        << hardProjectionResult.initial_certificate_valid
+                        << " initial_contained="
+                        << hardProjectionResult.initial_contained
+                        << " final_cert_valid="
+                        << hardProjectionResult.final_certificate_valid
+                        << " final_contained="
+                        << hardProjectionResult.final_contained
+                    
+                        << " initial_violation_m="
+                        << hardProjectionResult.initial_max_violation_m
+                        << " final_violation_m="
+                        << hardProjectionResult.final_max_violation_m
+                    
+                        // ---- 硬投影优化细节 ----
+                        << " exchange_iterations="
+                        << hardProjectionResult.exchange_iterations
+                        << " active_constraints="
+                        << hardProjectionResult.active_constraint_count
+                        << " qp_sweeps="
+                        << hardProjectionResult.total_qp_sweeps
+                        << " duplicate_witnesses="
+                        << hardProjectionResult.duplicate_witness_count
+                    
+                        << " correction_l2_m="
+                        << hardProjectionResult.correction_l2_m
+                        << " max_waypoint_disp_m="
+                        << hardProjectionResult.max_waypoint_displacement_m
+                    
+                        // ---- 能量与时耗 ----
+                        << " initial_energy="
+                        << hardProjectionResult.initial_energy
+                        << " final_energy="
+                        << hardProjectionResult.final_energy
+                    
+                        << " projection_ms="
+                        << hardProjectionResult.total_ms
+                        << " qp_ms="
+                        << hardProjectionResult.qp_ms
+                        << " cert_ms="
+                        << hardProjectionResult.certificate_ms);
 
                         const double proposedHardAfterRouteMs =
                             routeMincoGuideBuildMs +
@@ -7098,7 +7081,7 @@ public:
                                 activeGuideBackendResult
                                     .trajectory_duration;
                                 
-                            benchmarkRun.final_cost =
+                            benchmarkRun.soft_optimizer_cost = 
                                 activeGuideBackendResult
                                     .final_cost;
                                 
