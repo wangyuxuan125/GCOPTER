@@ -207,7 +207,7 @@ struct BenchmarkRunRecord
         std::numeric_limits<double>::
             quiet_NaN();
 
-    double final_cost =
+    double soft_optimizer_cost =
         std::numeric_limits<double>::
             quiet_NaN();
 
@@ -757,7 +757,7 @@ public:
 
                 << "trajectory_piece_count,"
                 << "trajectory_duration_s,"
-                << "final_cost,"
+                << "soft_optimizer_cost,"
 
                 << "soft_exact_certificate_valid,"
                 << "soft_exact_contained,"
@@ -820,7 +820,7 @@ public:
 
             << record.trajectory_piece_count << ','
             << record.trajectory_duration_s << ','
-            << record.final_cost << ','
+            << record.soft_optimizer_cost << ','
 
             << record.soft_exact_certificate_valid << ','
             << record.soft_exact_contained << ','

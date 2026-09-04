@@ -4725,8 +4725,10 @@ public:
                             double optimize_ms =
                                 0.0;
                         
-                            double soft_optimizer_cost = std::numeric_limits<double>::quiet_NaN();
-                        
+                            double final_cost =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
                             double trajectory_duration =
                                 std::numeric_limits<double>::
                                     quiet_NaN();
@@ -6759,29 +6761,6 @@ public:
                             << activeGuideBackendResult
                                    .exact_certificate_ms);
 
-                    bool hardProjectionSetupSuccess =
-                        false;
-
-                    bool hardProjectionBaseSuccess =
-                        false;
-
-                    double hardProjectionBaseOptMs =
-                        0.0;
-
-                    double hardProjectionBaseCost =
-                        std::numeric_limits<double>::
-                            infinity();
-
-                    traj_relevant::
-                        ExactSfcProjectionResult
-                            hardProjectionResult;
-
-                    Trajectory<5>
-                        hardProjectedTrajectory;
-
-                    Eigen::Matrix3Xd
-                        hardProjectedPoints;
-
                     bool hardProjectionSourceReady =
                         activeGuideSuccess &&
                         activeGuideBackendResult
@@ -6845,9 +6824,6 @@ public:
 
                     ROS_INFO_STREAM(
                         "TF_EXACT_HARD_SFC "
-                        << "setup_success="
-                        << hardProjectionSetupSuccess
-                    
                         // ---- 源轨迹信息（来自 runBackendAb） ----
                         << " source_backend_ready="
                         << hardProjectionSourceReady
