@@ -38,6 +38,9 @@
   <arg name="benchmark_environment_family" default="mockamap"/>
   <arg name="benchmark_difficulty" default="development"/>
   <arg name="benchmark_repeat_id" default="0"/>
+  <arg name="benchmark_enabled" default="false"/>
+  <arg name="benchmark_method" default="proposed"/>
+  <arg name="benchmark_variant" default="csgn_active_exact"/>
 
   <arg name="benchmark_route_replay_enabled" default="false"/>
   <arg name="benchmark_route_replay_file" default=""/>
@@ -112,6 +115,9 @@
   <param name="Benchmark/RouteReplayFile" value="$(arg benchmark_route_replay_file)" type="string"/>
   <param name="Benchmark/RouteSaveEnabled" value="$(arg benchmark_route_save_enabled)" type="bool"/>
   <param name="Benchmark/RouteSaveFile" value="$(arg benchmark_route_save_file)" type="string"/>
+  <param name="Benchmark/Enabled" value="$(arg benchmark_enabled)" type="bool"/>
+  <param name="Benchmark/Method" value="$(arg benchmark_method)" type="string"/>
+  <param name="Benchmark/Variant" value="$(arg benchmark_variant)" type="string"/>
   </node>
 
 </launch>
