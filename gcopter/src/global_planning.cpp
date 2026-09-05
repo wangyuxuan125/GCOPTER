@@ -2082,6 +2082,163 @@ public:
                     return result;
                 };
             
+                gcopter::GCOPTER_PolytopeSFC
+                    guideMetricEvaluator;
+
+                gcopter::GCOPTER_PolytopeSFC::
+                    GaussNewtonDeformationMetrics
+                        guideMetrics;
+
+                bool guideMetricStateReady =
+                    false;
+
+                bool guideMetricSuccess =
+                    false;
+
+                double guideMetricMs =
+                    0.0;
+
+                if (runProposedCore &&
+                    routeMincoGuideValid)
+                {
+                    guideMetricStateReady =
+                        guideMetricEvaluator
+                            .setGaussNewtonReferenceState(
+                                routeMincoGuideHeadPVA,
+                                routeMincoGuideTailPVA,
+                                routeMincoGuideInnerPoints,
+                                routeMincoGuideTimes,
+                                quadratureRes,
+                                magnitudeBounds,
+                                physicalParams);
+
+                    if (guideMetricStateReady)
+                    {
+                        const auto guideMetricStarted =
+                            std::chrono::steady_clock::now();
+
+                        guideMetricSuccess =
+                            guideMetricEvaluator
+                                .computeGaussNewtonDeformationMetrics(
+                                    guideMetrics,
+                                    0.01,
+                                    1.0e-3,
+                                    4.0,
+                                    10.0);
+
+                        guideMetricMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    guideMetricStarted)
+                                .count();
+                    }
+
+                    int validGuideMetrics =
+                        0;
+
+                    int anisotropicGuideMetrics =
+                        0;
+
+                    double meanGuideAnisotropy =
+                        0.0;
+
+                    double maxGuideAnisotropy =
+                        0.0;
+
+                    for (int pieceId = 0;
+                         pieceId <
+                             static_cast<int>(
+                                 guideMetrics.size());
+                         ++pieceId)
+                    {
+                        const auto &metric =
+                            guideMetrics[
+                                pieceId];
+
+                        if (!metric.valid)
+                        {
+                            continue;
+                        }
+
+                        ++validGuideMetrics;
+
+                        meanGuideAnisotropy +=
+                            metric.corridorAnisotropy;
+
+                        maxGuideAnisotropy =
+                            std::max(
+                                maxGuideAnisotropy,
+                                metric.corridorAnisotropy);
+
+                        if (metric.corridorAnisotropy >
+                            1.0 + 1.0e-3)
+                        {
+                            ++anisotropicGuideMetrics;
+                        }
+
+                        ROS_INFO_STREAM(
+                            "TF_ROUTE_MINCO_CSGN_PIECE "
+                            << "piece="
+                            << pieceId
+
+                            << " valid="
+                            << metric.valid
+
+                            << " anisotropy="
+                            << metric.corridorAnisotropy
+
+                            << " principal_gap="
+                            << metric.principalGap
+
+                            << " dir_x="
+                            << metric.principalDirection.x()
+
+                            << " dir_y="
+                            << metric.principalDirection.y()
+
+                            << " dir_z="
+                            << metric.principalDirection.z());
+                    }
+
+                    if (validGuideMetrics > 0)
+                    {
+                        meanGuideAnisotropy /=
+                            static_cast<double>(
+                                validGuideMetrics);
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_ROUTE_MINCO_CSGN "
+                        << "success="
+                        << guideMetricSuccess
+
+                        << " state_ready="
+                        << guideMetricStateReady
+
+                        << " guide_pieces="
+                        << routeMincoGuide.getPieceNum()
+
+                        << " metric_count="
+                        << guideMetrics.size()
+
+                        << " valid="
+                        << validGuideMetrics
+
+                        << " anisotropic="
+                        << anisotropicGuideMetrics
+
+                        << " mean_anisotropy="
+                        << meanGuideAnisotropy
+
+                        << " max_anisotropy="
+                        << maxGuideAnisotropy
+
+                        << " metric_ms="
+                        << guideMetricMs);
+                }
+
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
             voxelMap.getSurf(pc);
@@ -2911,163 +3068,6 @@ public:
 
                     << " cert_ms="
                     << nominalCertMs);
-
-                gcopter::GCOPTER_PolytopeSFC
-                    guideMetricEvaluator;
-
-                gcopter::GCOPTER_PolytopeSFC::
-                    GaussNewtonDeformationMetrics
-                        guideMetrics;
-
-                bool guideMetricStateReady =
-                    false;
-
-                bool guideMetricSuccess =
-                    false;
-
-                double guideMetricMs =
-                    0.0;
-
-                if (runProposedCore &&
-                    routeMincoGuideValid)
-                {
-                    guideMetricStateReady =
-                        guideMetricEvaluator
-                            .setGaussNewtonReferenceState(
-                                routeMincoGuideHeadPVA,
-                                routeMincoGuideTailPVA,
-                                routeMincoGuideInnerPoints,
-                                routeMincoGuideTimes,
-                                quadratureRes,
-                                magnitudeBounds,
-                                physicalParams);
-
-                    if (guideMetricStateReady)
-                    {
-                        const auto guideMetricStarted =
-                            std::chrono::steady_clock::now();
-
-                        guideMetricSuccess =
-                            guideMetricEvaluator
-                                .computeGaussNewtonDeformationMetrics(
-                                    guideMetrics,
-                                    0.01,
-                                    1.0e-3,
-                                    4.0,
-                                    10.0);
-
-                        guideMetricMs =
-                            std::chrono::duration<
-                                double,
-                                std::milli>(
-                                    std::chrono::steady_clock::now() -
-                                    guideMetricStarted)
-                                .count();
-                    }
-
-                    int validGuideMetrics =
-                        0;
-
-                    int anisotropicGuideMetrics =
-                        0;
-
-                    double meanGuideAnisotropy =
-                        0.0;
-
-                    double maxGuideAnisotropy =
-                        0.0;
-
-                    for (int pieceId = 0;
-                         pieceId <
-                             static_cast<int>(
-                                 guideMetrics.size());
-                         ++pieceId)
-                    {
-                        const auto &metric =
-                            guideMetrics[
-                                pieceId];
-
-                        if (!metric.valid)
-                        {
-                            continue;
-                        }
-
-                        ++validGuideMetrics;
-
-                        meanGuideAnisotropy +=
-                            metric.corridorAnisotropy;
-
-                        maxGuideAnisotropy =
-                            std::max(
-                                maxGuideAnisotropy,
-                                metric.corridorAnisotropy);
-
-                        if (metric.corridorAnisotropy >
-                            1.0 + 1.0e-3)
-                        {
-                            ++anisotropicGuideMetrics;
-                        }
-
-                        ROS_INFO_STREAM(
-                            "TF_ROUTE_MINCO_CSGN_PIECE "
-                            << "piece="
-                            << pieceId
-
-                            << " valid="
-                            << metric.valid
-
-                            << " anisotropy="
-                            << metric.corridorAnisotropy
-
-                            << " principal_gap="
-                            << metric.principalGap
-
-                            << " dir_x="
-                            << metric.principalDirection.x()
-
-                            << " dir_y="
-                            << metric.principalDirection.y()
-
-                            << " dir_z="
-                            << metric.principalDirection.z());
-                    }
-
-                    if (validGuideMetrics > 0)
-                    {
-                        meanGuideAnisotropy /=
-                            static_cast<double>(
-                                validGuideMetrics);
-                    }
-
-                    ROS_INFO_STREAM(
-                        "TF_ROUTE_MINCO_CSGN "
-                        << "success="
-                        << guideMetricSuccess
-
-                        << " state_ready="
-                        << guideMetricStateReady
-
-                        << " guide_pieces="
-                        << routeMincoGuide.getPieceNum()
-
-                        << " metric_count="
-                        << guideMetrics.size()
-
-                        << " valid="
-                        << validGuideMetrics
-
-                        << " anisotropic="
-                        << anisotropicGuideMetrics
-
-                        << " mean_anisotropy="
-                        << meanGuideAnisotropy
-
-                        << " max_anisotropy="
-                        << maxGuideAnisotropy
-
-                        << " metric_ms="
-                        << guideMetricMs);
-                }
 
                 // Temporary debug tool for validating the MINCO-induced
                 // deformation metric.  It only runs when the experiment tag
