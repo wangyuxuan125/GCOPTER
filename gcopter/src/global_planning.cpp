@@ -6933,8 +6933,29 @@ public:
                             hardProjectionResult.final_contained &&
                             hardProjectedTrajectory.getPieceNum() > 0)
                         {
+                            // Final trajectory shown in RViz is the exact-hard
+                            // Proposed trajectory.
                             traj =
                                 hardProjectedTrajectory;
+                        
+                            // Replace the previously published baseline/FIRI corridor
+                            // with the actual Active-Witness corridor used by the
+                            // Proposed backend.
+                            visualizer.visualizePolytope(
+                                activeGuideHPolys);
+                            
+                            ROS_INFO_STREAM(
+                                "TF_BENCHMARK_FINAL_TRAJ "
+                                << "source=exact_hard_projection"
+                                << " corridor_source=active_witness"
+                                << " corridors="
+                                << activeGuideHPolys.size()
+                                << " faces="
+                                << activeGuideTotalFaces
+                                << " pieces="
+                                << traj.getPieceNum()
+                                << " duration="
+                                << traj.getTotalDuration());
                         }
                         const double proposedHardAfterRouteMs =
                             routeMincoGuideBuildMs +
