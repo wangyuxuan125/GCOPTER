@@ -2614,6 +2614,629 @@ public:
                             .initial_max_violation_m);
             }
 
+            const double proposedHardAfterRouteMs =
+                routeMincoGuideBuildMs +
+                guideMetricMs +
+                activeGuideMs +
+                activeGuideBackendResult.setup_ms +
+                activeGuideBackendResult.optimize_ms +
+                hardProjectionResult.total_ms;
+
+            if (benchmarkProposedMode)
+            {
+                const bool proposedFinalSuccess =
+                    activeGuideSuccess &&
+                    activeGuideBackendResult.setup_success &&
+                    activeGuideBackendResult.optimize_success &&
+                    activeGuideBackendResult.optimized_state_ready &&
+                    hardProjectionResult.success &&
+                    hardProjectionResult.final_certificate_valid &&
+                    hardProjectionResult.final_contained &&
+                    hardProjectedTrajectory.getPieceNum() > 0;
+
+                // ========================================================
+                // Proposed-only backend diagnostics.
+                // No Batch/FIRI fields are printed here.
+                // ========================================================
+                ROS_INFO_STREAM(
+                        "TF_GUIDE_ACTIVE_BACKEND "
+                        << "corridor_success="
+                        << activeGuideSuccess
+
+                        << " setup_success="
+                        << activeGuideBackendResult.setup_success
+
+                        << " opt_success="
+                        << activeGuideBackendResult.optimize_success
+
+                        << " corridors="
+                        << activeGuideBackendResult.corridor_count
+
+                        << " faces="
+                        << activeGuideBackendResult.total_faces
+
+                        << " traj_pieces="
+                        << activeGuideBackendResult.trajectory_pieces
+
+                        << " constrained_pieces="
+                        << activeGuideBackendResult.constrained_pieces
+
+                        << " final_cost="
+                        << activeGuideBackendResult.final_cost
+
+                        << " duration="
+                        << activeGuideBackendResult.trajectory_duration
+
+                        << " setup_ms="
+                        << activeGuideBackendResult.setup_ms
+
+                        << " opt_ms="
+                        << activeGuideBackendResult.optimize_ms
+
+                        << " penalty_initial="
+                        << activeGuideBackendResult.corridor_penalty_initial
+
+                        << " penalty_final="
+                        << activeGuideBackendResult.corridor_penalty_final
+
+                        << " violation_initial="
+                        << activeGuideBackendResult.max_corridor_violation_initial
+
+                        << " violation_final="
+                        << activeGuideBackendResult.max_corridor_violation_final
+
+                        << " slack_initial="
+                        << activeGuideBackendResult.corridor_slack_initial
+
+                        << " slack_final="
+                        << activeGuideBackendResult.corridor_slack_final
+
+                        << " exact_mapping_valid="
+                        << activeGuideBackendResult.exact_mapping_valid
+
+                        << " exact_cert_valid="
+                        << activeGuideBackendResult.exact_certificate_valid
+
+                        << " exact_contained="
+                        << activeGuideBackendResult.exact_contained
+
+                        << " exact_faces_checked="
+                        << activeGuideBackendResult.exact_checked_faces
+
+                        << " exact_max_violation_m="
+                        << activeGuideBackendResult.exact_max_violation_m
+
+                        << " exact_min_margin_m="
+                        << activeGuideBackendResult.exact_min_margin_m
+
+                        << " exact_worst_piece="
+                        << activeGuideBackendResult.exact_worst_piece
+
+                        << " exact_worst_face="
+                        << activeGuideBackendResult.exact_worst_face
+
+                        << " exact_worst_tau="
+                        << activeGuideBackendResult.exact_worst_tau
+
+                        << " exact_worst_t="
+                        << activeGuideBackendResult.exact_worst_t
+
+                        << " exact_cert_ms="
+                        << activeGuideBackendResult.exact_certificate_ms);
+
+                ROS_INFO_STREAM(
+                    "TF_EXACT_HARD_SFC "
+                    // ---- 源轨迹信息（来自 runBackendAb） ----
+                    << " source_backend_ready="
+                    << hardProjectionSourceReady
+                    << " source_opt_ms="
+                    << activeGuideBackendResult.optimize_ms
+                    << " source_cert_mismatch_m="
+                    << hardSourceCertificateMismatchM
+
+                    // ---- 硬投影核心结果 ----
+                    << " projection_success="
+                    << hardProjectionResult.success
+                    << " affine_valid="
+                    << hardProjectionResult.affine_map_valid
+
+                    << " initial_cert_valid="
+                    << hardProjectionResult.initial_certificate_valid
+                    << " initial_contained="
+                    << hardProjectionResult.initial_contained
+                    << " final_cert_valid="
+                    << hardProjectionResult.final_certificate_valid
+                    << " final_contained="
+                    << hardProjectionResult.final_contained
+
+                    << " initial_violation_m="
+                    << hardProjectionResult.initial_max_violation_m
+                    << " final_violation_m="
+                    << hardProjectionResult.final_max_violation_m
+
+                    // ---- 硬投影优化细节 ----
+                    << " exchange_iterations="
+                    << hardProjectionResult.exchange_iterations
+                    << " active_constraints="
+                    << hardProjectionResult.active_constraint_count
+                    << " qp_sweeps="
+                    << hardProjectionResult.total_qp_sweeps
+                    << " duplicate_witnesses="
+                    << hardProjectionResult.duplicate_witness_count
+
+                    << " correction_l2_m="
+                    << hardProjectionResult.correction_l2_m
+                    << " max_waypoint_disp_m="
+                    << hardProjectionResult.max_waypoint_displacement_m
+
+                    // ---- 能量与时耗 ----
+                    << " initial_energy="
+                    << hardProjectionResult.initial_energy
+                    << " final_energy="
+                    << hardProjectionResult.final_energy
+
+                    << " projection_ms="
+                    << hardProjectionResult.total_ms
+                    << " qp_ms="
+                    << hardProjectionResult.qp_ms
+                    << " cert_ms="
+                    << hardProjectionResult.certificate_ms);
+
+                ROS_INFO_STREAM(
+                    "TF_PROPOSED_HARD_TIMING "
+                    << "guide_ms="
+                    << routeMincoGuideBuildMs
+
+                    << " csgn_ms="
+                    << guideMetricMs
+
+                    << " corridor_ms="
+                    << activeGuideMs
+
+                    << " setup_ms="
+                    << activeGuideBackendResult.setup_ms
+
+                    << " optimize_ms="
+                    << activeGuideBackendResult.optimize_ms
+
+                    << " hard_projection_ms="
+                    << hardProjectionResult.total_ms
+
+                    << " after_route_ms="
+                    << proposedHardAfterRouteMs
+
+                    << " exact_feasible="
+                    << proposedFinalSuccess);
+
+                if (config.benchmarkEnabled &&
+                    config.benchmarkMethod ==
+                        "proposed")
+                {
+                    gcopter_benchmark::
+                        BenchmarkRunRecord
+                            benchmarkRun;
+
+                    benchmarkRun.case_id =
+                        effectiveCaseId;
+
+                    benchmarkRun.route_fingerprint =
+                        routeFingerprint;
+
+                    benchmarkRun.method =
+                        config.benchmarkMethod;
+
+                    benchmarkRun.variant =
+                        config.benchmarkVariant;
+
+                    benchmarkRun.repeat_id =
+                        config.benchmarkRepeatId;
+
+                    benchmarkRun.timestamp_s =
+                        ros::Time::now().toSec();
+
+                    // ========================================================
+                    // Status
+                    // ========================================================
+                    benchmarkRun.corridor_success =
+                        activeGuideSuccess;
+
+                    benchmarkRun.optimizer_setup_success =
+                        activeGuideBackendResult
+                            .setup_success;
+
+                    benchmarkRun.optimizer_success =
+                        activeGuideBackendResult
+                            .optimize_success;
+
+                    benchmarkRun.final_success =
+                        proposedFinalSuccess;
+
+                    // ========================================================
+                    // Corridor complexity / guarantees
+                    // ========================================================
+                    benchmarkRun.corridor_count =
+                        static_cast<int>(
+                            activeGuideHPolys.size());
+
+                    benchmarkRun.total_faces =
+                        activeGuideTotalFaces;
+
+                    benchmarkRun.obstacle_faces =
+                        activeGuideObstacleFaces;
+
+                    benchmarkRun.domain_faces =
+                        activeGuideDomainFaces;
+
+                    benchmarkRun.safety_valid_count =
+                        activeGuideSafetyCount;
+
+                    benchmarkRun.safety_total_count =
+                        static_cast<int>(
+                            activeGuideInfos.size());
+
+                    benchmarkRun.overlap_valid_count =
+                        activeGuideAdjacentOverlapValidCount;
+
+                    benchmarkRun.overlap_total_count =
+                        activeGuideAdjacentOverlapCount;
+
+                    // ========================================================
+                    // Active-Witness workload
+                    // ========================================================
+                    benchmarkRun.candidate_count =
+                        activeGuideCandidates;
+
+                    benchmarkRun.active_witness_rounds =
+                        activeGuideRounds;
+
+                    benchmarkRun.witness_distance_tests =
+                        activeGuideWitnessTests;
+
+                    benchmarkRun.obstacle_face_tests =
+                        activeGuideFaceTests;
+
+                    benchmarkRun.redundancy_removed =
+                        activeGuideRedundancyRemoved;
+
+                    // ========================================================
+                    // Proposed timing
+                    // ========================================================
+                    benchmarkRun.guide_ms =
+                        routeMincoGuideBuildMs;
+
+                    benchmarkRun.csgn_ms =
+                        guideMetricMs;
+
+                    benchmarkRun.corridor_ms =
+                        activeGuideMs;
+
+                    benchmarkRun.setup_ms =
+                        activeGuideBackendResult
+                            .setup_ms;
+
+                    benchmarkRun.optimize_ms =
+                        activeGuideBackendResult
+                            .optimize_ms;
+
+                    benchmarkRun.hard_projection_ms =
+                        hardProjectionResult
+                            .total_ms;
+
+                    benchmarkRun.after_route_ms =
+                        proposedHardAfterRouteMs;
+
+                    // ========================================================
+                    // Backend trajectory
+                    // ========================================================
+                    benchmarkRun.trajectory_piece_count =
+                        activeGuideBackendResult
+                            .trajectory_pieces;
+
+                    benchmarkRun.trajectory_duration_s =
+                        activeGuideBackendResult
+                            .trajectory_duration;
+
+                    benchmarkRun.soft_optimizer_cost = 
+                        activeGuideBackendResult
+                            .final_cost;
+
+                    // ========================================================
+                    // Soft trajectory exact certificate
+                    // ========================================================
+                    benchmarkRun.soft_exact_certificate_valid =
+                        activeGuideBackendResult
+                            .exact_certificate_valid;
+
+                    benchmarkRun.soft_exact_contained =
+                        activeGuideBackendResult
+                            .exact_contained;
+
+                    benchmarkRun.soft_exact_max_violation_m =
+                        activeGuideBackendResult
+                            .exact_max_violation_m;
+
+                    // ========================================================
+                    // Hard safety closure
+                    // ========================================================
+                    benchmarkRun.hard_projection_triggered =
+                        hardProjectionResult
+                            .initial_certificate_valid &&
+                        !hardProjectionResult
+                             .initial_contained;
+
+                    benchmarkRun.exchange_iterations =
+                        hardProjectionResult
+                            .exchange_iterations;
+
+                    benchmarkRun.active_time_constraints =
+                        hardProjectionResult
+                            .active_constraint_count;
+
+                    benchmarkRun.qp_sweeps =
+                        hardProjectionResult
+                            .total_qp_sweeps;
+
+                    benchmarkRun.final_exact_certificate_valid =
+                        hardProjectionResult
+                            .final_certificate_valid;
+
+                    benchmarkRun.final_exact_contained =
+                        hardProjectionResult
+                            .final_contained;
+
+                    benchmarkRun.final_exact_max_violation_m =
+                        hardProjectionResult
+                            .final_max_violation_m;
+
+                    benchmarkRun.correction_l2_m =
+                        hardProjectionResult
+                            .correction_l2_m;
+
+                    benchmarkRun.max_waypoint_disp_m =
+                        hardProjectionResult
+                            .max_waypoint_displacement_m;
+
+                    benchmarkRun.energy_before =
+                        hardProjectionResult
+                            .initial_energy;
+
+                    benchmarkRun.energy_after =
+                        hardProjectionResult
+                            .final_energy;
+
+                    if (!benchmarkRunLogger
+                             .logRun(
+                                 benchmarkRun))
+                    {
+                        ROS_ERROR(
+                            "Failed to append "
+                            "benchmark_runs_v1.csv.");
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_RUN "
+                        << "case_id="
+                        << benchmarkRun.case_id
+
+                        << " fingerprint="
+                        << benchmarkRun.route_fingerprint
+
+                        << " method="
+                        << benchmarkRun.method
+
+                        << " variant="
+                        << benchmarkRun.variant
+
+                        << " repeat="
+                        << benchmarkRun.repeat_id
+
+                        << " success="
+                        << benchmarkRun.final_success
+
+                        << " faces="
+                        << benchmarkRun.total_faces
+
+                        << " obs_faces="
+                        << benchmarkRun.obstacle_faces
+
+                        << " after_route_ms="
+                        << benchmarkRun.after_route_ms
+
+                        << " soft_exact="
+                        << benchmarkRun.soft_exact_contained
+
+                        << " final_exact="
+                        << benchmarkRun.final_exact_contained
+
+                        << " active_time_constraints="
+                        << benchmarkRun.active_time_constraints);
+                }
+
+                if (proposedFinalSuccess)
+                {
+                    traj =
+                        hardProjectedTrajectory;
+
+                    visualizer.visualizePolytope(
+                        activeGuideHPolys);
+
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_FINAL_TRAJ "
+                        << "source=exact_hard_projection"
+                        << " corridor_source=active_witness"
+                        << " corridors="
+                        << activeGuideHPolys.size()
+                        << " faces="
+                        << activeGuideTotalFaces
+                        << " pieces="
+                        << traj.getPieceNum()
+                        << " duration="
+                        << traj.getTotalDuration());
+
+                    record.requested_method =
+                        config.benchmarkMethod;
+
+                    record.method =
+                        config.benchmarkMethod;
+
+                    record.corridor_generation_ms =
+                        activeGuideMs;
+
+                    record.corridor_count =
+                        static_cast<int>(
+                            activeGuideHPolys.size());
+
+                    record.total_faces =
+                        activeGuideTotalFaces;
+
+                    record.mean_faces =
+                        activeGuideHPolys.empty()
+                            ? 0.0
+                            : static_cast<double>(
+                                  activeGuideTotalFaces) /
+                                  static_cast<double>(
+                                      activeGuideHPolys.size());
+
+                    record.optimizer_setup_ms =
+                        activeGuideBackendResult.setup_ms;
+
+                    record.optimizer_ms =
+                        activeGuideBackendResult.optimize_ms;
+
+                    record.final_cost =
+                        activeGuideBackendResult.final_cost;
+
+                    record.corridor_constrained_piece_count =
+                        activeGuideBackendResult
+                            .constrained_pieces;
+
+                    record.corridor_penalty_cost_initial =
+                        activeGuideBackendResult
+                            .corridor_penalty_initial;
+
+                    record.corridor_penalty_cost_final =
+                        activeGuideBackendResult
+                            .corridor_penalty_final;
+
+                    record.max_corridor_violation_initial_m =
+                        activeGuideBackendResult
+                            .max_corridor_violation_initial;
+
+                    record.max_corridor_violation_final_m =
+                        activeGuideBackendResult
+                            .max_corridor_violation_final;
+
+                    record.trajectory_piece_count =
+                        traj.getPieceNum();
+
+                    record.trajectory_duration_s =
+                        traj.getTotalDuration();
+
+                    record.trajectory_length_m =
+                        0.0;
+
+                    const int lengthSamples =
+                        std::max(
+                            20,
+                            20 * traj.getPieceNum());
+
+                    Eigen::Vector3d previous =
+                        traj.getPos(0.0);
+
+                    for (int i = 1;
+                         i <= lengthSamples;
+                         ++i)
+                    {
+                        const Eigen::Vector3d current =
+                            traj.getPos(
+                                record.trajectory_duration_s *
+                                static_cast<double>(i) /
+                                static_cast<double>(
+                                    lengthSamples));
+
+                        record.trajectory_length_m +=
+                            (current - previous).norm();
+
+                        previous =
+                            current;
+                    }
+
+                    trajStamp =
+                        ros::Time::now().toSec();
+
+                    visualizer.visualize(
+                        traj,
+                        route);
+
+                    finishRecord(
+                        "success",
+                        true);
+
+                    return;
+                }
+
+                record.requested_method =
+                    config.benchmarkMethod;
+
+                record.method =
+                    config.benchmarkMethod;
+
+                record.corridor_generation_ms =
+                    activeGuideMs;
+
+                record.corridor_count =
+                    static_cast<int>(
+                        activeGuideHPolys.size());
+
+                record.total_faces =
+                    activeGuideTotalFaces;
+
+                record.optimizer_setup_ms =
+                    activeGuideBackendResult.setup_ms;
+
+                record.optimizer_ms =
+                    activeGuideBackendResult.optimize_ms;
+
+                record.final_cost =
+                    activeGuideBackendResult.final_cost;
+
+                if (!guideMetricSuccess ||
+                    !guideSegmentMetricsReady)
+                {
+                    finishRecord(
+                        "proposed_metric_failure",
+                        false);
+                }
+                else if (!activeGuideSuccess)
+                {
+                    finishRecord(
+                        "proposed_corridor_failure",
+                        false);
+                }
+                else if (!activeGuideBackendResult
+                              .setup_success)
+                {
+                    finishRecord(
+                        "proposed_setup_failure",
+                        false);
+                }
+                else if (!activeGuideBackendResult
+                              .optimize_success)
+                {
+                    finishRecord(
+                        "proposed_optimizer_failure",
+                        false);
+                }
+                else
+                {
+                    finishRecord(
+                        "proposed_exact_closure_failure",
+                        false);
+                }
+
+                return;
+            }
+
             const auto corridorStarted = std::chrono::steady_clock::now();
             auto buildFiriCorridors = [&]()
             {
@@ -6993,36 +7616,6 @@ public:
                         // untouched so old A/B diagnostics remain reproducible.
                         // ============================================================
                         
-                        if (benchmarkProposedMode &&
-                            hardProjectionResult.success &&
-                            hardProjectionResult.final_certificate_valid &&
-                            hardProjectionResult.final_contained &&
-                            hardProjectedTrajectory.getPieceNum() > 0)
-                        {
-                            // Final trajectory shown in RViz is the exact-hard
-                            // Proposed trajectory.
-                            traj =
-                                hardProjectedTrajectory;
-                        
-                            // Replace the previously published baseline/FIRI corridor
-                            // with the actual Active-Witness corridor used by the
-                            // Proposed backend.
-                            visualizer.visualizePolytope(
-                                activeGuideHPolys);
-                            
-                            ROS_INFO_STREAM(
-                                "TF_BENCHMARK_FINAL_TRAJ "
-                                << "source=exact_hard_projection"
-                                << " corridor_source=active_witness"
-                                << " corridors="
-                                << activeGuideHPolys.size()
-                                << " faces="
-                                << activeGuideTotalFaces
-                                << " pieces="
-                                << traj.getPieceNum()
-                                << " duration="
-                                << traj.getTotalDuration());
-                        }
                         const double proposedHardAfterRouteMs =
                             routeMincoGuideBuildMs +
                             guideMetricMs +
@@ -7066,255 +7659,6 @@ public:
                             << hardProjectionResult
                                    .success);
 
-                        if (config.benchmarkEnabled &&
-                            config.benchmarkMethod ==
-                                "proposed")
-                        {
-                            gcopter_benchmark::
-                                BenchmarkRunRecord
-                                    benchmarkRun;
-                        
-                            benchmarkRun.case_id =
-                                effectiveCaseId;
-                        
-                            benchmarkRun.route_fingerprint =
-                                routeFingerprint;
-                        
-                            benchmarkRun.method =
-                                config.benchmarkMethod;
-                        
-                            benchmarkRun.variant =
-                                config.benchmarkVariant;
-                        
-                            benchmarkRun.repeat_id =
-                                config.benchmarkRepeatId;
-                        
-                            benchmarkRun.timestamp_s =
-                                ros::Time::now().toSec();
-                        
-                            // ========================================================
-                            // Status
-                            // ========================================================
-                            benchmarkRun.corridor_success =
-                                activeGuideSuccess;
-                        
-                            benchmarkRun.optimizer_setup_success =
-                                activeGuideBackendResult
-                                    .setup_success;
-                        
-                            benchmarkRun.optimizer_success =
-                                activeGuideBackendResult
-                                    .optimize_success;
-                        
-                            benchmarkRun.final_success =
-                                activeGuideSuccess &&
-                                activeGuideBackendResult
-                                    .setup_success &&
-                                activeGuideBackendResult
-                                    .optimize_success &&
-                                hardProjectionResult
-                                    .success;
-                        
-                            // ========================================================
-                            // Corridor complexity / guarantees
-                            // ========================================================
-                            benchmarkRun.corridor_count =
-                                static_cast<int>(
-                                    activeGuideHPolys.size());
-                                
-                            benchmarkRun.total_faces =
-                                activeGuideTotalFaces;
-                                
-                            benchmarkRun.obstacle_faces =
-                                activeGuideObstacleFaces;
-                                
-                            benchmarkRun.domain_faces =
-                                activeGuideDomainFaces;
-                                
-                            benchmarkRun.safety_valid_count =
-                                activeGuideSafetyCount;
-                                
-                            benchmarkRun.safety_total_count =
-                                static_cast<int>(
-                                    activeGuideInfos.size());
-                                
-                            benchmarkRun.overlap_valid_count =
-                                activeGuideAdjacentOverlapValidCount;
-                                
-                            benchmarkRun.overlap_total_count =
-                                activeGuideAdjacentOverlapCount;
-                                
-                            // ========================================================
-                            // Active-Witness workload
-                            // ========================================================
-                            benchmarkRun.candidate_count =
-                                activeGuideCandidates;
-                                
-                            benchmarkRun.active_witness_rounds =
-                                activeGuideRounds;
-                                
-                            benchmarkRun.witness_distance_tests =
-                                activeGuideWitnessTests;
-                                
-                            benchmarkRun.obstacle_face_tests =
-                                activeGuideFaceTests;
-                                
-                            benchmarkRun.redundancy_removed =
-                                activeGuideRedundancyRemoved;
-                                
-                            // ========================================================
-                            // Proposed timing
-                            // ========================================================
-                            benchmarkRun.guide_ms =
-                                routeMincoGuideBuildMs;
-                                
-                            benchmarkRun.csgn_ms =
-                                guideMetricMs;
-                                
-                            benchmarkRun.corridor_ms =
-                                activeGuideMs;
-                                
-                            benchmarkRun.setup_ms =
-                                activeGuideBackendResult
-                                    .setup_ms;
-                                
-                            benchmarkRun.optimize_ms =
-                                activeGuideBackendResult
-                                    .optimize_ms;
-                                
-                            benchmarkRun.hard_projection_ms =
-                                hardProjectionResult
-                                    .total_ms;
-                                
-                            benchmarkRun.after_route_ms =
-                                proposedHardAfterRouteMs;
-                                
-                            // ========================================================
-                            // Backend trajectory
-                            // ========================================================
-                            benchmarkRun.trajectory_piece_count =
-                                activeGuideBackendResult
-                                    .trajectory_pieces;
-                                
-                            benchmarkRun.trajectory_duration_s =
-                                activeGuideBackendResult
-                                    .trajectory_duration;
-                                
-                            benchmarkRun.soft_optimizer_cost = 
-                                activeGuideBackendResult
-                                    .final_cost;
-                                
-                            // ========================================================
-                            // Soft trajectory exact certificate
-                            // ========================================================
-                            benchmarkRun.soft_exact_certificate_valid =
-                                activeGuideBackendResult
-                                    .exact_certificate_valid;
-                                
-                            benchmarkRun.soft_exact_contained =
-                                activeGuideBackendResult
-                                    .exact_contained;
-                                
-                            benchmarkRun.soft_exact_max_violation_m =
-                                activeGuideBackendResult
-                                    .exact_max_violation_m;
-                                
-                            // ========================================================
-                            // Hard safety closure
-                            // ========================================================
-                            benchmarkRun.hard_projection_triggered =
-                                hardProjectionResult
-                                    .initial_certificate_valid &&
-                                !hardProjectionResult
-                                     .initial_contained;
-                                
-                            benchmarkRun.exchange_iterations =
-                                hardProjectionResult
-                                    .exchange_iterations;
-                                
-                            benchmarkRun.active_time_constraints =
-                                hardProjectionResult
-                                    .active_constraint_count;
-                                
-                            benchmarkRun.qp_sweeps =
-                                hardProjectionResult
-                                    .total_qp_sweeps;
-                                
-                            benchmarkRun.final_exact_certificate_valid =
-                                hardProjectionResult
-                                    .final_certificate_valid;
-                                
-                            benchmarkRun.final_exact_contained =
-                                hardProjectionResult
-                                    .final_contained;
-                                
-                            benchmarkRun.final_exact_max_violation_m =
-                                hardProjectionResult
-                                    .final_max_violation_m;
-                                
-                            benchmarkRun.correction_l2_m =
-                                hardProjectionResult
-                                    .correction_l2_m;
-                                
-                            benchmarkRun.max_waypoint_disp_m =
-                                hardProjectionResult
-                                    .max_waypoint_displacement_m;
-                                
-                            benchmarkRun.energy_before =
-                                hardProjectionResult
-                                    .initial_energy;
-                                
-                            benchmarkRun.energy_after =
-                                hardProjectionResult
-                                    .final_energy;
-                                
-                            if (!benchmarkRunLogger
-                                     .logRun(
-                                         benchmarkRun))
-                            {
-                                ROS_ERROR(
-                                    "Failed to append "
-                                    "benchmark_runs_v1.csv.");
-                            }
-                        
-                            ROS_INFO_STREAM(
-                                "TF_BENCHMARK_RUN "
-                                << "case_id="
-                                << benchmarkRun.case_id
-                            
-                                << " fingerprint="
-                                << benchmarkRun.route_fingerprint
-                            
-                                << " method="
-                                << benchmarkRun.method
-                            
-                                << " variant="
-                                << benchmarkRun.variant
-                            
-                                << " repeat="
-                                << benchmarkRun.repeat_id
-                            
-                                << " success="
-                                << benchmarkRun.final_success
-                            
-                                << " faces="
-                                << benchmarkRun.total_faces
-                            
-                                << " obs_faces="
-                                << benchmarkRun.obstacle_faces
-                            
-                                << " after_route_ms="
-                                << benchmarkRun.after_route_ms
-                            
-                                << " soft_exact="
-                                << benchmarkRun.soft_exact_contained
-                            
-                                << " final_exact="
-                                << benchmarkRun.final_exact_contained
-                            
-                                << " active_time_constraints="
-                                << benchmarkRun.active_time_constraints);
-                        }
                         if (legacyDebugMode)
                         {
                         ROS_INFO_STREAM(
