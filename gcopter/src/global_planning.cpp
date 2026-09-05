@@ -2520,6 +2520,100 @@ public:
                         activeGuideHPolys.size()) -
                         1);
 
+            // ============================================================
+            // Proposed backend + exact hard SFC closure.
+            //
+            // IMPORTANT:
+            // This computation depends only on:
+            //
+            //   activeGuideHPolys
+            //   shared backend context
+            //   runBackendAb()
+            //
+            // It does NOT depend on baseline FIRI or baseline GCOPTER.
+            // ============================================================
+
+            BackendAbResult
+                activeGuideBackendResult;
+
+            if (activeGuideSuccess)
+            {
+                activeGuideBackendResult =
+                    runBackendAb(
+                        activeGuideHPolys);
+            }
+
+            // ------------------------------------------------------------
+            // Exact continuous-time hard SFC closure.
+            //
+            // The projection consumes the optimized points/times from the
+            // SAME Active-Witness GCOPTER backend solve.
+            // ------------------------------------------------------------
+            bool hardProjectionSourceReady =
+                activeGuideSuccess &&
+                activeGuideBackendResult
+                    .setup_success &&
+                activeGuideBackendResult
+                    .optimize_success &&
+                activeGuideBackendResult
+                    .optimized_state_ready;
+
+            traj_relevant::
+                ExactSfcProjectionResult
+                    hardProjectionResult;
+
+            Trajectory<5>
+                hardProjectedTrajectory;
+
+            Eigen::Matrix3Xd
+                hardProjectedPoints;
+
+            if (hardProjectionSourceReady)
+            {
+                traj_relevant::
+                    ExactSfcProjectionOptions
+                        projectionOptions;
+            
+                projectionOptions
+                    .containment_tolerance_m =
+                        1.0e-6;
+            
+                hardProjectionResult =
+                    traj_relevant::
+                        projectMincoToExactSfc(
+                            iniState,
+                            finState,
+                            activeGuideBackendResult
+                                .optimized_points,
+                            activeGuideBackendResult
+                                .optimized_times,
+                            activeGuideHPolys,
+                            hardProjectedTrajectory,
+                            hardProjectedPoints,
+                            projectionOptions);
+            }
+
+            // ------------------------------------------------------------
+            // Cross-check that the hard projection starts from exactly the
+            // same soft trajectory certified by runBackendAb().
+            // ------------------------------------------------------------
+            double hardSourceCertificateMismatchM =
+                std::numeric_limits<double>::
+                    quiet_NaN();
+
+            if (activeGuideBackendResult
+                    .exact_certificate_valid &&
+                hardProjectionResult
+                    .initial_certificate_valid)
+            {
+                hardSourceCertificateMismatchM =
+                    std::abs(
+                        activeGuideBackendResult
+                            .exact_max_violation_m -
+                        hardProjectionResult
+                            .initial_max_violation_m);
+            }
+
             const auto corridorStarted = std::chrono::steady_clock::now();
             auto buildFiriCorridors = [&]()
             {
@@ -6384,12 +6478,6 @@ public:
                                     guideCompactHPolys);
                         }
 
-                        BackendAbResult activeGuideBackendResult;
-                        if (activeGuideSuccess)
-                        {
-                            activeGuideBackendResult = runBackendAb(activeGuideHPolys);
-                        }
-
                         BackendAbResult
                             activeGuidePenalty10Result;
 
@@ -6837,67 +6925,6 @@ public:
                             << " exact_cert_ms="
                             << activeGuideBackendResult
                                    .exact_certificate_ms);
-
-                    bool hardProjectionSourceReady =
-                        activeGuideSuccess &&
-                        activeGuideBackendResult
-                            .setup_success &&
-                        activeGuideBackendResult
-                            .optimize_success &&
-                        activeGuideBackendResult
-                            .optimized_state_ready;
-
-                    traj_relevant::
-                        ExactSfcProjectionResult
-                            hardProjectionResult;
-
-                    Trajectory<5>
-                        hardProjectedTrajectory;
-
-                    Eigen::Matrix3Xd
-                        hardProjectedPoints;
-
-                    if (hardProjectionSourceReady)
-                    {
-                        traj_relevant::
-                            ExactSfcProjectionOptions
-                                projectionOptions;
-                    
-                        projectionOptions
-                            .containment_tolerance_m =
-                                1.0e-6;
-                    
-                        hardProjectionResult =
-                            traj_relevant::
-                                projectMincoToExactSfc(
-                                    iniState,
-                                    finState,
-                                    activeGuideBackendResult
-                                        .optimized_points,
-                                    activeGuideBackendResult
-                                        .optimized_times,
-                                    activeGuideHPolys,
-                                    hardProjectedTrajectory,
-                                    hardProjectedPoints,
-                                    projectionOptions);
-                    }
-
-                    double hardSourceCertificateMismatchM =
-                        std::numeric_limits<double>::
-                            quiet_NaN();
-
-                    if (activeGuideBackendResult
-                            .exact_certificate_valid &&
-                        hardProjectionResult
-                            .initial_certificate_valid)
-                    {
-                        hardSourceCertificateMismatchM =
-                            std::abs(
-                                activeGuideBackendResult
-                                    .exact_max_violation_m -
-                                hardProjectionResult
-                                    .initial_max_violation_m);
-                    }
 
                     ROS_INFO_STREAM(
                         "TF_EXACT_HARD_SFC "
