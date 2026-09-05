@@ -7705,8 +7705,8 @@ public:
                         
                             << " det_corridor="
                             << metric.corridorUtility.determinant());
+                        }
                     }
-
                 }
 
                 if (!std::isfinite(record.final_cost))
