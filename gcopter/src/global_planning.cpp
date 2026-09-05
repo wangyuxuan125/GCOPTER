@@ -3133,6 +3133,84 @@ public:
                     traj =
                         hardProjectedTrajectory;
 
+                    // ========================================================
+                    // Clean trajectory-quality objective used by the paper.
+                    //
+                    // This deliberately excludes all soft feasibility penalties:
+                    //
+                    //     J_kin = E_smooth + rho_T * T.
+                    //
+                    // For the exact-hard trajectory, times are fixed and
+                    // hardProjectionResult.final_energy is the MINCO smoothness
+                    // energy after the waypoint projection.
+                    // ========================================================
+                    const double finalTrajectoryDuration =
+                        hardProjectedTrajectory
+                            .getTotalDuration();
+                                    
+                    const double finalSmoothnessEnergy =
+                        hardProjectionResult
+                            .final_energy;
+                                    
+                    const double finalTimeWeight =
+                        config.weightT;
+                                    
+                    const double finalTimeCost =
+                        finalTimeWeight *
+                        finalTrajectoryDuration;
+                                    
+                    const double finalJkin =
+                        finalSmoothnessEnergy +
+                        finalTimeCost;
+                                    
+                    const bool finalJkinValid =
+                        std::isfinite(
+                            finalTrajectoryDuration) &&
+                        finalTrajectoryDuration > 0.0 &&
+                        std::isfinite(
+                            finalSmoothnessEnergy) &&
+                        std::isfinite(
+                            finalTimeWeight) &&
+                        std::isfinite(
+                            finalTimeCost) &&
+                        std::isfinite(
+                            finalJkin);
+                        
+                    ROS_INFO_STREAM(
+                        "TF_FINAL_TRAJ_METRICS "
+                        << "source=exact_hard_projection"
+                    
+                        << " valid="
+                        << finalJkinValid
+                    
+                        << " pieces="
+                        << hardProjectedTrajectory
+                               .getPieceNum()
+                    
+                        << " duration_s="
+                        << finalTrajectoryDuration
+                    
+                        << " smoothness_energy="
+                        << finalSmoothnessEnergy
+                    
+                        << " time_weight="
+                        << finalTimeWeight
+                    
+                        << " time_cost="
+                        << finalTimeCost
+                    
+                        << " j_kin="
+                        << finalJkin
+                    
+                        << " soft_optimizer_cost="
+                        << activeGuideBackendResult
+                               .final_cost
+                    
+                        << " soft_minus_j_kin="
+                        << (activeGuideBackendResult
+                                .final_cost -
+                            finalJkin));
+                        
                     visualizer.visualizePolytope(
                         activeGuideHPolys);
 
