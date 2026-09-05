@@ -6918,6 +6918,24 @@ public:
                         << " cert_ms="
                         << hardProjectionResult.certificate_ms);
 
+                        // ============================================================
+                        // In paper benchmark mode the externally visible trajectory
+                        // must be the FINAL proposed trajectory, i.e. the trajectory
+                        // after exact continuous-time SFC closure.
+                        //
+                        // Legacy debug mode keeps the historical baseline trajectory
+                        // untouched so old A/B diagnostics remain reproducible.
+                        // ============================================================
+                        
+                        if (benchmarkProposedMode &&
+                            hardProjectionResult.success &&
+                            hardProjectionResult.final_certificate_valid &&
+                            hardProjectionResult.final_contained &&
+                            hardProjectedTrajectory.getPieceNum() > 0)
+                        {
+                            traj =
+                                hardProjectedTrajectory;
+                        }
                         const double proposedHardAfterRouteMs =
                             routeMincoGuideBuildMs +
                             guideMetricMs +
@@ -7337,6 +7355,8 @@ public:
                             << " batch_after_route_component_ms="
                             << guideProposedComponentMs);
 
+                        if (legacyDebugMode)
+                        {
                         const int minimumFaceBudgetToTest =
                             24;
 
