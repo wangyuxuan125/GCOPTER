@@ -2244,6 +2244,282 @@ public:
             voxelMap.getSurf(pc);
             record.map_point_count = static_cast<int>(pc.size());
 
+            // ============================================================
+            // Proposed route-segment metric mapping + Active-Witness SFC.
+            //
+            // This stage depends only on:
+            //   route
+            //   direct MINCO guide / guide CSGN
+            //   obstacle surface cloud
+            //   map bounds
+            //
+            // It does NOT depend on baseline FIRI or baseline GCOPTER.
+            // ============================================================
+
+            const int guideRawSegmentCount =
+                runProposedCore
+                    ? std::max(
+                          0,
+                          static_cast<int>(
+                              route.size()) -
+                              1)
+                    : 0;
+                        
+            sfc_gen::SegmentDeformationMetrics
+                guideSegmentMetrics;
+                        
+            guideSegmentMetrics.resize(
+                guideRawSegmentCount);
+            
+            const bool guideMetricCardinalityValid =
+                runProposedCore &&
+                guideMetricSuccess &&
+                routeMincoGuideValid &&
+                routeMincoGuide.getPieceNum() ==
+                    guideRawSegmentCount &&
+                static_cast<int>(
+                    guideMetrics.size()) ==
+                    guideRawSegmentCount;
+                
+            int guideSegmentMetricValidCount =
+                0;
+                
+            for (int segmentId = 0;
+                 segmentId <
+                     guideRawSegmentCount;
+                 ++segmentId)
+            {
+                auto &segmentMetric =
+                    guideSegmentMetrics[
+                        segmentId];
+                    
+                segmentMetric.source_piece_id =
+                    segmentId;
+                    
+                // Exact one-to-one mapping:
+                //
+                // guide MINCO piece i
+                //     <-> RRT edge i
+                //     <-> corridor i
+                segmentMetric.mapping_distance =
+                    0.0;
+                    
+                segmentMetric.utility =
+                    Eigen::Matrix3d::Identity();
+                    
+                segmentMetric.valid =
+                    false;
+                    
+                if (!guideMetricCardinalityValid)
+                {
+                    continue;
+                }
+            
+                const auto &guideMetric =
+                    guideMetrics[
+                        segmentId];
+                    
+                if (!guideMetric.valid ||
+                    !guideMetric.corridorUtility
+                         .allFinite())
+                {
+                    continue;
+                }
+            
+                segmentMetric.utility =
+                    guideMetric
+                        .corridorUtility;
+            
+                segmentMetric.valid =
+                    true;
+            
+                ++guideSegmentMetricValidCount;
+            }
+
+            const bool guideSegmentMetricsReady =
+                guideMetricCardinalityValid &&
+                guideSegmentMetricValidCount ==
+                    guideRawSegmentCount;
+
+            // ------------------------------------------------------------
+            // Shared compact-corridor options.
+            //
+            // BATCH_SET_COVER remains the template because the legacy
+            // batch ablation below still uses guideCompactOptions.
+            //
+            // The Proposed path copies it and changes only the candidate
+            // selection mode to ACTIVE_WITNESS.
+            // ------------------------------------------------------------
+            traj_relevant::CompactCorridorOptions
+                guideCompactOptions;
+
+            guideCompactOptions.max_extra_radius =
+                std::max(
+                    config.tfFiriRange,
+                    config.voxelWidth);
+                
+            guideCompactOptions.min_extra_ratio =
+                0.25;
+                
+            guideCompactOptions.overlap_radius =
+                0.01;
+                
+            guideCompactOptions.epsilon =
+                1.0e-6;
+                
+            guideCompactOptions.candidate_selection_mode =
+                traj_relevant::
+                    CandidateSelectionMode::
+                        BATCH_SET_COVER;
+                
+            // ------------------------------------------------------------
+            // Formal Proposed corridor:
+            // Direct-guide CSGN + Active-Witness.
+            // ------------------------------------------------------------
+            auto activeGuideOptions =
+                guideCompactOptions;
+                
+            activeGuideOptions.candidate_selection_mode =
+                traj_relevant::
+                    CandidateSelectionMode::
+                        ACTIVE_WITNESS;
+                
+            std::vector<Eigen::MatrixX4d>
+                activeGuideHPolys;
+                
+            sfc_gen::TrajectoryRelevantCompactInfos
+                activeGuideInfos;
+                
+            bool activeGuideSuccess =
+                false;
+                
+            double activeGuideMs =
+                0.0;
+                
+            if (guideSegmentMetricsReady)
+            {
+                const auto activeGuideStarted =
+                    std::chrono::steady_clock::now();
+            
+                activeGuideSuccess =
+                    sfc_gen::
+                        trajectoryRelevantCompactCover(
+                            route,
+                            pc,
+                            voxelMap.getOrigin(),
+                            voxelMap.getCorner(),
+                            std::numeric_limits<double>::
+                                infinity(),
+                            activeGuideOptions,
+                            activeGuideHPolys,
+                            activeGuideInfos,
+                            &guideSegmentMetrics);
+                        
+                activeGuideMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            activeGuideStarted)
+                        .count();
+            }
+
+            // ------------------------------------------------------------
+            // Proposed corridor diagnostics required by the paper logger.
+            // ------------------------------------------------------------
+            int activeGuideTotalFaces =
+                0;
+
+            int activeGuideDomainFaces =
+                0;
+
+            int activeGuideObstacleFaces =
+                0;
+
+            int activeGuideCandidates =
+                0;
+
+            int activeGuideRounds =
+                0;
+
+            int activeGuideRedundancyRemoved =
+                0;
+
+            std::int64_t
+                activeGuideWitnessTests =
+                    0;
+
+            std::int64_t
+                activeGuideFaceTests =
+                    0;
+
+            int activeGuideSafetyCount =
+                0;
+
+            for (const auto &info :
+                 activeGuideInfos)
+            {
+                activeGuideTotalFaces +=
+                    info.total_face_count;
+            
+                activeGuideDomainFaces +=
+                    info.domain_face_count;
+            
+                activeGuideObstacleFaces +=
+                    info.selected_obstacle_face_count;
+            
+                activeGuideCandidates +=
+                    info.candidate_count;
+            
+                activeGuideRounds +=
+                    info.active_witness_rounds;
+            
+                activeGuideRedundancyRemoved +=
+                    info.redundancy_removed;
+            
+                activeGuideWitnessTests +=
+                    info.witness_distance_tests;
+            
+                activeGuideFaceTests +=
+                    info.obstacle_face_tests;
+            
+                activeGuideSafetyCount +=
+                    info.safety_verified
+                        ? 1
+                        : 0;
+            }
+
+            // ------------------------------------------------------------
+            // Explicit neighboring-corridor overlap verification.
+            // ------------------------------------------------------------
+            int activeGuideAdjacentOverlapValidCount =
+                0;
+
+            for (int corridorId = 1;
+                 corridorId <
+                     static_cast<int>(
+                         activeGuideHPolys.size());
+                 ++corridorId)
+            {
+                if (geo_utils::overlap(
+                        activeGuideHPolys[
+                            corridorId - 1],
+                        activeGuideHPolys[
+                            corridorId],
+                        0.01))
+                {
+                    ++activeGuideAdjacentOverlapValidCount;
+                }
+            }
+
+            const int activeGuideAdjacentOverlapCount =
+                std::max(
+                    0,
+                    static_cast<int>(
+                        activeGuideHPolys.size()) -
+                        1);
+
             const auto corridorStarted = std::chrono::steady_clock::now();
             auto buildFiriCorridors = [&]()
             {
@@ -5792,129 +6068,6 @@ public:
                             << " slack_final="
                             << compactBackendResult.corridor_slack_final);
 
-                        // ============================================================
-                        // Direct MINCO guide CSGN
-                        //       ->
-                        // one CSGN metric per ORIGINAL RRT edge
-                        //       ->
-                        // trajectory-relevant compact corridor.
-                        //
-                        // IMPORTANT:
-                        // progress = infinity deliberately disables further route
-                        // subdivision.  Therefore:
-                        //
-                        //     guide MINCO piece i
-                        //       <-> original RRT edge i
-                        //       <-> guideSegmentMetrics[i]
-                        //
-                        // There is NO nearest-anchor / metric mapping in this path.
-                        // ============================================================
-                        const int guideRawSegmentCount =
-                            std::max(
-                                0,
-                                static_cast<int>(
-                                    route.size()) -
-                                    1);
-
-                        sfc_gen::SegmentDeformationMetrics
-                            guideSegmentMetrics;
-
-                        guideSegmentMetrics.resize(
-                            guideRawSegmentCount);
-
-                        const bool guideMetricCardinalityValid =
-                            guideMetricSuccess &&
-                            routeMincoGuideValid &&
-                            routeMincoGuide.getPieceNum() ==
-                                guideRawSegmentCount &&
-                            static_cast<int>(
-                                guideMetrics.size()) ==
-                                guideRawSegmentCount;
-
-                        int guideSegmentMetricValidCount =
-                            0;
-
-                        for (int segmentId = 0;
-                             segmentId <
-                                 guideRawSegmentCount;
-                             ++segmentId)
-                        {
-                            auto &segmentMetric =
-                                guideSegmentMetrics[
-                                    segmentId];
-
-                            segmentMetric.source_piece_id =
-                                segmentId;
-
-                            // Exact one-to-one correspondence.
-                            // There is no spatial nearest-neighbor mapping.
-                            segmentMetric.mapping_distance =
-                                0.0;
-
-                            segmentMetric.utility =
-                                Eigen::Matrix3d::Identity();
-
-                            segmentMetric.valid =
-                                false;
-
-                            if (!guideMetricCardinalityValid)
-                            {
-                                continue;
-                            }
-
-                            const auto &guideMetric =
-                                guideMetrics[
-                                    segmentId];
-
-                            if (!guideMetric.valid ||
-                                !guideMetric.corridorUtility
-                                     .allFinite())
-                            {
-                                continue;
-                            }
-
-                            segmentMetric.utility =
-                                guideMetric
-                                    .corridorUtility;
-
-                            segmentMetric.valid =
-                                true;
-
-                            ++guideSegmentMetricValidCount;
-                        }
-
-                        const bool guideSegmentMetricsReady =
-                            guideMetricCardinalityValid &&
-                            guideSegmentMetricValidCount ==
-                                guideRawSegmentCount;
-
-                        // ============================================================
-                        // Same compact corridor kernel as the previous route-segment
-                        // experiment, but now driven directly by guide CSGN.
-                        //
-                        // No FIRI-derived metric is used here.
-                        // ============================================================
-                        traj_relevant::CompactCorridorOptions
-                            guideCompactOptions;
-
-                        guideCompactOptions.max_extra_radius =
-                            std::max(
-                                config.tfFiriRange,
-                                config.voxelWidth);
-
-                        guideCompactOptions.min_extra_ratio =
-                            0.25;
-
-                        guideCompactOptions.overlap_radius =
-                            0.01;
-
-                        guideCompactOptions.epsilon =
-                            1.0e-6;
-
-                        guideCompactOptions.candidate_selection_mode =
-                            traj_relevant::
-                                CandidateSelectionMode::
-                                    BATCH_SET_COVER;
 
                         std::vector<Eigen::MatrixX4d>
                             guideCompactHPolys;
@@ -5955,54 +6108,6 @@ public:
                                         std::chrono::
                                             steady_clock::now() -
                                         guideCompactStarted)
-                                    .count();
-                        }
-
-                        auto activeGuideOptions =
-                            guideCompactOptions;
-
-                        activeGuideOptions.candidate_selection_mode =
-                            traj_relevant::
-                                CandidateSelectionMode::
-                                    ACTIVE_WITNESS;
-
-                        std::vector<Eigen::MatrixX4d>
-                            activeGuideHPolys;
-
-                        sfc_gen::TrajectoryRelevantCompactInfos
-                            activeGuideInfos;
-
-                        bool activeGuideSuccess =
-                            false;
-
-                        double activeGuideMs =
-                            0.0;
-
-                        if (guideSegmentMetricsReady)
-                        {
-                            const auto activeGuideStarted =
-                                std::chrono::steady_clock::now();
-
-                            activeGuideSuccess =
-                                sfc_gen::
-                                    trajectoryRelevantCompactCover(
-                                        route,
-                                        pc,
-                                        voxelMap.getOrigin(),
-                                        voxelMap.getCorner(),
-                                        std::numeric_limits<double>::
-                                            infinity(),
-                                        activeGuideOptions,
-                                        activeGuideHPolys,
-                                        activeGuideInfos,
-                                        &guideSegmentMetrics);
-
-                            activeGuideMs =
-                                std::chrono::duration<
-                                    double,
-                                    std::milli>(
-                                        std::chrono::steady_clock::now() -
-                                        activeGuideStarted)
                                     .count();
                         }
 
@@ -6127,92 +6232,7 @@ public:
                                     guideCompactHPolys.size()) -
                                     1);
 
-                        int activeGuideTotalFaces =
-                            0;
 
-                        int activeGuideDomainFaces =
-                            0;
-
-                        int activeGuideObstacleFaces =
-                            0;
-
-                        int activeGuideCandidates =
-                            0;
-
-                        int activeGuideRounds =
-                            0;
-
-                        int activeGuideRedundancyRemoved =
-                            0;
-
-                        std::int64_t activeGuideWitnessTests =
-                            0;
-
-                        std::int64_t activeGuideFaceTests =
-                            0;
-
-                        int activeGuideSafetyCount =
-                            0;
-
-                        for (const auto &info :
-                             activeGuideInfos)
-                        {
-                            activeGuideTotalFaces +=
-                                info.total_face_count;
-
-                            activeGuideDomainFaces +=
-                                info.domain_face_count;
-
-                            activeGuideObstacleFaces +=
-                                info.selected_obstacle_face_count;
-
-                            activeGuideCandidates +=
-                                info.candidate_count;
-
-                            activeGuideRounds +=
-                                info.active_witness_rounds;
-
-                            activeGuideRedundancyRemoved +=
-                                info.redundancy_removed;
-
-                            activeGuideWitnessTests +=
-                                info.witness_distance_tests;
-
-                            activeGuideFaceTests +=
-                                info.obstacle_face_tests;
-
-                            activeGuideSafetyCount +=
-                                info.safety_verified
-                                    ? 1
-                                    : 0;
-                        }
-
-                        int activeGuideAdjacentOverlapValidCount =
-                            0;
-
-                        for (int corridorId = 1;
-                             corridorId <
-                                 static_cast<int>(
-                                     activeGuideHPolys.size());
-                             ++corridorId)
-                        {
-                            if (geo_utils::overlap(
-                                    activeGuideHPolys[
-                                        corridorId - 1],
-                                    activeGuideHPolys[
-                                        corridorId],
-                                    0.01))
-                            {
-                                ++activeGuideAdjacentOverlapValidCount;
-                            }
-                        }
-
-                        const int activeGuideAdjacentOverlapCount =
-                            std::max(
-                                0,
-                                static_cast<int>(
-                                    activeGuideHPolys.size()) -
-                                    1);
                     if (legacyDebugMode)
                     {
                         ROS_INFO_STREAM(
