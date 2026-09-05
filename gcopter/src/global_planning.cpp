@@ -1765,9 +1765,322 @@ public:
             const int quadratureRes =
                 config.integralIntervs;
 
-            // std::vector<Eigen::MatrixX4d> hPolys;
-            // std::vector<Eigen::Vector3d> pc;
-            // voxelMap.getSurf(pc);
+                struct BackendAbResult
+                {
+                    bool setup_success =
+                        false;
+                
+                    bool optimize_success =
+                        false;
+                    bool optimized_state_ready =
+                        false;
+                    Eigen::Matrix3Xd optimized_points;
+                    Eigen::VectorXd optimized_times;
+                
+                    int corridor_count =
+                        0;
+                
+                    int total_faces =
+                        0;
+                
+                    int trajectory_pieces =
+                        0;
+                
+                    int constrained_pieces =
+                        0;
+                
+                    double setup_ms =
+                        0.0;
+                
+                    double optimize_ms =
+                        0.0;
+                
+                    double final_cost =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                    double trajectory_duration =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                
+                    double corridor_penalty_initial =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                
+                    double corridor_penalty_final =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                
+                    double max_corridor_violation_initial =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                
+                    double max_corridor_violation_final =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                    double corridor_slack_initial =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                    double corridor_slack_final =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                    bool exact_mapping_valid =
+                        false;
+                    bool exact_certificate_valid =
+                        false;
+                    bool exact_contained =
+                        false;
+                    int exact_checked_faces =
+                        0;
+                    int exact_worst_piece =
+                        -1;
+                    int exact_worst_face =
+                        -1;
+                    double exact_max_violation_m =
+                        -std::numeric_limits<double>::
+                            infinity();
+                    double exact_min_margin_m =
+                        std::numeric_limits<double>::
+                            infinity();
+                    double exact_worst_tau =
+                        0.0;
+                    double exact_worst_t =
+                        0.0;
+                    double exact_certificate_ms =
+                        0.0;
+                };
+                auto runBackendAb =
+                    [&](const std::vector<Eigen::MatrixX4d> &corridors,
+                        const double corridorPenaltyScale = 1.0)
+                        -> BackendAbResult
+                {
+                    BackendAbResult result;
+                
+                    result.corridor_count =
+                        static_cast<int>(
+                            corridors.size());
+                        
+                    for (const auto &poly :
+                         corridors)
+                    {
+                        result.total_faces +=
+                            static_cast<int>(
+                                poly.rows());
+                    }
+                
+                    if (corridors.empty())
+                    {
+                        return result;
+                    }
+                
+                    gcopter::GCOPTER_PolytopeSFC
+                        backendOptimizer;
+                
+                    Trajectory<5>
+                        backendTrajectory;
+                
+                    const auto setupStarted =
+                        std::chrono::steady_clock::now();
+                
+                    Eigen::VectorXd backendPenaltyWeights = penaltyWeights;
+                    if (backendPenaltyWeights.size() > 0)
+                    {
+                        backendPenaltyWeights(0) *= corridorPenaltyScale;
+                    }
+                    result.setup_success =
+                        backendOptimizer.setup(
+                            config.weightT,
+                            iniState,
+                            finState,
+                            corridors,
+                            INFINITY,
+                            config.smoothingEps,
+                            quadratureRes,
+                            magnitudeBounds,
+                            backendPenaltyWeights,   // 使用调整后的权重
+                            physicalParams);
+                        
+                    result.setup_ms =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::steady_clock::now() -
+                                setupStarted)
+                            .count();
+                            
+                    if (!result.setup_success)
+                    {
+                        return result;
+                    }
+                
+                    const auto optimizeStarted =
+                        std::chrono::steady_clock::now();
+                
+                    result.final_cost =
+                        backendOptimizer.optimize(
+                            backendTrajectory,
+                            config.relCostTol);
+                        
+                    result.optimize_ms =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::steady_clock::now() -
+                                optimizeStarted)
+                            .count();
+                            
+                    const auto &initialDiagnostics =
+                        backendOptimizer
+                            .getInitialCorridorDiagnostics();
+                            
+                    const auto &finalDiagnostics =
+                        backendOptimizer
+                            .getFinalCorridorDiagnostics();
+                            
+                    result.constrained_pieces =
+                        initialDiagnostics
+                            .constrainedPieceCount;
+                            
+                    result.corridor_penalty_initial =
+                        initialDiagnostics.penaltyCost;
+                            
+                    result.corridor_penalty_final =
+                        finalDiagnostics.penaltyCost;
+                            
+                    result.max_corridor_violation_initial =
+                        initialDiagnostics.maxViolationM;
+                            
+                    result.max_corridor_violation_final =
+                        finalDiagnostics.maxViolationM;
+                    result.corridor_slack_initial =
+                        initialDiagnostics.minSlackM;
+                    result.corridor_slack_final =
+                        finalDiagnostics.minSlackM;
+                            
+                    if (std::isfinite(
+                            result.final_cost) &&
+                        backendTrajectory.getPieceNum() > 0)
+                    {
+                        result.optimize_success =
+                            true;
+                        result.trajectory_pieces =
+                            backendTrajectory.getPieceNum();
+                        result.trajectory_duration =
+                            backendTrajectory
+                                .getTotalDuration();
+                        
+                        const Eigen::Matrix3Xd &optimizedPoints =
+                            backendOptimizer.getOptimizedPoints();
+                        const Eigen::VectorXd &optimizedTimes =
+                            backendOptimizer.getOptimizedTimes();
+                        const int expectedInnerPointCount =
+                            std::max(result.trajectory_pieces - 1, 0);
+                        result.optimized_state_ready =
+                            optimizedPoints.rows() == 3 &&
+                            optimizedPoints.cols() == expectedInnerPointCount &&
+                            optimizedTimes.size() == result.trajectory_pieces &&
+                            optimizedPoints.allFinite() &&
+                            optimizedTimes.allFinite();
+                        if (result.optimized_state_ready)
+                        {
+                            result.optimized_points = optimizedPoints;
+                            result.optimized_times = optimizedTimes;
+                        }
+                        // ========================================================
+                        // Exact continuous-time corridor certificate.
+                        //
+                        // In the current backend experiment:
+                        //
+                        //     lengthPerPiece = infinity
+                        //
+                        // and we require one trajectory piece per corridor before
+                        // using the direct piece-id <-> corridor-id certificate.
+                        // ========================================================
+                        if (backendTrajectory.getPieceNum() ==
+                            static_cast<int>(
+                                corridors.size()))
+                        {
+                            result.exact_mapping_valid =
+                                true;
+                            const auto certificateStarted =
+                                std::chrono::steady_clock::now();
+                            bool allValid =
+                                true;
+                            bool allContained =
+                                true;
+                            for (int pieceId = 0;
+                                 pieceId <
+                                     backendTrajectory
+                                         .getPieceNum();
+                                 ++pieceId)
+                            {
+                                const auto certificate =
+                                    traj_relevant::
+                                        certifyMincoPieceInPolytope(
+                                            backendTrajectory[
+                                                pieceId],
+                                            corridors[
+                                                pieceId],
+                                            1.0e-6,
+                                            1.0e-10,
+                                            1.0e-12);
+                                result.exact_checked_faces +=
+                                    certificate
+                                        .checked_face_count;
+                                if (!certificate.valid)
+                                {
+                                    allValid =
+                                        false;
+                                    allContained =
+                                        false;
+                                    continue;
+                                }
+                                if (!certificate.contained)
+                                {
+                                    allContained =
+                                        false;
+                                }
+                                if (certificate
+                                        .max_signed_violation_m >
+                                    result
+                                        .exact_max_violation_m)
+                                {
+                                    result.exact_max_violation_m =
+                                        certificate
+                                            .max_signed_violation_m;
+                                    result.exact_min_margin_m =
+                                        certificate
+                                            .min_margin_m;
+                                    result.exact_worst_piece =
+                                        pieceId;
+                                    result.exact_worst_face =
+                                        certificate
+                                            .worst_face;
+                                    result.exact_worst_tau =
+                                        certificate
+                                            .worst_normalized_time;
+                                    result.exact_worst_t =
+                                        certificate
+                                            .worst_physical_time;
+                                }
+                            }
+                            result.exact_certificate_valid =
+                                allValid;
+                            result.exact_contained =
+                                allValid &&
+                                allContained;
+                            result.exact_certificate_ms =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::
+                                            steady_clock::now() -
+                                        certificateStarted)
+                                    .count();
+                        }
+                    }
+                
+                    return result;
+                };
             
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
@@ -4789,367 +5102,6 @@ public:
                                 backendMetricHPolys,
                                 backendMetricInfos,
                                 &mappedFiriMetrics);
-
-                        struct BackendAbResult
-                        {
-                            bool setup_success =
-                                false;
-                        
-                            bool optimize_success =
-                                false;
-
-                            bool optimized_state_ready =
-                                false;
-
-                            Eigen::Matrix3Xd optimized_points;
-
-                            Eigen::VectorXd optimized_times;
-                        
-                            int corridor_count =
-                                0;
-                        
-                            int total_faces =
-                                0;
-                        
-                            int trajectory_pieces =
-                                0;
-                        
-                            int constrained_pieces =
-                                0;
-                        
-                            double setup_ms =
-                                0.0;
-                        
-                            double optimize_ms =
-                                0.0;
-                        
-                            double final_cost =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-
-                            double trajectory_duration =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                        
-                            double corridor_penalty_initial =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                        
-                            double corridor_penalty_final =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                        
-                            double max_corridor_violation_initial =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                        
-                            double max_corridor_violation_final =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-                            double corridor_slack_initial =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-
-                            double corridor_slack_final =
-                                std::numeric_limits<double>::
-                                    quiet_NaN();
-
-                            bool exact_mapping_valid =
-                                false;
-
-                            bool exact_certificate_valid =
-                                false;
-
-                            bool exact_contained =
-                                false;
-
-                            int exact_checked_faces =
-                                0;
-
-                            int exact_worst_piece =
-                                -1;
-
-                            int exact_worst_face =
-                                -1;
-
-                            double exact_max_violation_m =
-                                -std::numeric_limits<double>::
-                                    infinity();
-
-                            double exact_min_margin_m =
-                                std::numeric_limits<double>::
-                                    infinity();
-
-                            double exact_worst_tau =
-                                0.0;
-
-                            double exact_worst_t =
-                                0.0;
-
-                            double exact_certificate_ms =
-                                0.0;
-                        };
-
-                        auto runBackendAb =
-                            [&](const std::vector<Eigen::MatrixX4d> &corridors,
-                                const double corridorPenaltyScale = 1.0)
-                                -> BackendAbResult
-                        {
-                            BackendAbResult result;
-                        
-                            result.corridor_count =
-                                static_cast<int>(
-                                    corridors.size());
-                                
-                            for (const auto &poly :
-                                 corridors)
-                            {
-                                result.total_faces +=
-                                    static_cast<int>(
-                                        poly.rows());
-                            }
-                        
-                            if (corridors.empty())
-                            {
-                                return result;
-                            }
-                        
-                            gcopter::GCOPTER_PolytopeSFC
-                                backendOptimizer;
-                        
-                            Trajectory<5>
-                                backendTrajectory;
-                        
-                            const auto setupStarted =
-                                std::chrono::steady_clock::now();
-                        
-                            Eigen::VectorXd backendPenaltyWeights = penaltyWeights;
-                            if (backendPenaltyWeights.size() > 0)
-                            {
-                                backendPenaltyWeights(0) *= corridorPenaltyScale;
-                            }
-
-                            result.setup_success =
-                                backendOptimizer.setup(
-                                    config.weightT,
-                                    iniState,
-                                    finState,
-                                    corridors,
-                                    INFINITY,
-                                    config.smoothingEps,
-                                    quadratureRes,
-                                    magnitudeBounds,
-                                    backendPenaltyWeights,   // 使用调整后的权重
-                                    physicalParams);
-                                
-                            result.setup_ms =
-                                std::chrono::duration<
-                                    double,
-                                    std::milli>(
-                                        std::chrono::steady_clock::now() -
-                                        setupStarted)
-                                    .count();
-                                    
-                            if (!result.setup_success)
-                            {
-                                return result;
-                            }
-                        
-                            const auto optimizeStarted =
-                                std::chrono::steady_clock::now();
-                        
-                            result.final_cost =
-                                backendOptimizer.optimize(
-                                    backendTrajectory,
-                                    config.relCostTol);
-                                
-                            result.optimize_ms =
-                                std::chrono::duration<
-                                    double,
-                                    std::milli>(
-                                        std::chrono::steady_clock::now() -
-                                        optimizeStarted)
-                                    .count();
-                                    
-                            const auto &initialDiagnostics =
-                                backendOptimizer
-                                    .getInitialCorridorDiagnostics();
-                                    
-                            const auto &finalDiagnostics =
-                                backendOptimizer
-                                    .getFinalCorridorDiagnostics();
-                                    
-                            result.constrained_pieces =
-                                initialDiagnostics
-                                    .constrainedPieceCount;
-                                    
-                            result.corridor_penalty_initial =
-                                initialDiagnostics.penaltyCost;
-                                    
-                            result.corridor_penalty_final =
-                                finalDiagnostics.penaltyCost;
-                                    
-                            result.max_corridor_violation_initial =
-                                initialDiagnostics.maxViolationM;
-                                    
-                            result.max_corridor_violation_final =
-                                finalDiagnostics.maxViolationM;
-
-                            result.corridor_slack_initial =
-                                initialDiagnostics.minSlackM;
-
-                            result.corridor_slack_final =
-                                finalDiagnostics.minSlackM;
-                                    
-                            if (std::isfinite(
-                                    result.final_cost) &&
-                                backendTrajectory.getPieceNum() > 0)
-                            {
-                                result.optimize_success =
-                                    true;
-
-                                result.trajectory_pieces =
-                                    backendTrajectory.getPieceNum();
-
-                                result.trajectory_duration =
-                                    backendTrajectory
-                                        .getTotalDuration();
-                                
-                                const Eigen::Matrix3Xd &optimizedPoints =
-                                    backendOptimizer.getOptimizedPoints();
-                                const Eigen::VectorXd &optimizedTimes =
-                                    backendOptimizer.getOptimizedTimes();
-
-                                const int expectedInnerPointCount =
-                                    std::max(result.trajectory_pieces - 1, 0);
-
-                                result.optimized_state_ready =
-                                    optimizedPoints.rows() == 3 &&
-                                    optimizedPoints.cols() == expectedInnerPointCount &&
-                                    optimizedTimes.size() == result.trajectory_pieces &&
-                                    optimizedPoints.allFinite() &&
-                                    optimizedTimes.allFinite();
-
-                                if (result.optimized_state_ready)
-                                {
-                                    result.optimized_points = optimizedPoints;
-                                    result.optimized_times = optimizedTimes;
-                                }
-
-                                // ========================================================
-                                // Exact continuous-time corridor certificate.
-                                //
-                                // In the current backend experiment:
-                                //
-                                //     lengthPerPiece = infinity
-                                //
-                                // and we require one trajectory piece per corridor before
-                                // using the direct piece-id <-> corridor-id certificate.
-                                // ========================================================
-                                if (backendTrajectory.getPieceNum() ==
-                                    static_cast<int>(
-                                        corridors.size()))
-                                {
-                                    result.exact_mapping_valid =
-                                        true;
-
-                                    const auto certificateStarted =
-                                        std::chrono::steady_clock::now();
-
-                                    bool allValid =
-                                        true;
-
-                                    bool allContained =
-                                        true;
-
-                                    for (int pieceId = 0;
-                                         pieceId <
-                                             backendTrajectory
-                                                 .getPieceNum();
-                                         ++pieceId)
-                                    {
-                                        const auto certificate =
-                                            traj_relevant::
-                                                certifyMincoPieceInPolytope(
-                                                    backendTrajectory[
-                                                        pieceId],
-                                                    corridors[
-                                                        pieceId],
-                                                    1.0e-6,
-                                                    1.0e-10,
-                                                    1.0e-12);
-
-                                        result.exact_checked_faces +=
-                                            certificate
-                                                .checked_face_count;
-
-                                        if (!certificate.valid)
-                                        {
-                                            allValid =
-                                                false;
-
-                                            allContained =
-                                                false;
-
-                                            continue;
-                                        }
-
-                                        if (!certificate.contained)
-                                        {
-                                            allContained =
-                                                false;
-                                        }
-
-                                        if (certificate
-                                                .max_signed_violation_m >
-                                            result
-                                                .exact_max_violation_m)
-                                        {
-                                            result.exact_max_violation_m =
-                                                certificate
-                                                    .max_signed_violation_m;
-
-                                            result.exact_min_margin_m =
-                                                certificate
-                                                    .min_margin_m;
-
-                                            result.exact_worst_piece =
-                                                pieceId;
-
-                                            result.exact_worst_face =
-                                                certificate
-                                                    .worst_face;
-
-                                            result.exact_worst_tau =
-                                                certificate
-                                                    .worst_normalized_time;
-
-                                            result.exact_worst_t =
-                                                certificate
-                                                    .worst_physical_time;
-                                        }
-                                    }
-
-                                    result.exact_certificate_valid =
-                                        allValid;
-
-                                    result.exact_contained =
-                                        allValid &&
-                                        allContained;
-
-                                    result.exact_certificate_ms =
-                                        std::chrono::duration<
-                                            double,
-                                            std::milli>(
-                                                std::chrono::
-                                                    steady_clock::now() -
-                                                certificateStarted)
-                                            .count();
-                                }
-                            }
-                        
-                            return result;
-                        };
 
                         BackendAbResult
                             backendControlResult;
