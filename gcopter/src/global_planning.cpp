@@ -1673,6 +1673,102 @@ public:
                                .sample_cap_hits);
                 }
             }
+            
+            // ============================================================
+            // Shared trajectory/backend context.
+            //
+            // These quantities depend only on the benchmark case and
+            // physical/optimization configuration.  They do NOT depend
+            // on how the safe-flight corridor is constructed.
+            //
+            // Keeping them outside the baseline corridor block is
+            // necessary for the later method-isolated benchmark paths:
+            //
+            //   FIRI     -> common backend
+            //   Proposed -> common backend
+            // ============================================================
+            Eigen::Matrix3d iniState;
+            Eigen::Matrix3d finState;
+
+            iniState <<
+                route.front(),
+                Eigen::Vector3d::Zero(),
+                Eigen::Vector3d::Zero();
+
+            finState <<
+                route.back(),
+                Eigen::Vector3d::Zero(),
+                Eigen::Vector3d::Zero();
+
+            // magnitudeBounds =
+            // [v_max, omega_max, theta_max,
+            //  thrust_min, thrust_max]^T
+            Eigen::VectorXd magnitudeBounds(5);
+
+            magnitudeBounds(0) =
+                config.maxVelMag;
+
+            magnitudeBounds(1) =
+                config.maxBdrMag;
+
+            magnitudeBounds(2) =
+                config.maxTiltAngle;
+
+            magnitudeBounds(3) =
+                config.minThrust;
+
+            magnitudeBounds(4) =
+                config.maxThrust;
+
+            // penaltyWeights =
+            // [position, velocity, body-rate, tilt, thrust]^T
+            Eigen::VectorXd penaltyWeights(5);
+
+            penaltyWeights(0) =
+                config.chiVec[0];
+
+            penaltyWeights(1) =
+                config.chiVec[1];
+
+            penaltyWeights(2) =
+                config.chiVec[2];
+
+            penaltyWeights(3) =
+                config.chiVec[3];
+
+            penaltyWeights(4) =
+                config.chiVec[4];
+
+            // physicalParams =
+            // [mass, gravity, horizontal drag, vertical drag,
+            //  parasitic drag, speed smoothing]^T
+            Eigen::VectorXd physicalParams(6);
+
+            physicalParams(0) =
+                config.vehicleMass;
+
+            physicalParams(1) =
+                config.gravAcc;
+
+            physicalParams(2) =
+                config.horizDrag;
+
+            physicalParams(3) =
+                config.vertDrag;
+
+            physicalParams(4) =
+                config.parasDrag;
+
+            physicalParams(5) =
+                config.speedEps;
+
+            const int quadratureRes =
+                config.integralIntervs;
+
+            // std::vector<Eigen::MatrixX4d> hPolys;
+            // std::vector<Eigen::Vector3d> pc;
+            // voxelMap.getSurf(pc);
+            
             std::vector<Eigen::MatrixX4d> hPolys;
             std::vector<Eigen::Vector3d> pc;
             voxelMap.getSurf(pc);
@@ -2247,40 +2343,11 @@ public:
             }
 
             {
-                visualizer.visualizePolytope(hPolys);
+                visualizer.visualizePolytope(
+                    hPolys);
 
-                Eigen::Matrix3d iniState;
-                Eigen::Matrix3d finState;
-                iniState << route.front(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-                finState << route.back(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-
-                gcopter::GCOPTER_PolytopeSFC gcopter;
-
-                // magnitudeBounds = [v_max, omg_max, theta_max, thrust_min, thrust_max]^T
-                // penaltyWeights = [pos_weight, vel_weight, omg_weight, theta_weight, thrust_weight]^T
-                // physicalParams = [vehicle_mass, gravitational_acceleration, horitonral_drag_coeff,
-                //                   vertical_drag_coeff, parasitic_drag_coeff, speed_smooth_factor]^T
-                // initialize some constraint parameters
-                Eigen::VectorXd magnitudeBounds(5);
-                Eigen::VectorXd penaltyWeights(5);
-                Eigen::VectorXd physicalParams(6);
-                magnitudeBounds(0) = config.maxVelMag;
-                magnitudeBounds(1) = config.maxBdrMag;
-                magnitudeBounds(2) = config.maxTiltAngle;
-                magnitudeBounds(3) = config.minThrust;
-                magnitudeBounds(4) = config.maxThrust;
-                penaltyWeights(0) = (config.chiVec)[0];
-                penaltyWeights(1) = (config.chiVec)[1];
-                penaltyWeights(2) = (config.chiVec)[2];
-                penaltyWeights(3) = (config.chiVec)[3];
-                penaltyWeights(4) = (config.chiVec)[4];
-                physicalParams(0) = config.vehicleMass;
-                physicalParams(1) = config.gravAcc;
-                physicalParams(2) = config.horizDrag;
-                physicalParams(3) = config.vertDrag;
-                physicalParams(4) = config.parasDrag;
-                physicalParams(5) = config.speedEps;
-                const int quadratureRes = config.integralIntervs;
+                gcopter::GCOPTER_PolytopeSFC
+                    gcopter;
 
                 traj.clear();
 
