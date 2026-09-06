@@ -4542,7 +4542,7 @@ public:
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
+
                     ROS_INFO_STREAM(
                         "TF_CORRIDOR_DIRECTIONAL_SUMMARY "
                     
@@ -4575,6 +4575,968 @@ public:
                         << " max_eigenvalue_delta="
                         << maxDirectionalEigenvalueDelta);
 
+                    // ========================================================
+                    // C2d: Controlled-Geometry CSGN-vs-Identity ablation.
+                    //
+                    // IMPORTANT:
+                    //
+                    //   - measurement / ablation only;
+                    //   - outside all frozen planning timers;
+                    //   - exactly one corridor per original route segment;
+                    //   - same ACTIVE_WITNESS constructor;
+                    //   - no overlap shortcut;
+                    //   - Identity differs only by using the deterministic
+                    //     metric-disabled S = I fallback.
+                    // ========================================================
+                                                
+                    std::vector<Eigen::MatrixX4d>
+                        controlledCsgnHPolys;
+                                                
+                    std::vector<Eigen::MatrixX4d>
+                        controlledIdentityHPolys;
+                                                
+                    sfc_gen::TrajectoryRelevantCompactInfos
+                        controlledCsgnInfos;
+                                                
+                    sfc_gen::TrajectoryRelevantCompactInfos
+                        controlledIdentityInfos;
+                                                
+                                                
+                    // --------------------------------------------------------
+                    // Direct controlled-geometry builder.
+                    //
+                    // This deliberately calls the SAME inner constructor used
+                    // by trajectoryRelevantCompactCover(), but does not execute
+                    // the final non-adjacent overlap shortcut.
+                    // --------------------------------------------------------
+                    auto buildControlledCompactCover =
+                        [&](const bool useCsgnMetric,
+                            std::vector<Eigen::MatrixX4d> &hPolys,
+                            sfc_gen::TrajectoryRelevantCompactInfos &infos)
+                            -> bool
+                    {
+                        hPolys.clear();
+                        infos.clear();
+                    
+                        if (controlledSegmentCount <= 0 ||
+                            static_cast<int>(
+                                route.size()) !=
+                                controlledSegmentCount + 1)
+                        {
+                            return false;
+                        }
+                    
+                        hPolys.reserve(
+                            controlledSegmentCount);
+                        
+                        infos.reserve(
+                            controlledSegmentCount);
+                        
+                        for (int segmentId = 0;
+                             segmentId <
+                                 controlledSegmentCount;
+                             ++segmentId)
+                        {
+                            traj_relevant::
+                                CompactCorridorOptions
+                                    segmentOptions =
+                                        activeGuideOptions;
+                        
+                            // -----------------------------------------------
+                            // Deterministic Identity fallback:
+                            //
+                            //     S = I
+                            //
+                            // This also avoids arbitrary eigenvectors of an
+                            // explicitly diagonalized triply-degenerate I.
+                            // -----------------------------------------------
+                            segmentOptions.metric_enabled =
+                                false;
+                        
+                            segmentOptions.deformation_utility =
+                                Eigen::Matrix3d::Identity();
+                        
+                            if (useCsgnMetric)
+                            {
+                                if (segmentId >=
+                                        static_cast<int>(
+                                            guideSegmentMetrics.size()) ||
+                                    !guideSegmentMetrics[
+                                         segmentId]
+                                         .valid ||
+                                    !guideSegmentMetrics[
+                                         segmentId]
+                                         .utility
+                                         .allFinite())
+                                {
+                                    return false;
+                                }
+                            
+                                segmentOptions.metric_enabled =
+                                    true;
+                            
+                                segmentOptions.deformation_utility =
+                                    guideSegmentMetrics[
+                                        segmentId]
+                                        .utility;
+                            }
+                        
+                            Eigen::MatrixX4d hPoly;
+                        
+                            traj_relevant::
+                                CompactCorridorDiagnostics
+                                    diagnostics;
+                        
+                            const bool generated =
+                                traj_relevant::
+                                    buildCompactSegmentPolytope(
+                                        pc,
+                                        voxelMap.getOrigin(),
+                                        voxelMap.getCorner(),
+                                        route[segmentId],
+                                        route[segmentId + 1],
+                                        hPoly,
+                                        segmentOptions,
+                                        &diagnostics);
+                                    
+                            if (!generated)
+                            {
+                                infos.push_back(
+                                    diagnostics);
+                                
+                                return false;
+                            }
+                        
+                            hPolys.push_back(
+                                hPoly);
+                            
+                            infos.push_back(
+                                diagnostics);
+                        }
+                    
+                        return
+                            static_cast<int>(
+                                hPolys.size()) ==
+                                controlledSegmentCount &&
+                            static_cast<int>(
+                                infos.size()) ==
+                                controlledSegmentCount;
+                    };
+                    
+                    
+                    const bool controlledCsgnSuccess =
+                        guideSegmentMetricsReady &&
+                        buildControlledCompactCover(
+                            true,
+                            controlledCsgnHPolys,
+                            controlledCsgnInfos);
+                        
+                    const bool controlledIdentitySuccess =
+                        guideSegmentMetricsReady &&
+                        buildControlledCompactCover(
+                            false,
+                            controlledIdentityHPolys,
+                            controlledIdentityInfos);
+                        
+                    const bool controlledPairMappingValid =
+                        controlledCsgnSuccess &&
+                        controlledIdentitySuccess &&
+                        static_cast<int>(
+                            controlledCsgnHPolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledIdentityHPolys.size()) ==
+                            controlledSegmentCount &&
+                        controlledCsgnInfos.size() ==
+                            controlledCsgnHPolys.size() &&
+                        controlledIdentityInfos.size() ==
+                            controlledIdentityHPolys.size();
+                        
+                        
+                    // ========================================================
+                    // Provenance check:
+                    //
+                    // On the current regression route the native Proposed path
+                    // has no shortcut removal, so the re-built Controlled-CSGN
+                    // corridor should be identical face-for-face.
+                    // ========================================================
+                    bool controlledCsgnNativeMatchValid =
+                        controlledCsgnSuccess &&
+                        corridorGeometryMappingValid &&
+                        controlledCsgnHPolys.size() ==
+                            activeGuideHPolys.size();
+                        
+                    double controlledCsgnNativeMaxPlaneDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    if (controlledCsgnNativeMatchValid)
+                    {
+                        controlledCsgnNativeMaxPlaneDelta =
+                            0.0;
+                    
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            if (controlledCsgnHPolys[
+                                    corridorId]
+                                    .rows() !=
+                                activeGuideHPolys[
+                                    corridorId]
+                                    .rows())
+                            {
+                                controlledCsgnNativeMatchValid =
+                                    false;
+                            
+                                break;
+                            }
+                        
+                            controlledCsgnNativeMaxPlaneDelta =
+                                std::max(
+                                    controlledCsgnNativeMaxPlaneDelta,
+                                    (
+                                        controlledCsgnHPolys[
+                                            corridorId] -
+                                        activeGuideHPolys[
+                                            corridorId])
+                                        .cwiseAbs()
+                                        .maxCoeff());
+                        }
+                    }
+                    
+                    if (!controlledCsgnNativeMatchValid)
+                    {
+                        controlledCsgnNativeMaxPlaneDelta =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    // ========================================================
+                    // Aggregate geometry / workload.
+                    // ========================================================
+                    int controlledCsgnTotalFaces =
+                        0;
+                    
+                    int controlledIdentityTotalFaces =
+                        0;
+                    
+                    int controlledCsgnObstacleFaces =
+                        0;
+                    
+                    int controlledIdentityObstacleFaces =
+                        0;
+                    
+                    std::int64_t controlledCsgnCandidates =
+                        0;
+                    
+                    std::int64_t controlledIdentityCandidates =
+                        0;
+                    
+                    std::int64_t controlledCsgnWitnessTests =
+                        0;
+                    
+                    std::int64_t controlledIdentityWitnessTests =
+                        0;
+                    
+                    std::int64_t controlledCsgnFaceTests =
+                        0;
+                    
+                    std::int64_t controlledIdentityFaceTests =
+                        0;
+                    
+                    int controlledCsgnSafetyCount =
+                        0;
+                    
+                    int controlledIdentitySafetyCount =
+                        0;
+                    
+                    int identitySeedValidCount =
+                        0;
+                    
+                    int identityOverlapValidCount =
+                        0;
+                    
+                    double identityMinSeedRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                    
+                    double identityMinOverlapRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                    
+                    
+                    if (controlledPairMappingValid)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            const auto &csgnInfo =
+                                controlledCsgnInfos[
+                                    corridorId];
+                                
+                            const auto &identityInfo =
+                                controlledIdentityInfos[
+                                    corridorId];
+                                
+                            controlledCsgnTotalFaces +=
+                                csgnInfo.total_face_count;
+                                
+                            controlledIdentityTotalFaces +=
+                                identityInfo.total_face_count;
+                                
+                            controlledCsgnObstacleFaces +=
+                                csgnInfo
+                                    .selected_obstacle_face_count;
+                                
+                            controlledIdentityObstacleFaces +=
+                                identityInfo
+                                    .selected_obstacle_face_count;
+                                
+                            controlledCsgnCandidates +=
+                                csgnInfo.candidate_count;
+                                
+                            controlledIdentityCandidates +=
+                                identityInfo.candidate_count;
+                                
+                            controlledCsgnWitnessTests +=
+                                csgnInfo.witness_distance_tests;
+                                
+                            controlledIdentityWitnessTests +=
+                                identityInfo.witness_distance_tests;
+                                
+                            controlledCsgnFaceTests +=
+                                csgnInfo.obstacle_face_tests;
+                                
+                            controlledIdentityFaceTests +=
+                                identityInfo.obstacle_face_tests;
+                                
+                            controlledCsgnSafetyCount +=
+                                csgnInfo.safety_verified
+                                    ? 1
+                                    : 0;
+                                
+                            controlledIdentitySafetyCount +=
+                                identityInfo.safety_verified
+                                    ? 1
+                                    : 0;
+                                
+                                
+                            const auto identitySeedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        controlledIdentityHPolys[
+                                            corridorId],
+                                        route[corridorId],
+                                        route[corridorId + 1]);
+                                        
+                            if (identitySeedMetric.valid)
+                            {
+                                ++identitySeedValidCount;
+                            
+                                identityMinSeedRadiusM =
+                                    std::min(
+                                        identityMinSeedRadiusM,
+                                        identitySeedMetric
+                                            .radius_m);
+                            }
+                        
+                            if (corridorId + 1 <
+                                controlledSegmentCount)
+                            {
+                                const auto identityOverlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            controlledIdentityHPolys[
+                                                corridorId],
+                                            controlledIdentityHPolys[
+                                                corridorId + 1],
+                                            route[corridorId + 1]);
+                                            
+                                if (identityOverlapMetric.valid)
+                                {
+                                    ++identityOverlapValidCount;
+                                
+                                    identityMinOverlapRadiusM =
+                                        std::min(
+                                            identityMinOverlapRadiusM,
+                                            identityOverlapMetric
+                                                .radius_m);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (identitySeedValidCount == 0)
+                    {
+                        identityMinSeedRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    if (identityOverlapValidCount == 0)
+                    {
+                        identityMinOverlapRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    // ========================================================
+                    // Paired directional measurement.
+                    //
+                    // CRITICAL:
+                    // Both corridors are measured along the SAME CSGN
+                    // reference eigendirections.
+                    //
+                    // Identity's own eigendirections are deliberately NOT used.
+                    // ========================================================
+                    int pairedDirectionalValidCount =
+                        0;
+                    
+                    double sumCsgnHardSymM =
+                        0.0;
+                    
+                    double sumIdentityHardSymM =
+                        0.0;
+                    
+                    double sumCsgnEasySymM =
+                        0.0;
+                    
+                    double sumIdentityEasySymM =
+                        0.0;
+                    
+                    double sumHardPreservation =
+                        0.0;
+                    
+                    double sumEasyPreservation =
+                        0.0;
+                    
+                    double sumPreferentialPreservation =
+                        0.0;
+                    
+                    int preservationValidCount =
+                        0;
+                    
+                    
+                    if (controlledPairMappingValid)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            bool pairDirectionalValid =
+                                false;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    csgnHardReserve;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    csgnMiddleReserve;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    csgnEasyReserve;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    identityHardReserve;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    identityMiddleReserve;
+                        
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    identityEasyReserve;
+                        
+                            double hardPreservation =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double middlePreservation =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double easyPreservation =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            double preferentialPreservation =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                        
+                            if (corridorId <
+                                    static_cast<int>(
+                                        guideSegmentMetrics.size()) &&
+                                guideSegmentMetrics[
+                                    corridorId]
+                                    .valid)
+                            {
+                                Eigen::Matrix3d utility =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .utility;
+                                    
+                                utility =
+                                    0.5 *
+                                    (utility +
+                                     utility.transpose());
+                                    
+                                Eigen::SelfAdjointEigenSolver<
+                                    Eigen::Matrix3d>
+                                    utilitySolver(
+                                        utility);
+                                    
+                                if (utilitySolver.info() ==
+                                        Eigen::Success &&
+                                    utilitySolver.eigenvalues()
+                                            .minCoeff() >
+                                        0.0)
+                                {
+                                    Eigen::Matrix3d directions =
+                                        utilitySolver
+                                            .eigenvectors();
+                                
+                                    // Deterministic sign convention.
+                                    for (int directionId = 0;
+                                         directionId < 3;
+                                         ++directionId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            directions.col(
+                                                directionId);
+                                            
+                                        Eigen::Index pivotId =
+                                            0;
+                                            
+                                        direction
+                                            .cwiseAbs()
+                                            .maxCoeff(
+                                                &pivotId);
+                                            
+                                        if (direction(
+                                                pivotId) <
+                                            0.0)
+                                        {
+                                            direction =
+                                                -direction;
+                                        }
+                                    
+                                        directions.col(
+                                            directionId) =
+                                            direction;
+                                    }
+                                
+                                
+                                    const Eigen::Vector3d &seedA =
+                                        route[corridorId];
+                                
+                                    const Eigen::Vector3d &seedB =
+                                        route[corridorId + 1];
+                                
+                                
+                                    csgnHardReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(0));
+                                                
+                                    csgnMiddleReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(1));
+                                                
+                                    csgnEasyReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(2));
+                                                
+                                                
+                                    identityHardReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(0));
+                                                
+                                    identityMiddleReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(1));
+                                                
+                                    identityEasyReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(2));
+                                                
+                                                
+                                    pairDirectionalValid =
+                                        csgnHardReserve.valid &&
+                                        csgnMiddleReserve.valid &&
+                                        csgnEasyReserve.valid &&
+                                        identityHardReserve.valid &&
+                                        identityMiddleReserve.valid &&
+                                        identityEasyReserve.valid;
+                                                
+                                    if (pairDirectionalValid)
+                                    {
+                                        ++pairedDirectionalValidCount;
+                                    
+                                        sumCsgnHardSymM +=
+                                            csgnHardReserve
+                                                .symmetric_m;
+                                    
+                                        sumIdentityHardSymM +=
+                                            identityHardReserve
+                                                .symmetric_m;
+                                    
+                                        sumCsgnEasySymM +=
+                                            csgnEasyReserve
+                                                .symmetric_m;
+                                    
+                                        sumIdentityEasySymM +=
+                                            identityEasyReserve
+                                                .symmetric_m;
+                                    
+                                    
+                                        if (identityHardReserve
+                                                .symmetric_m >
+                                                1.0e-12 &&
+                                            identityMiddleReserve
+                                                .symmetric_m >
+                                                1.0e-12 &&
+                                            identityEasyReserve
+                                                .symmetric_m >
+                                                1.0e-12)
+                                        {
+                                            hardPreservation =
+                                                csgnHardReserve
+                                                    .symmetric_m /
+                                                identityHardReserve
+                                                    .symmetric_m;
+                                        
+                                            middlePreservation =
+                                                csgnMiddleReserve
+                                                    .symmetric_m /
+                                                identityMiddleReserve
+                                                    .symmetric_m;
+                                        
+                                            easyPreservation =
+                                                csgnEasyReserve
+                                                    .symmetric_m /
+                                                identityEasyReserve
+                                                    .symmetric_m;
+                                        
+                                            if (hardPreservation >
+                                                1.0e-12)
+                                            {
+                                                preferentialPreservation =
+                                                    easyPreservation /
+                                                    hardPreservation;
+                                            }
+                                        
+                                            if (std::isfinite(
+                                                    hardPreservation) &&
+                                                std::isfinite(
+                                                    easyPreservation) &&
+                                                std::isfinite(
+                                                    preferentialPreservation))
+                                            {
+                                                ++preservationValidCount;
+                                            
+                                                sumHardPreservation +=
+                                                    hardPreservation;
+                                            
+                                                sumEasyPreservation +=
+                                                    easyPreservation;
+                                            
+                                                sumPreferentialPreservation +=
+                                                    preferentialPreservation;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        
+                        
+                            ROS_INFO_STREAM(
+                                "TF_CSGN_IDENTITY_GEOMETRY "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << pairDirectionalValid
+                            
+                                << " csgn_hard_sym_m="
+                                << csgnHardReserve
+                                       .symmetric_m
+                            
+                                << " identity_hard_sym_m="
+                                << identityHardReserve
+                                       .symmetric_m
+                            
+                                << " hard_preservation="
+                                << hardPreservation
+                            
+                                << " csgn_mid_sym_m="
+                                << csgnMiddleReserve
+                                       .symmetric_m
+                            
+                                << " identity_mid_sym_m="
+                                << identityMiddleReserve
+                                       .symmetric_m
+                            
+                                << " mid_preservation="
+                                << middlePreservation
+                            
+                                << " csgn_easy_sym_m="
+                                << csgnEasyReserve
+                                       .symmetric_m
+                            
+                                << " identity_easy_sym_m="
+                                << identityEasyReserve
+                                       .symmetric_m
+                            
+                                << " easy_preservation="
+                                << easyPreservation
+                            
+                                << " preferential_preservation="
+                                << preferentialPreservation
+                            
+                                << " csgn_faces="
+                                << controlledCsgnInfos[
+                                       corridorId]
+                                       .total_face_count
+                                
+                                << " identity_faces="
+                                << controlledIdentityInfos[
+                                       corridorId]
+                                       .total_face_count
+                                
+                                << " csgn_obs_faces="
+                                << controlledCsgnInfos[
+                                       corridorId]
+                                       .selected_obstacle_face_count
+                                
+                                << " identity_obs_faces="
+                                << controlledIdentityInfos[
+                                       corridorId]
+                                       .selected_obstacle_face_count
+                                
+                                << " csgn_candidates="
+                                << controlledCsgnInfos[
+                                       corridorId]
+                                       .candidate_count
+                                
+                                << " identity_candidates="
+                                << controlledIdentityInfos[
+                                       corridorId]
+                                       .candidate_count);
+                        }
+                    }
+                    
+                    
+                    // ========================================================
+                    // Aggregate paired ablation summary.
+                    // ========================================================
+                    const double meanCsgnHardSymM =
+                        pairedDirectionalValidCount > 0
+                            ? sumCsgnHardSymM /
+                                  static_cast<double>(
+                                      pairedDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanIdentityHardSymM =
+                        pairedDirectionalValidCount > 0
+                            ? sumIdentityHardSymM /
+                                  static_cast<double>(
+                                      pairedDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanCsgnEasySymM =
+                        pairedDirectionalValidCount > 0
+                            ? sumCsgnEasySymM /
+                                  static_cast<double>(
+                                      pairedDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanIdentityEasySymM =
+                        pairedDirectionalValidCount > 0
+                            ? sumIdentityEasySymM /
+                                  static_cast<double>(
+                                      pairedDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanHardPreservation =
+                        preservationValidCount > 0
+                            ? sumHardPreservation /
+                                  static_cast<double>(
+                                      preservationValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanEasyPreservation =
+                        preservationValidCount > 0
+                            ? sumEasyPreservation /
+                                  static_cast<double>(
+                                      preservationValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanPreferentialPreservation =
+                        preservationValidCount > 0
+                            ? sumPreferentialPreservation /
+                                  static_cast<double>(
+                                      preservationValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    ROS_INFO_STREAM(
+                        "TF_CSGN_IDENTITY_SUMMARY "
+                    
+                        << "controlled_csgn_success="
+                        << controlledCsgnSuccess
+                    
+                        << " identity_success="
+                        << controlledIdentitySuccess
+                    
+                        << " mapping_valid="
+                        << controlledPairMappingValid
+                    
+                        << " csgn_native_match_valid="
+                        << controlledCsgnNativeMatchValid
+                    
+                        << " csgn_native_max_plane_delta="
+                        << controlledCsgnNativeMaxPlaneDelta
+                    
+                        << " directional_valid="
+                        << pairedDirectionalValidCount
+                    
+                        << " directional_total="
+                        << controlledSegmentCount
+                    
+                        << " preservation_valid="
+                        << preservationValidCount
+                    
+                        << " csgn_faces="
+                        << controlledCsgnTotalFaces
+                    
+                        << " identity_faces="
+                        << controlledIdentityTotalFaces
+                    
+                        << " csgn_obs_faces="
+                        << controlledCsgnObstacleFaces
+                    
+                        << " identity_obs_faces="
+                        << controlledIdentityObstacleFaces
+                    
+                        << " csgn_candidates="
+                        << controlledCsgnCandidates
+                    
+                        << " identity_candidates="
+                        << controlledIdentityCandidates
+                    
+                        << " csgn_witness_tests="
+                        << controlledCsgnWitnessTests
+                    
+                        << " identity_witness_tests="
+                        << controlledIdentityWitnessTests
+                    
+                        << " csgn_face_tests="
+                        << controlledCsgnFaceTests
+                    
+                        << " identity_face_tests="
+                        << controlledIdentityFaceTests
+                    
+                        << " csgn_safety="
+                        << controlledCsgnSafetyCount
+                    
+                        << " identity_safety="
+                        << controlledIdentitySafetyCount
+                    
+                        << " identity_seed_valid="
+                        << identitySeedValidCount
+                    
+                        << " identity_seed_total="
+                        << controlledSegmentCount
+                    
+                        << " identity_min_seed_m="
+                        << identityMinSeedRadiusM
+                    
+                        << " identity_overlap_valid="
+                        << identityOverlapValidCount
+                    
+                        << " identity_overlap_total="
+                        << std::max(
+                               0,
+                               controlledSegmentCount - 1)
+                        
+                        << " identity_min_overlap_m="
+                        << identityMinOverlapRadiusM
+                        
+                        << " mean_csgn_hard_sym_m="
+                        << meanCsgnHardSymM
+                        
+                        << " mean_identity_hard_sym_m="
+                        << meanIdentityHardSymM
+                        
+                        << " mean_csgn_easy_sym_m="
+                        << meanCsgnEasySymM
+                        
+                        << " mean_identity_easy_sym_m="
+                        << meanIdentityEasySymM
+                        
+                        << " mean_hard_preservation="
+                        << meanHardPreservation
+                        
+                        << " mean_easy_preservation="
+                        << meanEasyPreservation
+                        
+                        << " mean_preferential_preservation="
+                        << meanPreferentialPreservation);
+                        
                     bool benchmarkCorridorLogSuccess =
                         true;
 
