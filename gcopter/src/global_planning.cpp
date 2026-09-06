@@ -4549,6 +4549,130 @@ public:
                                .max_vertex_violation_m);
                     
                     // ========================================================
+                    // Common directional-width kernel self-test.
+                    //
+                    // volumeTestBox is:
+                    //
+                    //     x in [-1, 1]
+                    //     y in [-2, 2]
+                    //     z in [-3, 3]
+                    //
+                    // At q = 0, analytical widths are:
+                    //
+                    //     Wx = 2 m
+                    //     Wy = 4 m
+                    //     Wz = 6 m
+                    // ========================================================
+                                        
+                    const auto widthTestX =
+                        gcopter_benchmark::
+                            evaluatePointDirectionalWidth(
+                                volumeTestBox,
+                                Eigen::Vector3d::Zero(),
+                                Eigen::Vector3d::UnitX());
+                            
+                    const auto widthTestY =
+                        gcopter_benchmark::
+                            evaluatePointDirectionalWidth(
+                                volumeTestBox,
+                                Eigen::Vector3d::Zero(),
+                                Eigen::Vector3d::UnitY());
+                            
+                    const auto widthTestZ =
+                        gcopter_benchmark::
+                            evaluatePointDirectionalWidth(
+                                volumeTestBox,
+                                Eigen::Vector3d::Zero(),
+                                Eigen::Vector3d::UnitZ());
+                            
+                    const bool widthSelfTestValid =
+                        widthTestX.valid &&
+                        widthTestY.valid &&
+                        widthTestZ.valid &&
+                            
+                        widthTestX.reference_inside &&
+                        widthTestY.reference_inside &&
+                        widthTestZ.reference_inside &&
+                            
+                        std::abs(
+                            widthTestX.positive_m -
+                            1.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestX.negative_m -
+                            1.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestX.width_m -
+                            2.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestY.positive_m -
+                            2.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestY.negative_m -
+                            2.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestY.width_m -
+                            4.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestZ.positive_m -
+                            3.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestZ.negative_m -
+                            3.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            widthTestZ.width_m -
+                            6.0) <=
+                            1.0e-9;
+                        
+                    ROS_INFO_STREAM(
+                        "TF_DIRECTIONAL_WIDTH_SELFTEST "
+                    
+                        << "valid="
+                        << widthSelfTestValid
+                    
+                        << " x_pos_m="
+                        << widthTestX.positive_m
+                    
+                        << " x_neg_m="
+                        << widthTestX.negative_m
+                    
+                        << " x_width_m="
+                        << widthTestX.width_m
+                    
+                        << " y_pos_m="
+                        << widthTestY.positive_m
+                    
+                        << " y_neg_m="
+                        << widthTestY.negative_m
+                    
+                        << " y_width_m="
+                        << widthTestY.width_m
+                    
+                        << " z_pos_m="
+                        << widthTestZ.positive_m
+                    
+                        << " z_neg_m="
+                        << widthTestZ.negative_m
+                    
+                        << " z_width_m="
+                        << widthTestZ.width_m);
+
+                    // ========================================================
                     // C2d: Controlled-Geometry CSGN-vs-Identity ablation.
                     //
                     // IMPORTANT:

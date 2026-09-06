@@ -53,6 +53,30 @@ struct CorridorDirectionalReserveMetric
             quiet_NaN();
 };
 
+struct CorridorPointDirectionalWidthMetric
+{
+    bool valid = false;
+
+    bool reference_inside =
+        false;
+
+    double positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double width_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double min_reference_margin_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+};
+
 struct CorridorVolumeMetric
 {
     bool valid = false;
@@ -457,6 +481,195 @@ evaluateProtectedSegmentDirectionalReserve(
     result.span_m =
         positiveReserve +
         negativeReserve;
+
+    return result;
+}
+
+// ============================================================
+// Directional width of one final H-polytope through a fixed
+// reference point q.
+//
+// H-polytope:
+//
+//     n^T x + d <= 0.
+//
+// For a unit direction u:
+//
+//     positive_m
+//         = distance from q to boundary along +u
+//
+//     negative_m
+//         = distance from q to boundary along -u
+//
+//     width_m
+//         = positive_m + negative_m
+//
+// This is the COMMON cross-method directional geometry
+// metric.  Unlike the protected-segment reserve, it does
+// not assume that a finite-radius capsule is contained.
+// ============================================================
+inline CorridorPointDirectionalWidthMetric
+evaluatePointDirectionalWidth(
+    const Eigen::MatrixX4d &hPoly,
+    const Eigen::Vector3d &referencePoint,
+    const Eigen::Vector3d &direction,
+    const double normalEpsilon =
+        1.0e-12,
+    const double projectionEpsilon =
+        1.0e-12,
+    const double containmentToleranceM =
+        1.0e-8)
+{
+    CorridorPointDirectionalWidthMetric
+        result;
+
+    if (hPoly.rows() <= 0 ||
+        !hPoly.allFinite() ||
+        !referencePoint.allFinite() ||
+        !direction.allFinite() ||
+        !std::isfinite(normalEpsilon) ||
+        normalEpsilon <= 0.0 ||
+        !std::isfinite(projectionEpsilon) ||
+        projectionEpsilon <= 0.0 ||
+        !std::isfinite(
+            containmentToleranceM) ||
+        containmentToleranceM < 0.0)
+    {
+        return result;
+    }
+
+    const double directionNorm =
+        direction.norm();
+
+    if (!std::isfinite(directionNorm) ||
+        directionNorm <= normalEpsilon)
+    {
+        return result;
+    }
+
+    const Eigen::Vector3d unitDirection =
+        direction /
+        directionNorm;
+
+    double positive =
+        std::numeric_limits<double>::
+            infinity();
+
+    double negative =
+        std::numeric_limits<double>::
+            infinity();
+
+    double minReferenceMargin =
+        std::numeric_limits<double>::
+            infinity();
+
+    for (int faceId = 0;
+         faceId < hPoly.rows();
+         ++faceId)
+    {
+        const Eigen::Vector3d normal =
+            hPoly.row(faceId)
+                .head<3>()
+                .transpose();
+
+        const double offset =
+            hPoly(faceId, 3);
+
+        const double normalNorm =
+            normal.norm();
+
+        if (!std::isfinite(normalNorm) ||
+            normalNorm <= normalEpsilon ||
+            !std::isfinite(offset))
+        {
+            return result;
+        }
+
+        const Eigen::Vector3d unitNormal =
+            normal /
+            normalNorm;
+
+        const double normalizedOffset =
+            offset /
+            normalNorm;
+
+        // Metric signed clearance of q to this face.
+        // Positive means q is inside this half-space.
+        const double clearanceM =
+            -(
+                unitNormal.dot(
+                    referencePoint) +
+                normalizedOffset);
+
+        if (!std::isfinite(clearanceM))
+        {
+            return result;
+        }
+
+        minReferenceMargin =
+            std::min(
+                minReferenceMargin,
+                clearanceM);
+
+        const double projection =
+            unitNormal.dot(
+                unitDirection);
+
+        if (projection >
+            projectionEpsilon)
+        {
+            positive =
+                std::min(
+                    positive,
+                    clearanceM /
+                        projection);
+        }
+        else if (projection <
+                 -projectionEpsilon)
+        {
+            negative =
+                std::min(
+                    negative,
+                    clearanceM /
+                        (-projection));
+        }
+    }
+
+    if (!std::isfinite(positive) ||
+        !std::isfinite(negative) ||
+        !std::isfinite(
+            minReferenceMargin))
+    {
+        return result;
+    }
+
+    const double width =
+        positive +
+        negative;
+
+    if (!std::isfinite(width))
+    {
+        return result;
+    }
+
+    result.valid =
+        true;
+
+    result.reference_inside =
+        minReferenceMargin >=
+            -containmentToleranceM;
+
+    result.positive_m =
+        positive;
+
+    result.negative_m =
+        negative;
+
+    result.width_m =
+        width;
+
+    result.min_reference_margin_m =
+        minReferenceMargin;
 
     return result;
 }
