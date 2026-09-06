@@ -12,6 +12,7 @@
 #include "gcopter/benchmark_logger.hpp"
 #include "gcopter/trajectory_metrics.hpp"
 #include "gcopter/corridor_metrics.hpp"
+#include "gcopter/effective_face_metrics.hpp"
 #include "gcopter/rils_baseline.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
@@ -4674,6 +4675,217 @@ public:
                         << widthTestZ.width_m);
 
                     // ========================================================
+                    // D1c-0 common effective-face kernel self-test.
+                    //
+                    // Start from the analytical 6-face box:
+                    //
+                    //     x in [-1, 1]
+                    //     y in [-2, 2]
+                    //     z in [-3, 3]
+                    //
+                    // Then add:
+                    //
+                    //   row 6:
+                    //       a positively scaled duplicate of x <= 1
+                    //
+                    //   row 7:
+                    //       redundant loose plane x <= 2
+                    //
+                    // Expected:
+                    //
+                    //     raw rows             = 8
+                    //     unique plane groups  = 7
+                    //     duplicate rows       = 1
+                    //     effective faces      = 6
+                    //     redundant groups     = 1
+                    //
+                    // Five of the six true box facets become unbounded support
+                    // problems when individually removed; the x <= 1 facet is
+                    // still temporarily bounded by redundant x <= 2, so its
+                    // support violation is finite (+1 m).
+                    //
+                    // A positively row-scaled copy must yield identical counts.
+                    // ========================================================
+                                        
+                    Eigen::MatrixX4d
+                        effectiveFaceTestPoly(
+                            8,
+                            4);
+                        
+                        
+                    effectiveFaceTestPoly
+                        .topRows(6) =
+                            volumeTestBox;
+                        
+                        
+                    // Duplicate of x <= 1, scaled by +7.
+                    effectiveFaceTestPoly
+                        .row(6) =
+                            7.0 *
+                            volumeTestBox
+                                .row(0);
+                        
+                        
+                    // Loose redundant plane:
+                    //     x <= 2.
+                    effectiveFaceTestPoly
+                        .row(7) <<
+                            1.0,
+                            0.0,
+                            0.0,
+                            -2.0;
+                        
+                        
+                    Eigen::MatrixX4d
+                        scaledEffectiveFaceTestPoly =
+                            effectiveFaceTestPoly;
+                        
+                        
+                    const Eigen::Matrix<double, 8, 1>
+                        effectiveFaceRowScales =
+                            (
+                                Eigen::Matrix<double, 8, 1>()
+                                    <<
+                                        2.0,
+                                        0.5,
+                                        3.0,
+                                        4.0,
+                                        0.25,
+                                        5.0,
+                                        1.7,
+                                        0.8)
+                                .finished();
+                            
+                            
+                    for (int rowId = 0;
+                         rowId < 8;
+                         ++rowId)
+                    {
+                        scaledEffectiveFaceTestPoly
+                            .row(rowId) *=
+                            effectiveFaceRowScales(
+                                rowId);
+                    }
+                    
+                    
+                    const auto effectiveFaceTestMetric =
+                        gcopter_benchmark::
+                            evaluateEffectiveFaces(
+                                effectiveFaceTestPoly);
+                            
+                            
+                    const auto scaledEffectiveFaceTestMetric =
+                        gcopter_benchmark::
+                            evaluateEffectiveFaces(
+                                scaledEffectiveFaceTestPoly);
+                            
+                            
+                    const bool effectiveFaceSelfTestValid =
+                        effectiveFaceTestMetric.valid &&
+                        scaledEffectiveFaceTestMetric.valid &&
+                            
+                        effectiveFaceTestMetric.raw_rows ==
+                            8 &&
+                            
+                        effectiveFaceTestMetric
+                                .unique_plane_groups ==
+                            7 &&
+                            
+                        effectiveFaceTestMetric
+                                .duplicate_rows ==
+                            1 &&
+                            
+                        effectiveFaceTestMetric
+                                .effective_faces ==
+                            6 &&
+                            
+                        effectiveFaceTestMetric
+                                .redundant_plane_groups ==
+                            1 &&
+                            
+                        effectiveFaceTestMetric
+                                .unbounded_support_tests ==
+                            5 &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .raw_rows ==
+                            effectiveFaceTestMetric
+                                .raw_rows &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .unique_plane_groups ==
+                            effectiveFaceTestMetric
+                                .unique_plane_groups &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .duplicate_rows ==
+                            effectiveFaceTestMetric
+                                .duplicate_rows &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .effective_faces ==
+                            effectiveFaceTestMetric
+                                .effective_faces &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .redundant_plane_groups ==
+                            effectiveFaceTestMetric
+                                .redundant_plane_groups &&
+                            
+                        scaledEffectiveFaceTestMetric
+                                .unbounded_support_tests ==
+                            effectiveFaceTestMetric
+                                .unbounded_support_tests;
+                            
+                            
+                    ROS_INFO_STREAM(
+                        "TF_EFFECTIVE_FACE_SELFTEST "
+                    
+                        << "valid="
+                        << effectiveFaceSelfTestValid
+                    
+                        << " base_valid="
+                        << effectiveFaceTestMetric.valid
+                    
+                        << " scaled_valid="
+                        << scaledEffectiveFaceTestMetric.valid
+                    
+                        << " raw_rows="
+                        << effectiveFaceTestMetric.raw_rows
+                    
+                        << " unique_groups="
+                        << effectiveFaceTestMetric
+                               .unique_plane_groups
+                    
+                        << " duplicate_rows="
+                        << effectiveFaceTestMetric
+                               .duplicate_rows
+                    
+                        << " effective_faces="
+                        << effectiveFaceTestMetric
+                               .effective_faces
+                    
+                        << " redundant_groups="
+                        << effectiveFaceTestMetric
+                               .redundant_plane_groups
+                    
+                        << " unbounded_tests="
+                        << effectiveFaceTestMetric
+                               .unbounded_support_tests
+                    
+                        << " max_redundant_violation_m="
+                        << effectiveFaceTestMetric
+                               .max_redundant_violation_m
+                    
+                        << " min_finite_effective_violation_m="
+                        << effectiveFaceTestMetric
+                               .min_finite_effective_violation_m
+                    
+                        << " scaled_effective_faces="
+                        << scaledEffectiveFaceTestMetric
+                               .effective_faces);
+
+                    // ========================================================
                     // C2d: Controlled-Geometry CSGN-vs-Identity ablation.
                     //
                     // IMPORTANT:
@@ -7759,49 +7971,49 @@ public:
                     //
                     // No RILS construction parameter is changed here.
                     // ========================================================
-                                        
+
                     int controlledRilsSeedValidCount =
                         0;
-                                        
+
                     int controlledRilsOverlapValidCount =
                         0;
-                                        
+
                     int controlledRilsDirectionalValidCount =
                         0;
-                                        
+
                     int controlledRilsVolumeValidCount =
                         0;
-                                        
-                                        
+
+
                     double controlledRilsMinSeedRadiusM =
                         std::numeric_limits<double>::
                             infinity();
-                                        
+
                     double controlledRilsMinOverlapRadiusM =
                         std::numeric_limits<double>::
                             infinity();
-                                        
+
                     double controlledRilsMinReferenceMarginM =
                         std::numeric_limits<double>::
                             infinity();
-                                        
+
                     double controlledRilsHardWidthSumM =
                         0.0;
-                                        
+
                     double controlledRilsMiddleWidthSumM =
                         0.0;
-                                        
+
                     double controlledRilsEasyWidthSumM =
                         0.0;
-                                        
+
                     double controlledRilsVolumeSumM3 =
                         0.0;
-                                        
+
                     double controlledRilsMaxVertexViolationM =
                         -std::numeric_limits<double>::
                             infinity();
-                                        
-                                        
+
+
                     const bool controlledRilsGeometryMappingValid =
                         controlledRilsBuild.success &&
                         controlledRilsBuild.mapping_valid &&
@@ -8196,8 +8408,8 @@ public:
                                 << rilsInfo.dilate_ms);
                         }
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Aggregate Controlled-RILS common geometry summary.
                     // ========================================================
@@ -8207,32 +8419,32 @@ public:
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledRilsOverlapValidCount == 0)
                     {
                         controlledRilsMinOverlapRadiusM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledRilsDirectionalValidCount == 0)
                     {
                         controlledRilsMinReferenceMarginM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledRilsVolumeValidCount == 0)
                     {
                         controlledRilsMaxVertexViolationM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     const double controlledRilsMeanHardWidthM =
                         controlledRilsDirectionalValidCount > 0
                             ? controlledRilsHardWidthSumM /
