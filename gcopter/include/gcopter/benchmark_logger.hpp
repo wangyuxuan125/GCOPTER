@@ -415,6 +415,17 @@ struct BenchmarkCorridorRecord
     bool geometry_mapping_valid =
         false;
 
+    // ========================================================
+    // Geometry protocol / directional-basis provenance
+    // ========================================================
+    std::string geometry_protocol =
+        "unknown";
+
+    std::string construction_direction_basis =
+        "unknown";
+
+    std::string reference_direction_source =
+        "unknown";
 
     // ========================================================
     // Protected seed / neighboring connectivity
@@ -550,6 +561,103 @@ struct BenchmarkCorridorRecord
     double metric_mapping_distance =
         std::numeric_limits<double>::
             quiet_NaN();
+
+    // ========================================================
+    // Reference CSGN metric used ONLY to define the common
+    // measurement directions.
+    //
+    // This is separate from the metric actually used to BUILD
+    // this particular corridor.
+    //
+    // Example:
+    //   CSGN row:
+    //       construction metric = CSGN
+    //       reference metric    = CSGN
+    //
+    //   Identity row:
+    //       construction metric = Identity / disabled
+    //       reference metric    = CSGN
+    // ========================================================
+    bool reference_metric_valid =
+        false;
+
+    double reference_utility_eig0 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double reference_utility_eig1 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double reference_utility_eig2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    int reference_metric_source_piece_id =
+        -1;
+
+    double reference_metric_mapping_distance =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Final-polytope protected-seed directional reserve,
+    // measured along the COMMON CSGN reference directions.
+    //
+    // No preservation ratios are stored here.
+    // ========================================================
+    bool directional_reserve_valid =
+        false;
+
+    double hard_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_symmetric_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_span_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_symmetric_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_span_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_symmetric_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_span_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
 };
 
 class CaseCsvLogger
@@ -1338,7 +1446,7 @@ public:
 
         const std::string path =
             directory_ +
-            "/benchmark_corridors_v1.csv";
+            "/benchmark_corridors_v2.csv";
 
         const bool header =
             fileNeedsHeader(
@@ -1367,6 +1475,9 @@ public:
                 << "corridor_id,"
                 << "source_segment_id,"
                 << "geometry_mapping_valid,"
+                << "geometry_protocol,"
+                << "construction_direction_basis,"
+                << "reference_direction_source,"
 
                 << "seed_metric_valid,"
                 << "seed_radius_m,"
@@ -1390,12 +1501,13 @@ public:
                 << "safety_verified,"
                 << "overlap_guaranteed,"
 
-                << "metric_valid,"
-                << "anisotropic_domain,"
-                << "utility_eig0,"
-                << "utility_eig1,"
-                << "utility_eig2,"
-                << "utility_anisotropy,"
+                << "construction_metric_valid,"
+                << "construction_anisotropic_domain,"
+                << "construction_utility_eig0,"
+                << "construction_utility_eig1,"
+                << "construction_utility_eig2,"
+                << "construction_utility_anisotropy,"
+
                 << "construction_extra_radius0_m,"
                 << "construction_extra_radius1_m,"
                 << "construction_extra_radius2_m,"
@@ -1403,8 +1515,29 @@ public:
                 << "min_metric_damage,"
                 << "max_metric_damage,"
 
-                << "metric_source_piece_id,"
-                << "metric_mapping_distance\n";
+                << "construction_metric_source_piece_id,"
+                << "construction_metric_mapping_distance,"
+
+                << "reference_metric_valid,"
+                << "reference_utility_eig0,"
+                << "reference_utility_eig1,"
+                << "reference_utility_eig2,"
+                << "reference_metric_source_piece_id,"
+                << "reference_metric_mapping_distance,"
+
+                << "directional_reserve_valid,"
+                << "hard_positive_m,"
+                << "hard_negative_m,"
+                << "hard_symmetric_m,"
+                << "hard_span_m,"
+                << "middle_positive_m,"
+                << "middle_negative_m,"
+                << "middle_symmetric_m,"
+                << "middle_span_m,"
+                << "easy_positive_m,"
+                << "easy_negative_m,"
+                << "easy_symmetric_m,"
+                << "easy_span_m\n";
         }
 
         output <<
@@ -1414,7 +1547,7 @@ public:
              records)
         {
             output
-                << 1 << ','
+                << 2 << ','
 
                 << csv(record.case_id) << ','
                 << csv(record.route_fingerprint) << ','
@@ -1425,6 +1558,9 @@ public:
                 << record.corridor_id << ','
                 << record.source_segment_id << ','
                 << record.geometry_mapping_valid << ','
+                << csv(record.geometry_protocol) << ','
+                << csv(record.construction_direction_basis) << ','
+                << csv(record.reference_direction_source) << ','
 
                 << record.seed_metric_valid << ','
                 << record.seed_radius_m << ','
@@ -1462,7 +1598,28 @@ public:
                 << record.max_metric_damage << ','
 
                 << record.metric_source_piece_id << ','
-                << record.metric_mapping_distance
+                << record.metric_mapping_distance << ','
+                        
+                << record.reference_metric_valid << ','
+                << record.reference_utility_eig0 << ','
+                << record.reference_utility_eig1 << ','
+                << record.reference_utility_eig2 << ','
+                << record.reference_metric_source_piece_id << ','
+                << record.reference_metric_mapping_distance << ','
+                        
+                << record.directional_reserve_valid << ','
+                << record.hard_positive_m << ','
+                << record.hard_negative_m << ','
+                << record.hard_symmetric_m << ','
+                << record.hard_span_m << ','
+                << record.middle_positive_m << ','
+                << record.middle_negative_m << ','
+                << record.middle_symmetric_m << ','
+                << record.middle_span_m << ','
+                << record.easy_positive_m << ','
+                << record.easy_negative_m << ','
+                << record.easy_symmetric_m << ','
+                << record.easy_span_m
                 << '\n';
         }
 

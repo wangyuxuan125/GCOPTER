@@ -3740,14 +3740,6 @@ public:
                         activeGuideOptions
                             .overlap_radius;
 
-                    std::vector<
-                        gcopter_benchmark::
-                            BenchmarkCorridorRecord>
-                        benchmarkCorridorRecords;
-
-                    benchmarkCorridorRecords.reserve(
-                        activeGuideHPolys.size());
-
                     const double geometryToleranceM =
                         1.0e-6;
 
@@ -3943,6 +3935,13 @@ public:
                                             .minCoeff() >
                                         0.0)
                                 {
+                                    referenceMetricValid =
+                                        true;
+
+                                    referenceEigenvalues =
+                                        utilitySolver
+                                            .eigenvalues();
+
                                     const Eigen::Vector3d
                                         measuredEigenvalues =
                                             utilitySolver
@@ -4107,171 +4106,6 @@ public:
                                     }
                                 }
                             }
-
-                            gcopter_benchmark::
-                                BenchmarkCorridorRecord
-                                    corridorRecord;
-
-                            corridorRecord.case_id =
-                                effectiveCaseId;
-
-                            corridorRecord.route_fingerprint =
-                                routeFingerprint;
-
-                            corridorRecord.method =
-                                config.benchmarkMethod;
-
-                            corridorRecord.variant =
-                                config.benchmarkVariant;
-
-                            corridorRecord.repeat_id =
-                                config.benchmarkRepeatId;
-
-                            corridorRecord.timestamp_s =
-                                benchmarkRunReady
-                                    ? benchmarkRun.timestamp_s
-                                    : ros::Time::now().toSec();
-
-                            corridorRecord.corridor_id =
-                                corridorId;
-
-                            corridorRecord.source_segment_id =
-                                corridorId;
-
-                            corridorRecord.geometry_mapping_valid =
-                                corridorGeometryMappingValid;
-
-
-                            // --------------------------------------------------------
-                            // Protected seed / junction geometry
-                            // --------------------------------------------------------
-                            corridorRecord.seed_metric_valid =
-                                seedMetric.valid;
-
-                            corridorRecord.seed_radius_m =
-                                seedMetric.radius_m;
-
-                            corridorRecord.protected_radius_m =
-                                protectedRadiusM;
-
-                            corridorRecord.junction_overlap_valid =
-                                nextOverlapValid;
-
-                            corridorRecord.junction_overlap_radius_m =
-                                nextOverlapRadiusM;
-
-
-                            // --------------------------------------------------------
-                            // Faces
-                            // --------------------------------------------------------
-                            corridorRecord.total_faces =
-                                corridorInfo.total_face_count;
-
-                            corridorRecord.domain_faces =
-                                corridorInfo.domain_face_count;
-
-                            corridorRecord.obstacle_faces =
-                                corridorInfo
-                                    .selected_obstacle_face_count;
-
-
-                            // --------------------------------------------------------
-                            // Active-Witness workload
-                            // --------------------------------------------------------
-                            corridorRecord.input_obstacle_count =
-                                corridorInfo.input_obstacle_count;
-
-                            corridorRecord.local_obstacle_count =
-                                corridorInfo.local_obstacle_count;
-
-                            corridorRecord.candidate_count =
-                                corridorInfo.candidate_count;
-
-                            corridorRecord.generated_candidate_count =
-                                corridorInfo.generated_candidate_count;
-
-                            corridorRecord.active_witness_rounds =
-                                corridorInfo.active_witness_rounds;
-
-                            corridorRecord.witness_distance_tests =
-                                corridorInfo.witness_distance_tests;
-
-                            corridorRecord.obstacle_face_tests =
-                                corridorInfo.obstacle_face_tests;
-
-                            corridorRecord.greedy_obstacle_face_count =
-                                corridorInfo.greedy_obstacle_face_count;
-
-                            corridorRecord.redundancy_removed =
-                                corridorInfo.redundancy_removed;
-
-                            corridorRecord.safety_verified =
-                                corridorInfo.safety_verified;
-
-                            corridorRecord.overlap_guaranteed =
-                                corridorInfo.overlap_guaranteed;
-
-
-                            // --------------------------------------------------------
-                            // CSGN
-                            // --------------------------------------------------------
-                            corridorRecord.metric_valid =
-                                corridorInfo.metric_valid;
-
-                            corridorRecord.anisotropic_domain =
-                                corridorInfo.anisotropic_domain;
-
-                            corridorRecord.utility_eig0 =
-                                corridorInfo.utility_eigenvalues(0);
-
-                            corridorRecord.utility_eig1 =
-                                corridorInfo.utility_eigenvalues(1);
-
-                            corridorRecord.utility_eig2 =
-                                corridorInfo.utility_eigenvalues(2);
-
-                            corridorRecord.utility_anisotropy =
-                                utilityAnisotropy;
-
-                            corridorRecord.construction_extra_radius0_m =
-                                corridorInfo.extra_radii(0);
-
-                            corridorRecord.construction_extra_radius1_m =
-                                corridorInfo.extra_radii(1);
-
-                            corridorRecord.construction_extra_radius2_m =
-                                corridorInfo.extra_radii(2);
-
-                            corridorRecord.mean_metric_damage =
-                                corridorInfo.mean_metric_damage;
-
-                            corridorRecord.min_metric_damage =
-                                corridorInfo.min_metric_damage;
-
-                            corridorRecord.max_metric_damage =
-                                corridorInfo.max_metric_damage;
-
-
-                            // --------------------------------------------------------
-                            // Direct-MINCO CSGN mapping provenance
-                            // --------------------------------------------------------
-                            if (corridorId <
-                                static_cast<int>(
-                                    guideSegmentMetrics.size()))
-                            {
-                                corridorRecord.metric_source_piece_id =
-                                    guideSegmentMetrics[
-                                        corridorId]
-                                        .source_piece_id;
-                                    
-                                corridorRecord.metric_mapping_distance =
-                                    guideSegmentMetrics[
-                                        corridorId]
-                                        .mapping_distance;
-                            }
-
-                            benchmarkCorridorRecords.push_back(
-                                corridorRecord);
 
                             ROS_INFO_STREAM(
                                 "TF_CORRIDOR_DIRECTIONAL_RESERVE "
@@ -4588,20 +4422,20 @@ public:
                     //   - Identity differs only by using the deterministic
                     //     metric-disabled S = I fallback.
                     // ========================================================
-                                                
+
                     std::vector<Eigen::MatrixX4d>
                         controlledCsgnHPolys;
-                                                
+
                     std::vector<Eigen::MatrixX4d>
                         controlledIdentityHPolys;
-                                                
+
                     sfc_gen::TrajectoryRelevantCompactInfos
                         controlledCsgnInfos;
-                                                
+
                     sfc_gen::TrajectoryRelevantCompactInfos
                         controlledIdentityInfos;
-                                                
-                                                
+
+
                     // --------------------------------------------------------
                     // Direct controlled-geometry builder.
                     //
@@ -4722,8 +4556,8 @@ public:
                                 infos.size()) ==
                                 controlledSegmentCount;
                     };
-                    
-                    
+
+
                     const bool controlledCsgnSuccess =
                         guideSegmentMetricsReady &&
                         buildControlledCompactCover(
@@ -4805,69 +4639,69 @@ public:
                                         .maxCoeff());
                         }
                     }
-                    
+
                     if (!controlledCsgnNativeMatchValid)
                     {
                         controlledCsgnNativeMaxPlaneDelta =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Aggregate geometry / workload.
                     // ========================================================
                     int controlledCsgnTotalFaces =
                         0;
-                    
+
                     int controlledIdentityTotalFaces =
                         0;
-                    
+
                     int controlledCsgnObstacleFaces =
                         0;
-                    
+
                     int controlledIdentityObstacleFaces =
                         0;
-                    
+
                     std::int64_t controlledCsgnCandidates =
                         0;
-                    
+
                     std::int64_t controlledIdentityCandidates =
                         0;
-                    
+
                     std::int64_t controlledCsgnWitnessTests =
                         0;
-                    
+
                     std::int64_t controlledIdentityWitnessTests =
                         0;
-                    
+
                     std::int64_t controlledCsgnFaceTests =
                         0;
-                    
+
                     std::int64_t controlledIdentityFaceTests =
                         0;
-                    
+
                     int controlledCsgnSafetyCount =
                         0;
-                    
+
                     int controlledIdentitySafetyCount =
                         0;
-                    
+
                     int identitySeedValidCount =
                         0;
-                    
+
                     int identityOverlapValidCount =
                         0;
-                    
+
                     double identityMinSeedRadiusM =
                         std::numeric_limits<double>::
                             infinity();
-                    
+
                     double identityMinOverlapRadiusM =
                         std::numeric_limits<double>::
                             infinity();
-                    
-                    
+
+
                     if (controlledPairMappingValid)
                     {
                         for (int corridorId = 0;
@@ -4970,22 +4804,22 @@ public:
                             }
                         }
                     }
-                    
+
                     if (identitySeedValidCount == 0)
                     {
                         identityMinSeedRadiusM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
+
                     if (identityOverlapValidCount == 0)
                     {
                         identityMinOverlapRadiusM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Paired directional measurement.
                     //
@@ -4995,34 +4829,45 @@ public:
                     //
                     // Identity's own eigendirections are deliberately NOT used.
                     // ========================================================
+                    std::vector<
+                        gcopter_benchmark::
+                            BenchmarkCorridorRecord>
+                        benchmarkControlledCorridorRecords;
+
+                    benchmarkControlledCorridorRecords.reserve(
+                        2 *
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                    
                     int pairedDirectionalValidCount =
                         0;
-                    
+
                     double sumCsgnHardSymM =
                         0.0;
-                    
+
                     double sumIdentityHardSymM =
                         0.0;
-                    
+
                     double sumCsgnEasySymM =
                         0.0;
-                    
+
                     double sumIdentityEasySymM =
                         0.0;
-                    
+
                     double sumHardPreservation =
                         0.0;
-                    
+
                     double sumEasyPreservation =
                         0.0;
-                    
+
                     double sumPreferentialPreservation =
                         0.0;
-                    
+
                     int preservationValidCount =
                         0;
-                    
-                    
+
+
                     if (controlledPairMappingValid)
                     {
                         for (int corridorId = 0;
@@ -5033,6 +4878,14 @@ public:
                             bool pairDirectionalValid =
                                 false;
                         
+                            bool referenceMetricValid =
+                                false;
+
+                            Eigen::Vector3d referenceEigenvalues =
+                                Eigen::Vector3d::Constant(
+                                    std::numeric_limits<double>::
+                                        quiet_NaN());
+
                             gcopter_benchmark::
                                 CorridorDirectionalReserveMetric
                                     csgnHardReserve;
@@ -5294,7 +5147,356 @@ public:
                                 }
                             }
                         
+                            const auto controlledCsgnSeedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        controlledCsgnHPolys[
+                                            corridorId],
+                                        route[corridorId],
+                                        route[corridorId + 1]);
+                                        
+                            const auto controlledIdentitySeedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        controlledIdentityHPolys[
+                                            corridorId],
+                                        route[corridorId],
+                                        route[corridorId + 1]);
+                                        
+                                        
+                            gcopter_benchmark::
+                                CorridorOverlapMetric
+                                    controlledCsgnOverlapMetric;
+                                        
+                            gcopter_benchmark::
+                                CorridorOverlapMetric
+                                    controlledIdentityOverlapMetric;
+                                        
+                            if (corridorId + 1 <
+                                controlledSegmentCount)
+                            {
+                                controlledCsgnOverlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            controlledCsgnHPolys[
+                                                corridorId],
+                                            controlledCsgnHPolys[
+                                                corridorId + 1],
+                                            route[corridorId + 1]);
+                                            
+                                controlledIdentityOverlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            controlledIdentityHPolys[
+                                                corridorId],
+                                            controlledIdentityHPolys[
+                                                corridorId + 1],
+                                            route[corridorId + 1]);
+                            }
                         
+                            auto appendControlledCorridorRecord =
+                                [&](const std::string &variantName,
+                                    const std::string &constructionBasis,
+                                    const traj_relevant::
+                                        CompactCorridorDiagnostics &info,
+                                    const bool constructionUsesCsgnMetric,
+                                    const gcopter_benchmark::
+                                        CorridorSeedMetric &seedMetric,
+                                    const gcopter_benchmark::
+                                        CorridorOverlapMetric &overlapMetric,
+                                    const gcopter_benchmark::
+                                        CorridorDirectionalReserveMetric &hardReserve,
+                                    const gcopter_benchmark::
+                                        CorridorDirectionalReserveMetric &middleReserve,
+                                    const gcopter_benchmark::
+                                        CorridorDirectionalReserveMetric &easyReserve)
+                            {
+                                gcopter_benchmark::
+                                    BenchmarkCorridorRecord
+                                        record;
+                            
+                                record.case_id =
+                                    effectiveCaseId;
+                            
+                                record.route_fingerprint =
+                                    routeFingerprint;
+                            
+                                record.method =
+                                    "proposed";
+                            
+                                record.variant =
+                                    variantName;
+                            
+                                record.repeat_id =
+                                    config.benchmarkRepeatId;
+                            
+                                record.timestamp_s =
+                                    benchmarkRunReady
+                                        ? benchmarkRun.timestamp_s
+                                        : ros::Time::now().toSec();
+                            
+                                record.corridor_id =
+                                    corridorId;
+                            
+                                record.source_segment_id =
+                                    corridorId;
+                            
+                                record.geometry_mapping_valid =
+                                    controlledPairMappingValid;
+                            
+                                record.geometry_protocol =
+                                    "controlled_geometry";
+                            
+                                record.construction_direction_basis =
+                                    constructionBasis;
+                            
+                                record.reference_direction_source =
+                                    "direct_minco_csgn";
+                            
+                            
+                                // ====================================================
+                                // Seed / neighboring overlap
+                                // ====================================================
+                                record.seed_metric_valid =
+                                    seedMetric.valid;
+                            
+                                record.seed_radius_m =
+                                    seedMetric.radius_m;
+                            
+                                record.protected_radius_m =
+                                    protectedRadiusM;
+                            
+                                record.junction_overlap_valid =
+                                    overlapMetric.valid;
+                            
+                                record.junction_overlap_radius_m =
+                                    overlapMetric.radius_m;
+                            
+                            
+                                // ====================================================
+                                // Faces
+                                // ====================================================
+                                record.total_faces =
+                                    info.total_face_count;
+                            
+                                record.domain_faces =
+                                    info.domain_face_count;
+                            
+                                record.obstacle_faces =
+                                    info.selected_obstacle_face_count;
+                            
+                            
+                                // ====================================================
+                                // Constraint-generation workload
+                                // ====================================================
+                                record.input_obstacle_count =
+                                    info.input_obstacle_count;
+                            
+                                record.local_obstacle_count =
+                                    info.local_obstacle_count;
+                            
+                                record.candidate_count =
+                                    info.candidate_count;
+                            
+                                record.generated_candidate_count =
+                                    info.generated_candidate_count;
+                            
+                                record.active_witness_rounds =
+                                    info.active_witness_rounds;
+                            
+                                record.witness_distance_tests =
+                                    info.witness_distance_tests;
+                            
+                                record.obstacle_face_tests =
+                                    info.obstacle_face_tests;
+                            
+                                record.greedy_obstacle_face_count =
+                                    info.greedy_obstacle_face_count;
+                            
+                                record.redundancy_removed =
+                                    info.redundancy_removed;
+                            
+                                record.safety_verified =
+                                    info.safety_verified;
+                            
+                                record.overlap_guaranteed =
+                                    info.overlap_guaranteed;
+                            
+                            
+                                // ====================================================
+                                // Construction metric.
+                                //
+                                // For Identity this intentionally describes the
+                                // deterministic metric-disabled constructor.
+                                // ====================================================
+                                record.metric_valid =
+                                    info.metric_valid;
+                            
+                                record.anisotropic_domain =
+                                    info.anisotropic_domain;
+                            
+                                record.utility_eig0 =
+                                    info.utility_eigenvalues(0);
+                            
+                                record.utility_eig1 =
+                                    info.utility_eigenvalues(1);
+                            
+                                record.utility_eig2 =
+                                    info.utility_eigenvalues(2);
+                            
+                                const double constructionUtilityMin =
+                                    info.utility_eigenvalues
+                                        .minCoeff();
+                            
+                                const double constructionUtilityMax =
+                                    info.utility_eigenvalues
+                                        .maxCoeff();
+                            
+                                record.utility_anisotropy =
+                                    constructionUtilityMin > 0.0
+                                        ? constructionUtilityMax /
+                                              constructionUtilityMin
+                                        : std::numeric_limits<double>::
+                                              quiet_NaN();
+                            
+                                record.construction_extra_radius0_m =
+                                    info.extra_radii(0);
+                            
+                                record.construction_extra_radius1_m =
+                                    info.extra_radii(1);
+                            
+                                record.construction_extra_radius2_m =
+                                    info.extra_radii(2);
+                            
+                                record.mean_metric_damage =
+                                    info.mean_metric_damage;
+                            
+                                record.min_metric_damage =
+                                    info.min_metric_damage;
+                            
+                                record.max_metric_damage =
+                                    info.max_metric_damage;
+                            
+                                if (constructionUsesCsgnMetric &&
+                                    corridorId <
+                                        static_cast<int>(
+                                            guideSegmentMetrics.size()))
+                                {
+                                    record.metric_source_piece_id =
+                                        guideSegmentMetrics[
+                                            corridorId]
+                                            .source_piece_id;
+                                        
+                                    record.metric_mapping_distance =
+                                        guideSegmentMetrics[
+                                            corridorId]
+                                            .mapping_distance;
+                                }
+                            
+                            
+                                // ====================================================
+                                // COMMON reference CSGN metric.
+                                //
+                                // Both CSGN and Identity rows receive exactly the same
+                                // reference metric provenance.
+                                // ====================================================
+                                record.reference_metric_valid =
+                                    referenceMetricValid;
+                            
+                                if (referenceMetricValid)
+                                {
+                                    record.reference_utility_eig0 =
+                                        referenceEigenvalues(0);
+                                
+                                    record.reference_utility_eig1 =
+                                        referenceEigenvalues(1);
+                                
+                                    record.reference_utility_eig2 =
+                                        referenceEigenvalues(2);
+                                
+                                    record.reference_metric_source_piece_id =
+                                        guideSegmentMetrics[
+                                            corridorId]
+                                            .source_piece_id;
+                                        
+                                    record.reference_metric_mapping_distance =
+                                        guideSegmentMetrics[
+                                            corridorId]
+                                            .mapping_distance;
+                                }
+                            
+                            
+                                // ====================================================
+                                // Raw final directional reserve.
+                                // ====================================================
+                                record.directional_reserve_valid =
+                                    pairDirectionalValid;
+                            
+                                record.hard_positive_m =
+                                    hardReserve.positive_m;
+                            
+                                record.hard_negative_m =
+                                    hardReserve.negative_m;
+                            
+                                record.hard_symmetric_m =
+                                    hardReserve.symmetric_m;
+                            
+                                record.hard_span_m =
+                                    hardReserve.span_m;
+                            
+                                record.middle_positive_m =
+                                    middleReserve.positive_m;
+                            
+                                record.middle_negative_m =
+                                    middleReserve.negative_m;
+                            
+                                record.middle_symmetric_m =
+                                    middleReserve.symmetric_m;
+                            
+                                record.middle_span_m =
+                                    middleReserve.span_m;
+                            
+                                record.easy_positive_m =
+                                    easyReserve.positive_m;
+                            
+                                record.easy_negative_m =
+                                    easyReserve.negative_m;
+                            
+                                record.easy_symmetric_m =
+                                    easyReserve.symmetric_m;
+                            
+                                record.easy_span_m =
+                                    easyReserve.span_m;
+                            
+                                benchmarkControlledCorridorRecords
+                                    .push_back(
+                                        record);
+                            };
+
+                            appendControlledCorridorRecord(
+                                "csgn_active_controlled",
+                                "csgn_eigenbasis",
+                                controlledCsgnInfos[
+                                    corridorId],
+                                true,
+                                controlledCsgnSeedMetric,
+                                controlledCsgnOverlapMetric,
+                                csgnHardReserve,
+                                csgnMiddleReserve,
+                                csgnEasyReserve);
+                                
+                            appendControlledCorridorRecord(
+                                "identity_active_controlled",
+                                "world_xyz_identity",
+                                controlledIdentityInfos[
+                                    corridorId],
+                                false,
+                                controlledIdentitySeedMetric,
+                                controlledIdentityOverlapMetric,
+                                identityHardReserve,
+                                identityMiddleReserve,
+                                identityEasyReserve);
+
                             ROS_INFO_STREAM(
                                 "TF_CSGN_IDENTITY_GEOMETRY "
                             
@@ -5371,8 +5573,8 @@ public:
                                        .candidate_count);
                         }
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Aggregate paired ablation summary.
                     // ========================================================
@@ -5539,21 +5741,43 @@ public:
                         
                     bool benchmarkCorridorLogSuccess =
                         true;
-
+                                            
                     if (benchmarkRunReady)
                     {
                         benchmarkCorridorLogSuccess =
                             benchmarkCorridorLogger
                                 .logCorridors(
-                                    benchmarkCorridorRecords);
+                                    benchmarkControlledCorridorRecords);
                                 
                         if (!benchmarkCorridorLogSuccess)
                         {
                             ROS_ERROR(
                                 "Failed to append "
-                                "benchmark_corridors_v1.csv.");
+                                "benchmark_corridors_v2.csv.");
                         }
                     }
+                    
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_CORRIDORS "
+                        << "rows="
+                        << benchmarkControlledCorridorRecords
+                               .size()
+                    
+                        << " expected_rows="
+                        << 2 *
+                               std::max(
+                                   0,
+                                   controlledSegmentCount)
+                            
+                        << " mapping_valid="
+                        << controlledPairMappingValid
+                            
+                        << " log_success="
+                        << benchmarkCorridorLogSuccess
+                            
+                        << " protocol=controlled_geometry"
+                            
+                        << " file=benchmark_corridors_v2.csv");
 
                     ROS_INFO_STREAM(
                         "TF_BENCHMARK_CORRIDORS "
