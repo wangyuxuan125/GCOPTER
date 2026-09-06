@@ -3154,6 +3154,33 @@ public:
                         true;                           
                 }
 
+                // ========================================================
+                // Success-only trajectory measurements.
+                //
+                // These variables are declared outside the success branch
+                // because the Controlled-Geometry E1 block below is no
+                // longer conditioned on backend / hard-closure success.
+                // ========================================================
+                gcopter_benchmark::
+                    FinalTrajectoryMetrics
+                        finalTrajectoryEvaluation;
+
+                gcopter_benchmark::
+                    FinalTrajectoryMetrics
+                        softTrajectoryEvaluation;
+
+                double softEnergyReferenceDelta =
+                    std::numeric_limits<double>::
+                        quiet_NaN();
+
+                double softDurationReferenceDelta =
+                    std::numeric_limits<double>::
+                        quiet_NaN();
+
+                bool softHardComparisonValid =
+                    false;
+
+
                 if (proposedFinalSuccess)
                 {
                     traj =
@@ -3243,7 +3270,7 @@ public:
                     // This evaluator is method-independent and will later be
                     // reused unchanged by FIRI / Liu / Proposed.
                     // ========================================================
-                    const auto finalTrajectoryEvaluation =
+                    finalTrajectoryEvaluation =
                         gcopter_benchmark::
                             evaluateFinalTrajectoryMetrics(
                                 hardProjectedTrajectory,
@@ -3403,10 +3430,6 @@ public:
                         }
                     }
 
-                    gcopter_benchmark::
-                        FinalTrajectoryMetrics
-                            softTrajectoryEvaluation;
-
                     if (softBackendTrajectoryReady)
                     {
                         softTrajectoryEvaluation =
@@ -3424,18 +3447,18 @@ public:
                                     1.0e-3);
                     }
 
-                    const double softEnergyReferenceDelta =
+                    softEnergyReferenceDelta =
                         softBackendRebuiltEnergy -
                         hardProjectionResult
                             .initial_energy;
 
-                    const double softDurationReferenceDelta =
+                    softDurationReferenceDelta =
                         softTrajectoryEvaluation
                             .duration_s -
                         activeGuideBackendResult
                             .trajectory_duration;
 
-                    const bool softHardComparisonValid =
+                    softHardComparisonValid =
                         softBackendTrajectoryReady &&
                         softTrajectoryEvaluation.valid &&
                         finalTrajectoryEvaluation.valid &&
@@ -3671,6 +3694,7 @@ public:
                         << (config.maxThrust -
                             finalTrajectoryEvaluation
                                 .max_thrust_n));
+                    } // proposedFinalSuccess: trajectory evaluation only
 
                     // ========================================================
                     // Controlled-geometry corridor mapping.
@@ -5775,14 +5799,27 @@ public:
                         << " log_success="
                         << benchmarkCorridorLogSuccess
                             
+                        << " backend_final_success="
+                        << proposedFinalSuccess
+                            
                         << " protocol=controlled_geometry"
                             
                         << " file=benchmark_corridors_v2.csv");
-
-                    // All success-path trajectory measurements are now available.
-                    // Emit exactly one structured benchmark row.
-                    if (benchmarkRunReady)
+                            
+                            
+                    // ========================================================
+                    // E2/E5 success-only trajectory finalization.
+                    //
+                    // E1 geometry has already been measured/logged above,
+                    // regardless of backend success.
+                    // ========================================================
+                    if (proposedFinalSuccess)
                     {
+                    
+                        // All success-path trajectory measurements are now available.
+                        // Emit exactly one structured benchmark row.
+                        if (benchmarkRunReady)
+                        {
                         // ====================================================
                         // FINAL trajectory = exact-hard trajectory.
                         // ====================================================
