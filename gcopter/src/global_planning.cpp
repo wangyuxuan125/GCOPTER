@@ -4427,6 +4427,128 @@ public:
                         << maxDirectionalEigenvalueDelta);
 
                     // ========================================================
+                    // Volume-kernel regression self-test.
+                    //
+                    // Axis-aligned box:
+                    //
+                    //     x in [-1, 1]   -> width 2
+                    //     y in [-2, 2]   -> width 4
+                    //     z in [-3, 3]   -> width 6
+                    //
+                    // analytical volume = 48 m^3.
+                    //
+                    // A positively row-scaled copy must produce the same volume,
+                    // because H-plane scaling cannot alter the represented set.
+                    // ========================================================
+                    Eigen::MatrixX4d volumeTestBox(
+                        6,
+                        4);
+                    
+                    volumeTestBox <<
+                         1.0,  0.0,  0.0, -1.0,
+                        -1.0,  0.0,  0.0, -1.0,
+                         0.0,  1.0,  0.0, -2.0,
+                         0.0, -1.0,  0.0, -2.0,
+                         0.0,  0.0,  1.0, -3.0,
+                         0.0,  0.0, -1.0, -3.0;
+                    
+                    Eigen::MatrixX4d
+                        scaledVolumeTestBox =
+                            volumeTestBox;
+                    
+                    const Eigen::Matrix<double, 6, 1>
+                        volumeTestScales =
+                            (
+                                Eigen::Matrix<double, 6, 1>()
+                                    <<
+                                        2.0,
+                                        0.5,
+                                        3.0,
+                                        4.0,
+                                        0.25,
+                                        5.0)
+                                .finished();
+                            
+                    for (int rowId = 0;
+                         rowId < 6;
+                         ++rowId)
+                    {
+                        scaledVolumeTestBox
+                            .row(rowId) *=
+                            volumeTestScales(
+                                rowId);
+                    }
+                    
+                    const auto volumeBoxMetric =
+                        gcopter_benchmark::
+                            evaluateHPolytopeVolume(
+                                volumeTestBox);
+                            
+                    const auto scaledVolumeBoxMetric =
+                        gcopter_benchmark::
+                            evaluateHPolytopeVolume(
+                                scaledVolumeTestBox);
+                            
+                    const double volumeSelfTestDeltaM3 =
+                        (
+                            volumeBoxMetric.valid &&
+                            scaledVolumeBoxMetric.valid)
+                            ? std::abs(
+                                  volumeBoxMetric.volume_m3 -
+                                  scaledVolumeBoxMetric.volume_m3)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                            
+                    const bool volumeSelfTestValid =
+                        volumeBoxMetric.valid &&
+                        scaledVolumeBoxMetric.valid &&
+                        std::abs(
+                            volumeBoxMetric.volume_m3 -
+                            48.0) <=
+                            1.0e-9 &&
+                        std::abs(
+                            scaledVolumeBoxMetric.volume_m3 -
+                            48.0) <=
+                            1.0e-9 &&
+                        volumeSelfTestDeltaM3 <=
+                            1.0e-9;
+                        
+                    ROS_INFO_STREAM(
+                        "TF_CORRIDOR_VOLUME_SELFTEST "
+                    
+                        << "valid="
+                        << volumeSelfTestValid
+                    
+                        << " box_valid="
+                        << volumeBoxMetric.valid
+                    
+                        << " scaled_valid="
+                        << scaledVolumeBoxMetric.valid
+                    
+                        << " box_vertices="
+                        << volumeBoxMetric.vertex_count
+                    
+                        << " box_triangles="
+                        << volumeBoxMetric.triangle_count
+                    
+                        << " box_volume_m3="
+                        << volumeBoxMetric.volume_m3
+                    
+                        << " scaled_volume_m3="
+                        << scaledVolumeBoxMetric.volume_m3
+                    
+                        << " scaling_delta_m3="
+                        << volumeSelfTestDeltaM3
+                    
+                        << " box_vertex_violation_m="
+                        << volumeBoxMetric
+                               .max_vertex_violation_m
+                    
+                        << " scaled_vertex_violation_m="
+                        << scaledVolumeBoxMetric
+                               .max_vertex_violation_m);
+                    
+                    // ========================================================
                     // C2d: Controlled-Geometry CSGN-vs-Identity ablation.
                     //
                     // IMPORTANT:
@@ -4439,7 +4561,7 @@ public:
                     //   - Identity differs only by using the deterministic
                     //     metric-disabled S = I fallback.
                     // ========================================================
-
+                               
                     std::vector<Eigen::MatrixX4d>
                         controlledCsgnHPolys;
 
@@ -4860,6 +4982,19 @@ public:
                     int pairedDirectionalValidCount =
                         0;
 
+                    int pairedVolumeValidCount =
+                        0;
+                                            
+                    double sumControlledCsgnVolumeM3 =
+                        0.0;
+                                            
+                    double sumControlledIdentityVolumeM3 =
+                        0.0;
+                                            
+                    double maxVolumeVertexViolationM =
+                        -std::numeric_limits<double>::
+                            infinity();
+
                     double sumCsgnHardSymM =
                         0.0;
 
@@ -5218,6 +5353,93 @@ public:
                                             route[corridorId + 1]);
                             }
                         
+                            const auto controlledCsgnVolumeMetric =
+                                gcopter_benchmark::
+                                    evaluateHPolytopeVolume(
+                                        controlledCsgnHPolys[
+                                            corridorId]);
+                                        
+                            const auto controlledIdentityVolumeMetric =
+                                gcopter_benchmark::
+                                    evaluateHPolytopeVolume(
+                                        controlledIdentityHPolys[
+                                            corridorId]);
+                                        
+                            const bool pairedVolumeValid =
+                                controlledCsgnVolumeMetric.valid &&
+                                controlledIdentityVolumeMetric.valid;
+
+                            ROS_INFO_STREAM(
+                                "TF_CORRIDOR_VOLUME "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << pairedVolumeValid
+                            
+                                << " csgn_valid="
+                                << controlledCsgnVolumeMetric
+                                       .valid
+                            
+                                << " identity_valid="
+                                << controlledIdentityVolumeMetric
+                                       .valid
+                            
+                                << " csgn_vertices="
+                                << controlledCsgnVolumeMetric
+                                       .vertex_count
+                            
+                                << " identity_vertices="
+                                << controlledIdentityVolumeMetric
+                                       .vertex_count
+                            
+                                << " csgn_triangles="
+                                << controlledCsgnVolumeMetric
+                                       .triangle_count
+                            
+                                << " identity_triangles="
+                                << controlledIdentityVolumeMetric
+                                       .triangle_count
+                            
+                                << " csgn_volume_m3="
+                                << controlledCsgnVolumeMetric
+                                       .volume_m3
+                            
+                                << " identity_volume_m3="
+                                << controlledIdentityVolumeMetric
+                                       .volume_m3
+                            
+                                << " csgn_vertex_violation_m="
+                                << controlledCsgnVolumeMetric
+                                       .max_vertex_violation_m
+                            
+                                << " identity_vertex_violation_m="
+                                << controlledIdentityVolumeMetric
+                                       .max_vertex_violation_m);
+                            
+                                if (pairedVolumeValid)
+                                {
+                                    ++pairedVolumeValidCount;
+                                
+                                    sumControlledCsgnVolumeM3 +=
+                                        controlledCsgnVolumeMetric
+                                            .volume_m3;
+                                
+                                    sumControlledIdentityVolumeM3 +=
+                                        controlledIdentityVolumeMetric
+                                            .volume_m3;
+                                
+                                    maxVolumeVertexViolationM =
+                                        std::max(
+                                            maxVolumeVertexViolationM,
+                                            std::max(
+                                                controlledCsgnVolumeMetric
+                                                    .max_vertex_violation_m,
+                                                controlledIdentityVolumeMetric
+                                                    .max_vertex_violation_m));
+                                }
+
                             auto appendControlledCorridorRecord =
                                 [&](const std::string &variantName,
                                     const std::string &constructionBasis,
@@ -5763,6 +5985,50 @@ public:
                         << " mean_preferential_preservation="
                         << meanPreferentialPreservation);
                         
+                    const double meanControlledCsgnVolumeM3 =
+                        pairedVolumeValidCount > 0
+                            ? sumControlledCsgnVolumeM3 /
+                                  static_cast<double>(
+                                      pairedVolumeValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanControlledIdentityVolumeM3 =
+                        pairedVolumeValidCount > 0
+                            ? sumControlledIdentityVolumeM3 /
+                                  static_cast<double>(
+                                      pairedVolumeValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    if (pairedVolumeValidCount == 0)
+                    {
+                        maxVolumeVertexViolationM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    ROS_INFO_STREAM(
+                        "TF_CORRIDOR_VOLUME_SUMMARY "
+                    
+                        << "selftest_valid="
+                        << volumeSelfTestValid
+                    
+                        << " valid="
+                        << pairedVolumeValidCount
+                    
+                        << " total="
+                        << controlledSegmentCount
+                    
+                        << " mean_csgn_volume_m3="
+                        << meanControlledCsgnVolumeM3
+                    
+                        << " mean_identity_volume_m3="
+                        << meanControlledIdentityVolumeM3
+                    
+                        << " max_vertex_violation_m="
+                        << maxVolumeVertexViolationM);
+
                     bool benchmarkCorridorLogSuccess =
                         true;
                                             
