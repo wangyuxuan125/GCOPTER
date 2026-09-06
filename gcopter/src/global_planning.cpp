@@ -12,6 +12,7 @@
 #include "gcopter/benchmark_logger.hpp"
 #include "gcopter/trajectory_metrics.hpp"
 #include "gcopter/corridor_metrics.hpp"
+#include "gcopter/rils_baseline.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
@@ -6357,8 +6358,8 @@ public:
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     const double meanCsgnHardWidthM =
                         pairedPointWidthValidCount > 0
                             ? sumCsgnHardWidthM /
@@ -7532,6 +7533,207 @@ public:
                         
                         << " generation_ms="
                         << controlledFiriGenerationMs);
+
+                    // ========================================================
+                    // D1b-0: Controlled Liu/RILS reference builder.
+                    //
+                    // Construction only in this stage.
+                    //
+                    // Geometry metrics are intentionally deferred to D1b-1.
+                    // This keeps construction correctness separate from
+                    // cross-method measurement.
+                    //
+                    // Exactly:
+                    //
+                    //   one ORIGINAL route segment
+                    //       ->
+                    //   one DecompUtil LineSegment3D
+                    //       ->
+                    //   one RILS polyhedron.
+                    //
+                    // Controlled local range is 3 m, shared with the
+                    // Controlled FIRI domain budget.
+                    //
+                    // This is post-timing and cannot modify frozen
+                    // Proposed after_route_ms.
+                    // ========================================================
+                                            
+                    const double controlledRilsRangeM =
+                        controlledFiriRangeM;
+                                            
+                                            
+                    const auto controlledRilsBuild =
+                        gcopter_benchmark::
+                            buildControlledRilsCorridors(
+                                route,
+                                pc,
+                                voxelMap.getOrigin(),
+                                voxelMap.getCorner(),
+                                controlledRilsRangeM);
+                            
+                            
+                    int controlledRilsValidCount =
+                        0;
+                            
+                    int controlledRilsGeneratorFaces =
+                        0;
+                            
+                    int controlledRilsObstacleFaces =
+                        0;
+                            
+                    int controlledRilsLocalDomainFaces =
+                        0;
+                            
+                    int controlledRilsMapDomainFaces =
+                        0;
+                            
+                    int controlledRilsFinalRows =
+                        0;
+                            
+                    int controlledRilsLocalObstacles =
+                        0;
+                            
+                    double controlledRilsMaxSeedViolationM =
+                        0.0;
+                            
+                    double controlledRilsDilateMs =
+                        0.0;
+                            
+                            
+                    for (const auto &info :
+                         controlledRilsBuild.infos)
+                    {
+                        if (info.valid)
+                        {
+                            ++controlledRilsValidCount;
+                        }
+                    
+                    
+                        controlledRilsGeneratorFaces +=
+                            info.generator_faces;
+                    
+                        controlledRilsObstacleFaces +=
+                            info.obstacle_faces;
+                    
+                        controlledRilsLocalDomainFaces +=
+                            info.local_domain_faces;
+                    
+                        controlledRilsMapDomainFaces +=
+                            info.map_domain_faces;
+                    
+                        controlledRilsFinalRows +=
+                            info.final_rows;
+                    
+                        controlledRilsLocalObstacles +=
+                            info.local_obstacle_count;
+                    
+                    
+                        if (std::isfinite(
+                                info.seed_max_violation_m))
+                        {
+                            controlledRilsMaxSeedViolationM =
+                                std::max(
+                                    controlledRilsMaxSeedViolationM,
+                                    info.seed_max_violation_m);
+                        }
+                    
+                    
+                        if (std::isfinite(
+                                info.dilate_ms))
+                        {
+                            controlledRilsDilateMs +=
+                                info.dilate_ms;
+                        }
+                    
+                    
+                        ROS_INFO_STREAM(
+                            "TF_CONTROLLED_RILS_BUILD "
+                        
+                            << "corridor_id="
+                            << info.corridor_id
+                        
+                            << " valid="
+                            << info.valid
+                        
+                            << " local_obstacles="
+                            << info.local_obstacle_count
+                        
+                            << " generator_faces="
+                            << info.generator_faces
+                        
+                            << " obstacle_faces="
+                            << info.obstacle_faces
+                        
+                            << " local_domain_faces="
+                            << info.local_domain_faces
+                        
+                            << " map_domain_faces="
+                            << info.map_domain_faces
+                        
+                            << " final_rows="
+                            << info.final_rows
+                        
+                            << " seed_max_violation_m="
+                            << info.seed_max_violation_m
+                        
+                            << " dilate_ms="
+                            << info.dilate_ms);
+                    }
+                    
+                    
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_RILS_BUILD_SUMMARY "
+                    
+                        << "available="
+                        << controlledRilsBuild.available
+                    
+                        << " success="
+                        << controlledRilsBuild.success
+                    
+                        << " mapping_valid="
+                        << controlledRilsBuild.mapping_valid
+                    
+                        << " route_segments="
+                        << controlledSegmentCount
+                    
+                        << " corridors="
+                        << controlledRilsBuild.hpolys.size()
+                    
+                        << " valid="
+                        << controlledRilsValidCount
+                    
+                        << " valid_total="
+                        << controlledSegmentCount
+                    
+                        << " range_m="
+                        << controlledRilsBuild.range_m
+                    
+                        << " generator_faces="
+                        << controlledRilsGeneratorFaces
+                    
+                        << " obstacle_faces="
+                        << controlledRilsObstacleFaces
+                    
+                        << " local_domain_faces="
+                        << controlledRilsLocalDomainFaces
+                    
+                        << " map_domain_faces="
+                        << controlledRilsMapDomainFaces
+                    
+                        << " final_rows="
+                        << controlledRilsFinalRows
+                    
+                        << " local_obstacles="
+                        << controlledRilsLocalObstacles
+                    
+                        << " max_seed_violation_m="
+                        << controlledRilsMaxSeedViolationM
+                    
+                        << " dilate_ms="
+                        << controlledRilsDilateMs
+                    
+                        << " adapter_total_ms="
+                        << controlledRilsBuild.total_ms);
 
                     bool benchmarkCorridorLogSuccess =
                         true;
