@@ -9,6 +9,7 @@
 #include <string>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -380,6 +381,173 @@ struct BenchmarkRunRecord
             quiet_NaN();
 
     double energy_after =
+        std::numeric_limits<double>::
+            quiet_NaN();
+};
+
+struct BenchmarkCorridorRecord
+{
+    // ========================================================
+    // Identity
+    // ========================================================
+    std::string case_id;
+
+    std::string route_fingerprint;
+
+    std::string method =
+        "unknown";
+
+    std::string variant =
+        "unknown";
+
+    int repeat_id =
+        0;
+
+    double timestamp_s =
+        0.0;
+
+    int corridor_id =
+        -1;
+
+    int source_segment_id =
+        -1;
+
+    bool geometry_mapping_valid =
+        false;
+
+
+    // ========================================================
+    // Protected seed / neighboring connectivity
+    // ========================================================
+    bool seed_metric_valid =
+        false;
+
+    double seed_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double protected_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    bool junction_overlap_valid =
+        false;
+
+    double junction_overlap_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Face complexity
+    // ========================================================
+    int total_faces =
+        0;
+
+    int domain_faces =
+        0;
+
+    int obstacle_faces =
+        0;
+
+
+    // ========================================================
+    // Active-Witness / constraint-generation workload
+    // ========================================================
+    int input_obstacle_count =
+        0;
+
+    int local_obstacle_count =
+        0;
+
+    std::int64_t candidate_count =
+        0;
+
+    std::int64_t generated_candidate_count =
+        0;
+
+    std::int64_t active_witness_rounds =
+        0;
+
+    std::int64_t witness_distance_tests =
+        0;
+
+    std::int64_t obstacle_face_tests =
+        0;
+
+    int greedy_obstacle_face_count =
+        0;
+
+    int redundancy_removed =
+        0;
+
+    bool safety_verified =
+        false;
+
+    bool overlap_guaranteed =
+        false;
+
+
+    // ========================================================
+    // CSGN / trajectory-relevance diagnostics
+    // ========================================================
+    bool metric_valid =
+        false;
+
+    bool anisotropic_domain =
+        false;
+
+    double utility_eig0 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double utility_eig1 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double utility_eig2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double utility_anisotropy =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    // IMPORTANT:
+    // These are construction-domain allowances, NOT measured
+    // final-polytope directional widths.
+    double construction_extra_radius0_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double construction_extra_radius1_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double construction_extra_radius2_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double mean_metric_damage =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double min_metric_damage =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_metric_damage =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Direct-guide MINCO -> route-segment mapping provenance
+    // ========================================================
+    int metric_source_piece_id =
+        -1;
+
+    double metric_mapping_distance =
         std::numeric_limits<double>::
             quiet_NaN();
 };
@@ -1022,6 +1190,281 @@ public:
             << record.energy_before << ','
             << record.energy_after
             << '\n';
+
+        return static_cast<bool>(
+            output);
+    }
+};
+
+class CorridorCsvLogger
+{
+private:
+    bool enabled_;
+
+    std::string directory_;
+
+    std::mutex mutex_;
+
+
+    static inline bool
+    fileNeedsHeader(
+        const std::string &path)
+    {
+        std::ifstream input(
+            path,
+            std::ios::binary);
+
+        return
+            !input ||
+            input.peek() ==
+                std::ifstream::
+                    traits_type::eof();
+    }
+
+
+    static inline std::string
+    csv(
+        const std::string &value)
+    {
+        if (value.find_first_of(
+                ",\"\n\r") ==
+            std::string::npos)
+        {
+            return value;
+        }
+
+        std::string escaped =
+            "\"";
+
+        for (const char c :
+             value)
+        {
+            escaped += c;
+
+            if (c == '"')
+            {
+                escaped += '"';
+            }
+        }
+
+        escaped += '"';
+
+        return escaped;
+    }
+
+
+    inline bool
+    ensureDirectory() const
+    {
+        if (directory_.empty())
+        {
+            return false;
+        }
+
+        std::string current =
+            directory_.front() == '/'
+                ? "/"
+                : "";
+
+        std::istringstream path(
+            directory_);
+
+        std::string part;
+
+        while (std::getline(
+            path,
+            part,
+            '/'))
+        {
+            if (part.empty())
+            {
+                continue;
+            }
+
+            if (!current.empty() &&
+                current.back() != '/')
+            {
+                current += '/';
+            }
+
+            current += part;
+
+            if (::mkdir(
+                    current.c_str(),
+                    0755) != 0 &&
+                errno != EEXIST)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+
+public:
+    CorridorCsvLogger(
+        const bool enabled,
+        const std::string &directory)
+        : enabled_(enabled),
+          directory_(directory)
+    {
+        while (directory_.size() > 1 &&
+               directory_.back() == '/')
+        {
+            directory_.pop_back();
+        }
+    }
+
+
+    inline bool logCorridors(
+        const std::vector<
+            BenchmarkCorridorRecord> &records)
+    {
+        if (!enabled_ ||
+            records.empty())
+        {
+            return true;
+        }
+
+        std::lock_guard<std::mutex>
+            lock(
+                mutex_);
+
+        if (!ensureDirectory())
+        {
+            return false;
+        }
+
+        const std::string path =
+            directory_ +
+            "/benchmark_corridors_v1.csv";
+
+        const bool header =
+            fileNeedsHeader(
+                path);
+
+        std::ofstream output(
+            path,
+            std::ios::out |
+                std::ios::app);
+
+        if (!output)
+        {
+            return false;
+        }
+
+        if (header)
+        {
+            output
+                << "schema_version,"
+                << "case_id,"
+                << "route_fingerprint,"
+                << "method,"
+                << "variant,"
+                << "repeat_id,"
+                << "timestamp_s,"
+                << "corridor_id,"
+                << "source_segment_id,"
+                << "geometry_mapping_valid,"
+
+                << "seed_metric_valid,"
+                << "seed_radius_m,"
+                << "protected_radius_m,"
+                << "junction_overlap_valid,"
+                << "junction_overlap_radius_m,"
+
+                << "total_faces,"
+                << "domain_faces,"
+                << "obstacle_faces,"
+
+                << "input_obstacle_count,"
+                << "local_obstacle_count,"
+                << "candidate_count,"
+                << "generated_candidate_count,"
+                << "active_witness_rounds,"
+                << "witness_distance_tests,"
+                << "obstacle_face_tests,"
+                << "greedy_obstacle_face_count,"
+                << "redundancy_removed,"
+                << "safety_verified,"
+                << "overlap_guaranteed,"
+
+                << "metric_valid,"
+                << "anisotropic_domain,"
+                << "utility_eig0,"
+                << "utility_eig1,"
+                << "utility_eig2,"
+                << "utility_anisotropy,"
+                << "construction_extra_radius0_m,"
+                << "construction_extra_radius1_m,"
+                << "construction_extra_radius2_m,"
+                << "mean_metric_damage,"
+                << "min_metric_damage,"
+                << "max_metric_damage,"
+
+                << "metric_source_piece_id,"
+                << "metric_mapping_distance\n";
+        }
+
+        output <<
+            std::setprecision(17);
+
+        for (const auto &record :
+             records)
+        {
+            output
+                << 1 << ','
+
+                << csv(record.case_id) << ','
+                << csv(record.route_fingerprint) << ','
+                << csv(record.method) << ','
+                << csv(record.variant) << ','
+                << record.repeat_id << ','
+                << record.timestamp_s << ','
+                << record.corridor_id << ','
+                << record.source_segment_id << ','
+                << record.geometry_mapping_valid << ','
+
+                << record.seed_metric_valid << ','
+                << record.seed_radius_m << ','
+                << record.protected_radius_m << ','
+                << record.junction_overlap_valid << ','
+                << record.junction_overlap_radius_m << ','
+
+                << record.total_faces << ','
+                << record.domain_faces << ','
+                << record.obstacle_faces << ','
+
+                << record.input_obstacle_count << ','
+                << record.local_obstacle_count << ','
+                << record.candidate_count << ','
+                << record.generated_candidate_count << ','
+                << record.active_witness_rounds << ','
+                << record.witness_distance_tests << ','
+                << record.obstacle_face_tests << ','
+                << record.greedy_obstacle_face_count << ','
+                << record.redundancy_removed << ','
+                << record.safety_verified << ','
+                << record.overlap_guaranteed << ','
+
+                << record.metric_valid << ','
+                << record.anisotropic_domain << ','
+                << record.utility_eig0 << ','
+                << record.utility_eig1 << ','
+                << record.utility_eig2 << ','
+                << record.utility_anisotropy << ','
+                << record.construction_extra_radius0_m << ','
+                << record.construction_extra_radius1_m << ','
+                << record.construction_extra_radius2_m << ','
+                << record.mean_metric_damage << ','
+                << record.min_metric_damage << ','
+                << record.max_metric_damage << ','
+
+                << record.metric_source_piece_id << ','
+                << record.metric_mapping_distance
+                << '\n';
+        }
 
         return static_cast<bool>(
             output);

@@ -238,6 +238,7 @@ private:
     gcopter_experiment::CsvLogger experimentLogger;
     gcopter_benchmark::CaseCsvLogger benchmarkCaseLogger;
     gcopter_benchmark::RunCsvLogger benchmarkRunLogger;
+    gcopter_benchmark::CorridorCsvLogger benchmarkCorridorLogger;
 public:
     GlobalPlanner(const Config &conf,
                   ros::NodeHandle &nh_)
@@ -256,6 +257,10 @@ public:
               config.experimentLogDirectory),
           
           benchmarkRunLogger(
+              config.experimentLogEnabled,
+              config.experimentLogDirectory),
+                  
+          benchmarkCorridorLogger(
               config.experimentLogEnabled,
               config.experimentLogDirectory)
     {
@@ -3719,6 +3724,14 @@ public:
                         activeGuideOptions
                             .overlap_radius;
 
+                    std::vector<
+                        gcopter_benchmark::
+                            BenchmarkCorridorRecord>
+                        benchmarkCorridorRecords;
+
+                    benchmarkCorridorRecords.reserve(
+                        activeGuideHPolys.size());
+
                     const double geometryToleranceM =
                         1.0e-6;
 
@@ -3840,7 +3853,172 @@ public:
                                           utilityMin
                                     : std::numeric_limits<double>::
                                           quiet_NaN();
-                                
+
+                            gcopter_benchmark::
+                                BenchmarkCorridorRecord
+                                    corridorRecord;
+
+                            corridorRecord.case_id =
+                                effectiveCaseId;
+
+                            corridorRecord.route_fingerprint =
+                                routeFingerprint;
+
+                            corridorRecord.method =
+                                config.benchmarkMethod;
+
+                            corridorRecord.variant =
+                                config.benchmarkVariant;
+
+                            corridorRecord.repeat_id =
+                                config.benchmarkRepeatId;
+
+                            corridorRecord.timestamp_s =
+                                benchmarkRunReady
+                                    ? benchmarkRun.timestamp_s
+                                    : ros::Time::now().toSec();
+
+                            corridorRecord.corridor_id =
+                                corridorId;
+
+                            corridorRecord.source_segment_id =
+                                corridorId;
+
+                            corridorRecord.geometry_mapping_valid =
+                                corridorGeometryMappingValid;
+
+
+                            // --------------------------------------------------------
+                            // Protected seed / junction geometry
+                            // --------------------------------------------------------
+                            corridorRecord.seed_metric_valid =
+                                seedMetric.valid;
+
+                            corridorRecord.seed_radius_m =
+                                seedMetric.radius_m;
+
+                            corridorRecord.protected_radius_m =
+                                protectedRadiusM;
+
+                            corridorRecord.junction_overlap_valid =
+                                nextOverlapValid;
+
+                            corridorRecord.junction_overlap_radius_m =
+                                nextOverlapRadiusM;
+
+
+                            // --------------------------------------------------------
+                            // Faces
+                            // --------------------------------------------------------
+                            corridorRecord.total_faces =
+                                corridorInfo.total_face_count;
+
+                            corridorRecord.domain_faces =
+                                corridorInfo.domain_face_count;
+
+                            corridorRecord.obstacle_faces =
+                                corridorInfo
+                                    .selected_obstacle_face_count;
+
+
+                            // --------------------------------------------------------
+                            // Active-Witness workload
+                            // --------------------------------------------------------
+                            corridorRecord.input_obstacle_count =
+                                corridorInfo.input_obstacle_count;
+
+                            corridorRecord.local_obstacle_count =
+                                corridorInfo.local_obstacle_count;
+
+                            corridorRecord.candidate_count =
+                                corridorInfo.candidate_count;
+
+                            corridorRecord.generated_candidate_count =
+                                corridorInfo.generated_candidate_count;
+
+                            corridorRecord.active_witness_rounds =
+                                corridorInfo.active_witness_rounds;
+
+                            corridorRecord.witness_distance_tests =
+                                corridorInfo.witness_distance_tests;
+
+                            corridorRecord.obstacle_face_tests =
+                                corridorInfo.obstacle_face_tests;
+
+                            corridorRecord.greedy_obstacle_face_count =
+                                corridorInfo.greedy_obstacle_face_count;
+
+                            corridorRecord.redundancy_removed =
+                                corridorInfo.redundancy_removed;
+
+                            corridorRecord.safety_verified =
+                                corridorInfo.safety_verified;
+
+                            corridorRecord.overlap_guaranteed =
+                                corridorInfo.overlap_guaranteed;
+
+
+                            // --------------------------------------------------------
+                            // CSGN
+                            // --------------------------------------------------------
+                            corridorRecord.metric_valid =
+                                corridorInfo.metric_valid;
+
+                            corridorRecord.anisotropic_domain =
+                                corridorInfo.anisotropic_domain;
+
+                            corridorRecord.utility_eig0 =
+                                corridorInfo.utility_eigenvalues(0);
+
+                            corridorRecord.utility_eig1 =
+                                corridorInfo.utility_eigenvalues(1);
+
+                            corridorRecord.utility_eig2 =
+                                corridorInfo.utility_eigenvalues(2);
+
+                            corridorRecord.utility_anisotropy =
+                                utilityAnisotropy;
+
+                            corridorRecord.construction_extra_radius0_m =
+                                corridorInfo.extra_radii(0);
+
+                            corridorRecord.construction_extra_radius1_m =
+                                corridorInfo.extra_radii(1);
+
+                            corridorRecord.construction_extra_radius2_m =
+                                corridorInfo.extra_radii(2);
+
+                            corridorRecord.mean_metric_damage =
+                                corridorInfo.mean_metric_damage;
+
+                            corridorRecord.min_metric_damage =
+                                corridorInfo.min_metric_damage;
+
+                            corridorRecord.max_metric_damage =
+                                corridorInfo.max_metric_damage;
+
+
+                            // --------------------------------------------------------
+                            // Direct-MINCO CSGN mapping provenance
+                            // --------------------------------------------------------
+                            if (corridorId <
+                                static_cast<int>(
+                                    guideSegmentMetrics.size()))
+                            {
+                                corridorRecord.metric_source_piece_id =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .source_piece_id;
+                                    
+                                corridorRecord.metric_mapping_distance =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .mapping_distance;
+                            }
+
+                            benchmarkCorridorRecords.push_back(
+                                corridorRecord);
+
                             ROS_INFO_STREAM(
                                 "TF_CORRIDOR_GEOMETRY "
                                 << "corridor_id="
@@ -3991,6 +4169,37 @@ public:
                         << " protected_overlap_satisfied="
                         << protectedOverlapSatisfied);
 
+                    bool benchmarkCorridorLogSuccess =
+                        true;
+                                            
+                    if (benchmarkRunReady)
+                    {
+                        benchmarkCorridorLogSuccess =
+                            benchmarkCorridorLogger
+                                .logCorridors(
+                                    benchmarkCorridorRecords);
+                                
+                        if (!benchmarkCorridorLogSuccess)
+                        {
+                            ROS_ERROR(
+                                "Failed to append "
+                                "benchmark_corridors_v1.csv.");
+                        }
+                    }
+                    
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_CORRIDORS "
+                        << "rows="
+                        << benchmarkCorridorRecords.size()
+                    
+                        << " mapping_valid="
+                        << corridorGeometryMappingValid
+                    
+                        << " log_success="
+                        << benchmarkCorridorLogSuccess
+                    
+                        << " file=benchmark_corridors_v1.csv");
+                    
                     // All success-path trajectory measurements are now available.
                     // Emit exactly one structured benchmark row.
                     if (benchmarkRunReady)
