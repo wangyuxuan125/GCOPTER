@@ -212,6 +212,124 @@ struct BenchmarkRunRecord
             quiet_NaN();
 
     // ========================================================
+    // Final trajectory quality / dynamics.
+    //
+    // These fields describe the FINAL trajectory after exact
+    // SFC closure.
+    // ========================================================
+    bool trajectory_metrics_valid =
+        false;
+
+    double trajectory_length_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double smoothness_energy =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double time_cost =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double j_kin =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_velocity_mps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_acceleration_mps2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_body_rate_radps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_tilt_rad =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double min_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Soft source trajectory quality / dynamics.
+    //
+    // These fields describe the SAME GCOPTER optimum consumed
+    // by the exact-hard closure, before waypoint projection.
+    // ========================================================
+    bool soft_trajectory_metrics_valid =
+        false;
+
+    double soft_trajectory_duration_s =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_trajectory_length_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_smoothness_energy =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_time_cost =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_j_kin =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_max_velocity_mps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_max_acceleration_mps2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_max_body_rate_radps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_max_tilt_rad =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_min_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_max_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Soft-source reconstruction provenance.
+    // ========================================================
+    bool soft_hard_comparison_valid =
+        false;
+
+    double soft_rebuild_energy_delta =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_rebuild_duration_delta_s =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    // ========================================================
     // Continuous-time SFC safety before hard closure
     // ========================================================
     bool soft_exact_certificate_valid =
@@ -700,7 +818,7 @@ public:
 
         const std::string path =
             directory_ +
-            "/benchmark_runs_v1.csv";
+            "/benchmark_runs_v2.csv";
 
         const bool header =
             fileNeedsHeader(
@@ -759,6 +877,38 @@ public:
                 << "trajectory_duration_s,"
                 << "soft_optimizer_cost,"
 
+                // Final trajectory metrics
+                << "trajectory_metrics_valid,"
+                << "trajectory_length_m,"
+                << "smoothness_energy,"
+                << "time_cost,"
+                << "j_kin,"
+                << "max_velocity_mps,"
+                << "max_acceleration_mps2,"
+                << "max_body_rate_radps,"
+                << "max_tilt_rad,"
+                << "min_thrust_n,"
+                << "max_thrust_n,"
+
+                // Soft source trajectory metrics
+                << "soft_trajectory_metrics_valid,"
+                << "soft_trajectory_duration_s,"
+                << "soft_trajectory_length_m,"
+                << "soft_smoothness_energy,"
+                << "soft_time_cost,"
+                << "soft_j_kin,"
+                << "soft_max_velocity_mps,"
+                << "soft_max_acceleration_mps2,"
+                << "soft_max_body_rate_radps,"
+                << "soft_max_tilt_rad,"
+                << "soft_min_thrust_n,"
+                << "soft_max_thrust_n,"
+
+                // Provenance
+                << "soft_hard_comparison_valid,"
+                << "soft_rebuild_energy_delta,"
+                << "soft_rebuild_duration_delta_s,"
+
                 << "soft_exact_certificate_valid,"
                 << "soft_exact_contained,"
                 << "soft_exact_max_violation_m,"
@@ -781,7 +931,7 @@ public:
         output
             << std::setprecision(17)
 
-            << 1 << ','
+            << 2 << ','
 
             << csv(record.case_id) << ','
             << csv(record.route_fingerprint) << ','
@@ -821,6 +971,38 @@ public:
             << record.trajectory_piece_count << ','
             << record.trajectory_duration_s << ','
             << record.soft_optimizer_cost << ','
+                
+            // Final trajectory metrics
+            << record.trajectory_metrics_valid << ','
+            << record.trajectory_length_m << ','
+            << record.smoothness_energy << ','
+            << record.time_cost << ','
+            << record.j_kin << ','
+            << record.max_velocity_mps << ','
+            << record.max_acceleration_mps2 << ','
+            << record.max_body_rate_radps << ','
+            << record.max_tilt_rad << ','
+            << record.min_thrust_n << ','
+            << record.max_thrust_n << ','
+                
+            // Soft source trajectory metrics
+            << record.soft_trajectory_metrics_valid << ','
+            << record.soft_trajectory_duration_s << ','
+            << record.soft_trajectory_length_m << ','
+            << record.soft_smoothness_energy << ','
+            << record.soft_time_cost << ','
+            << record.soft_j_kin << ','
+            << record.soft_max_velocity_mps << ','
+            << record.soft_max_acceleration_mps2 << ','
+            << record.soft_max_body_rate_radps << ','
+            << record.soft_max_tilt_rad << ','
+            << record.soft_min_thrust_n << ','
+            << record.soft_max_thrust_n << ','
+                
+            // Provenance
+            << record.soft_hard_comparison_valid << ','
+            << record.soft_rebuild_energy_delta << ','
+            << record.soft_rebuild_duration_delta_s << ','
 
             << record.soft_exact_certificate_valid << ','
             << record.soft_exact_contained << ','

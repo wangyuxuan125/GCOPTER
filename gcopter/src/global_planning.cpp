@@ -2906,7 +2906,7 @@ public:
                         {
                             ROS_ERROR(
                                 "Failed to append "
-                                "benchmark_runs_v1.csv.");
+                                "benchmark_runs_v2.csv.");
                         }
                     
                         ROS_INFO_STREAM(
@@ -3668,6 +3668,130 @@ public:
 
                     // All success-path trajectory measurements are now available.
                     // Emit exactly one structured benchmark row.
+                    if (benchmarkRunReady)
+                    {
+                        // ====================================================
+                        // FINAL trajectory = exact-hard trajectory.
+                        // ====================================================
+                        benchmarkRun.trajectory_piece_count =
+                            finalTrajectoryEvaluation
+                                .piece_count;
+                    
+                        benchmarkRun.trajectory_duration_s =
+                            finalTrajectoryEvaluation
+                                .duration_s;
+                    
+                        benchmarkRun.trajectory_metrics_valid =
+                            finalTrajectoryEvaluation
+                                .valid;
+                    
+                        benchmarkRun.trajectory_length_m =
+                            finalTrajectoryEvaluation
+                                .length_m;
+                    
+                        benchmarkRun.smoothness_energy =
+                            finalTrajectoryEvaluation
+                                .smoothness_energy;
+                    
+                        benchmarkRun.time_cost =
+                            finalTrajectoryEvaluation
+                                .time_cost;
+                    
+                        benchmarkRun.j_kin =
+                            finalTrajectoryEvaluation
+                                .j_kin;
+                    
+                        benchmarkRun.max_velocity_mps =
+                            finalTrajectoryEvaluation
+                                .max_velocity_mps;
+                    
+                        benchmarkRun.max_acceleration_mps2 =
+                            finalTrajectoryEvaluation
+                                .max_acceleration_mps2;
+                    
+                        benchmarkRun.max_body_rate_radps =
+                            finalTrajectoryEvaluation
+                                .max_body_rate_radps;
+                    
+                        benchmarkRun.max_tilt_rad =
+                            finalTrajectoryEvaluation
+                                .max_tilt_rad;
+                    
+                        benchmarkRun.min_thrust_n =
+                            finalTrajectoryEvaluation
+                                .min_thrust_n;
+                    
+                        benchmarkRun.max_thrust_n =
+                            finalTrajectoryEvaluation
+                                .max_thrust_n;
+                    
+                    
+                        // ====================================================
+                        // SOFT source trajectory = same GCOPTER optimum
+                        // consumed by the hard projection.
+                        // ====================================================
+                        benchmarkRun.soft_trajectory_metrics_valid =
+                            softTrajectoryEvaluation
+                                .valid;
+                    
+                        benchmarkRun.soft_trajectory_duration_s =
+                            softTrajectoryEvaluation
+                                .duration_s;
+                    
+                        benchmarkRun.soft_trajectory_length_m =
+                            softTrajectoryEvaluation
+                                .length_m;
+                    
+                        benchmarkRun.soft_smoothness_energy =
+                            softTrajectoryEvaluation
+                                .smoothness_energy;
+                    
+                        benchmarkRun.soft_time_cost =
+                            softTrajectoryEvaluation
+                                .time_cost;
+                    
+                        benchmarkRun.soft_j_kin =
+                            softTrajectoryEvaluation
+                                .j_kin;
+                    
+                        benchmarkRun.soft_max_velocity_mps =
+                            softTrajectoryEvaluation
+                                .max_velocity_mps;
+                    
+                        benchmarkRun.soft_max_acceleration_mps2 =
+                            softTrajectoryEvaluation
+                                .max_acceleration_mps2;
+                    
+                        benchmarkRun.soft_max_body_rate_radps =
+                            softTrajectoryEvaluation
+                                .max_body_rate_radps;
+                    
+                        benchmarkRun.soft_max_tilt_rad =
+                            softTrajectoryEvaluation
+                                .max_tilt_rad;
+                    
+                        benchmarkRun.soft_min_thrust_n =
+                            softTrajectoryEvaluation
+                                .min_thrust_n;
+                    
+                        benchmarkRun.soft_max_thrust_n =
+                            softTrajectoryEvaluation
+                                .max_thrust_n;
+                    
+                    
+                        // ====================================================
+                        // Single-backend provenance.
+                        // ====================================================
+                        benchmarkRun.soft_hard_comparison_valid =
+                            softHardComparisonValid;
+                    
+                        benchmarkRun.soft_rebuild_energy_delta =
+                            softEnergyReferenceDelta;
+                    
+                        benchmarkRun.soft_rebuild_duration_delta_s =
+                            softDurationReferenceDelta;
+                    }
+
                     emitBenchmarkRun();
                         
                     visualizer.visualizePolytope(
@@ -3740,39 +3864,16 @@ public:
                             .max_corridor_violation_final;
 
                     record.trajectory_piece_count =
-                        traj.getPieceNum();
-
+                        finalTrajectoryEvaluation
+                            .piece_count;
+                                                    
                     record.trajectory_duration_s =
-                        traj.getTotalDuration();
-
+                        finalTrajectoryEvaluation
+                            .duration_s;
+                                                    
                     record.trajectory_length_m =
-                        0.0;
-
-                    const int lengthSamples =
-                        std::max(
-                            20,
-                            20 * traj.getPieceNum());
-
-                    Eigen::Vector3d previous =
-                        traj.getPos(0.0);
-
-                    for (int i = 1;
-                         i <= lengthSamples;
-                         ++i)
-                    {
-                        const Eigen::Vector3d current =
-                            traj.getPos(
-                                record.trajectory_duration_s *
-                                static_cast<double>(i) /
-                                static_cast<double>(
-                                    lengthSamples));
-
-                        record.trajectory_length_m +=
-                            (current - previous).norm();
-
-                        previous =
-                            current;
-                    }
+                        finalTrajectoryEvaluation
+                            .length_m;
 
                     trajStamp =
                         ros::Time::now().toSec();
