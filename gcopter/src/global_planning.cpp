@@ -3302,6 +3302,351 @@ public:
                         << finalTrajectoryEvaluation
                                .max_thrust_n);
 
+                    // ========================================================
+                    // Soft-vs-hard post-projection trajectory comparison.
+                    //
+                    // Reconstruct the EXACT soft GCOPTER source trajectory from
+                    // the optimized internal waypoints and times consumed by
+                    // the exact-hard projection.
+                    //
+                    // No optimizer is run here.
+                    // This block is outside the frozen planning timers.
+                    // ========================================================
+                    Trajectory<5>
+                        softBackendTrajectory;
+
+                    double softBackendRebuiltEnergy =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+
+                    bool softBackendTrajectoryReady =
+                        false;
+
+                    if (activeGuideBackendResult
+                            .optimized_state_ready)
+                    {
+                        const int softPieceCount =
+                            static_cast<int>(
+                                activeGuideBackendResult
+                                    .optimized_times
+                                    .size());
+                            
+                        const bool softStateValid =
+                            softPieceCount > 0 &&
+                            activeGuideBackendResult
+                                .optimized_points.rows() == 3 &&
+                            activeGuideBackendResult
+                                .optimized_points.cols() ==
+                                    softPieceCount - 1 &&
+                            activeGuideBackendResult
+                                .optimized_points.allFinite() &&
+                            activeGuideBackendResult
+                                .optimized_times.allFinite() &&
+                            (activeGuideBackendResult
+                                 .optimized_times.array() >
+                             0.0)
+                                .all();
+                            
+                        if (softStateValid)
+                        {
+                            minco::MINCO_S3NU
+                                softMinco;
+                        
+                            softMinco.setConditions(
+                                iniState,
+                                finState,
+                                softPieceCount);
+                            
+                            softMinco.setParameters(
+                                activeGuideBackendResult
+                                    .optimized_points,
+                                activeGuideBackendResult
+                                    .optimized_times);
+                            
+                            softMinco.getTrajectory(
+                                softBackendTrajectory);
+                            
+                            softMinco.getEnergy(
+                                softBackendRebuiltEnergy);
+                            
+                            softBackendTrajectoryReady =
+                                softBackendTrajectory
+                                    .getPieceNum() ==
+                                    softPieceCount &&
+                                std::isfinite(
+                                    softBackendRebuiltEnergy);
+                        }
+                    }
+
+                    gcopter_benchmark::
+                        FinalTrajectoryMetrics
+                            softTrajectoryEvaluation;
+
+                    if (softBackendTrajectoryReady)
+                    {
+                        softTrajectoryEvaluation =
+                            gcopter_benchmark::
+                                evaluateFinalTrajectoryMetrics(
+                                    softBackendTrajectory,
+                                    softBackendRebuiltEnergy,
+                                    config.weightT,
+                                    config.vehicleMass,
+                                    config.gravAcc,
+                                    config.horizDrag,
+                                    config.vertDrag,
+                                    config.parasDrag,
+                                    config.speedEps,
+                                    1.0e-3);
+                    }
+
+                    const double softEnergyReferenceDelta =
+                        softBackendRebuiltEnergy -
+                        hardProjectionResult
+                            .initial_energy;
+
+                    const double softDurationReferenceDelta =
+                        softTrajectoryEvaluation
+                            .duration_s -
+                        activeGuideBackendResult
+                            .trajectory_duration;
+
+                    const bool softHardComparisonValid =
+                        softBackendTrajectoryReady &&
+                        softTrajectoryEvaluation.valid &&
+                        finalTrajectoryEvaluation.valid &&
+                        std::isfinite(
+                            softEnergyReferenceDelta) &&
+                        std::isfinite(
+                            softDurationReferenceDelta);
+
+                    ROS_INFO_STREAM(
+                        "TF_SOFT_HARD_TRAJ_COMPARE "
+                    
+                        << "valid="
+                        << softHardComparisonValid
+                    
+                        << " soft_rebuild_ready="
+                        << softBackendTrajectoryReady
+                    
+                        << " soft_energy_reference_delta="
+                        << softEnergyReferenceDelta
+                    
+                        << " soft_duration_reference_delta_s="
+                        << softDurationReferenceDelta
+                    
+                        // ----------------------------------------------------
+                        // Duration / length
+                        // All deltas below are:
+                        //
+                        //     hard - soft
+                        // ----------------------------------------------------
+                        << " soft_duration_s="
+                        << softTrajectoryEvaluation
+                               .duration_s
+                    
+                        << " hard_duration_s="
+                        << finalTrajectoryEvaluation
+                               .duration_s
+                    
+                        << " delta_duration_s="
+                        << (finalTrajectoryEvaluation
+                                .duration_s -
+                            softTrajectoryEvaluation
+                                .duration_s)
+                        
+                        << " soft_length_m="
+                        << softTrajectoryEvaluation
+                               .length_m
+                        
+                        << " hard_length_m="
+                        << finalTrajectoryEvaluation
+                               .length_m
+                        
+                        << " delta_length_m="
+                        << (finalTrajectoryEvaluation
+                                .length_m -
+                            softTrajectoryEvaluation
+                                .length_m)
+                        
+                        // ----------------------------------------------------
+                        // Clean trajectory quality
+                        // ----------------------------------------------------
+                        << " soft_energy="
+                        << softTrajectoryEvaluation
+                               .smoothness_energy
+                        
+                        << " hard_energy="
+                        << finalTrajectoryEvaluation
+                               .smoothness_energy
+                        
+                        << " delta_energy="
+                        << (finalTrajectoryEvaluation
+                                .smoothness_energy -
+                            softTrajectoryEvaluation
+                                .smoothness_energy)
+                        
+                        << " soft_j_kin="
+                        << softTrajectoryEvaluation
+                               .j_kin
+                        
+                        << " hard_j_kin="
+                        << finalTrajectoryEvaluation
+                               .j_kin
+                        
+                        << " delta_j_kin="
+                        << (finalTrajectoryEvaluation
+                                .j_kin -
+                            softTrajectoryEvaluation
+                                .j_kin)
+                        
+                        // ----------------------------------------------------
+                        // Translational extrema
+                        // ----------------------------------------------------
+                        << " soft_max_vel_mps="
+                        << softTrajectoryEvaluation
+                               .max_velocity_mps
+                        
+                        << " hard_max_vel_mps="
+                        << finalTrajectoryEvaluation
+                               .max_velocity_mps
+                        
+                        << " delta_max_vel_mps="
+                        << (finalTrajectoryEvaluation
+                                .max_velocity_mps -
+                            softTrajectoryEvaluation
+                                .max_velocity_mps)
+                        
+                        << " soft_max_acc_mps2="
+                        << softTrajectoryEvaluation
+                               .max_acceleration_mps2
+                        
+                        << " hard_max_acc_mps2="
+                        << finalTrajectoryEvaluation
+                               .max_acceleration_mps2
+                        
+                        << " delta_max_acc_mps2="
+                        << (finalTrajectoryEvaluation
+                                .max_acceleration_mps2 -
+                            softTrajectoryEvaluation
+                                .max_acceleration_mps2)
+                        
+                        // ----------------------------------------------------
+                        // Flatness-based dynamics
+                        // ----------------------------------------------------
+                        << " soft_max_body_rate_radps="
+                        << softTrajectoryEvaluation
+                               .max_body_rate_radps
+                        
+                        << " hard_max_body_rate_radps="
+                        << finalTrajectoryEvaluation
+                               .max_body_rate_radps
+                        
+                        << " delta_max_body_rate_radps="
+                        << (finalTrajectoryEvaluation
+                                .max_body_rate_radps -
+                            softTrajectoryEvaluation
+                                .max_body_rate_radps)
+                        
+                        << " soft_max_tilt_rad="
+                        << softTrajectoryEvaluation
+                               .max_tilt_rad
+                        
+                        << " hard_max_tilt_rad="
+                        << finalTrajectoryEvaluation
+                               .max_tilt_rad
+                        
+                        << " delta_max_tilt_rad="
+                        << (finalTrajectoryEvaluation
+                                .max_tilt_rad -
+                            softTrajectoryEvaluation
+                                .max_tilt_rad)
+                        
+                        << " soft_min_thrust_N="
+                        << softTrajectoryEvaluation
+                               .min_thrust_n
+                        
+                        << " hard_min_thrust_N="
+                        << finalTrajectoryEvaluation
+                               .min_thrust_n
+                        
+                        << " delta_min_thrust_N="
+                        << (finalTrajectoryEvaluation
+                                .min_thrust_n -
+                            softTrajectoryEvaluation
+                                .min_thrust_n)
+                        
+                        << " soft_max_thrust_N="
+                        << softTrajectoryEvaluation
+                               .max_thrust_n
+                        
+                        << " hard_max_thrust_N="
+                        << finalTrajectoryEvaluation
+                               .max_thrust_n
+                        
+                        << " delta_max_thrust_N="
+                        << (finalTrajectoryEvaluation
+                                .max_thrust_n -
+                            softTrajectoryEvaluation
+                                .max_thrust_n)
+                        
+                        // ----------------------------------------------------
+                        // Raw margins to configured soft bounds.
+                        //
+                        // Positive = inside bound.
+                        // Negative = exceeds bound.
+                        //
+                        // No arbitrary feasibility tolerance is introduced.
+                        // ----------------------------------------------------
+                        << " soft_vel_margin_mps="
+                        << (config.maxVelMag -
+                            softTrajectoryEvaluation
+                                .max_velocity_mps)
+                        
+                        << " hard_vel_margin_mps="
+                        << (config.maxVelMag -
+                            finalTrajectoryEvaluation
+                                .max_velocity_mps)
+                        
+                        << " soft_body_rate_margin_radps="
+                        << (config.maxBdrMag -
+                            softTrajectoryEvaluation
+                                .max_body_rate_radps)
+                        
+                        << " hard_body_rate_margin_radps="
+                        << (config.maxBdrMag -
+                            finalTrajectoryEvaluation
+                                .max_body_rate_radps)
+                        
+                        << " soft_tilt_margin_rad="
+                        << (config.maxTiltAngle -
+                            softTrajectoryEvaluation
+                                .max_tilt_rad)
+                        
+                        << " hard_tilt_margin_rad="
+                        << (config.maxTiltAngle -
+                            finalTrajectoryEvaluation
+                                .max_tilt_rad)
+                        
+                        << " soft_thrust_low_margin_N="
+                        << (softTrajectoryEvaluation
+                                .min_thrust_n -
+                            config.minThrust)
+                        
+                        << " hard_thrust_low_margin_N="
+                        << (finalTrajectoryEvaluation
+                                .min_thrust_n -
+                            config.minThrust)
+                        
+                        << " soft_thrust_high_margin_N="
+                        << (config.maxThrust -
+                            softTrajectoryEvaluation
+                                .max_thrust_n)
+                        
+                        << " hard_thrust_high_margin_N="
+                        << (config.maxThrust -
+                            finalTrajectoryEvaluation
+                                .max_thrust_n));
+                        
                     visualizer.visualizePolytope(
                         activeGuideHPolys);
 
