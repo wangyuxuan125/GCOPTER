@@ -4563,7 +4563,7 @@ public:
                     //     Wy = 4 m
                     //     Wz = 6 m
                     // ========================================================
-                                        
+
                     const auto widthTestX =
                         gcopter_benchmark::
                             evaluatePointDirectionalWidth(
@@ -6152,6 +6152,1052 @@ public:
                     
                         << " max_vertex_violation_m="
                         << maxVolumeVertexViolationM);
+
+                    // ========================================================
+                    // D1a-1: Controlled-Geometry STANDARD FIRI baseline.
+                    //
+                    // Protocol:
+                    //
+                    //   original route segment i
+                    //       ->
+                    //   exactly one standard FIRI polytope i
+                    //
+                    // Differences from native sfc_gen::convexCover():
+                    //
+                    //   - no progress-based sub-segmentation;
+                    //   - no inserted gap polytope;
+                    //   - no shortcut;
+                    //
+                    // Kept identical:
+                    //
+                    //   - local axis-aligned bounding domain;
+                    //   - local obstacle crop;
+                    //   - FIRI inner kernel;
+                    //   - FIRI iteration count / epsilon.
+                    //
+                    // The Direct-MINCO CSGN metric is supplied ONLY for
+                    // post-selection diagnostics.  metric_weight == 0 means
+                    // it does NOT alter standard FIRI construction.
+                    //
+                    // Cross-method directional geometry is measured from the
+                    // ORIGINAL segment MIDPOINT using the common
+                    // evaluatePointDirectionalWidth() kernel.
+                    //
+                    // This block is after all frozen Proposed timers.
+                    // ========================================================
+                                        
+                    std::vector<Eigen::MatrixX4d>
+                        controlledFiriHPolys;
+                                        
+                    std::vector<
+                        firi::TrajectoryFavorableDiagnostics>
+                        controlledFiriDiagnostics;
+                                        
+                    std::vector<int>
+                        controlledFiriLocalObstacleCounts;
+                                        
+                    std::vector<double>
+                        controlledFiriSegmentMs;
+                                        
+                                        
+                    controlledFiriHPolys.reserve(
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                        
+                    controlledFiriDiagnostics.reserve(
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                        
+                    controlledFiriLocalObstacleCounts.reserve(
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                        
+                    controlledFiriSegmentMs.reserve(
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                        
+                        
+                    const double controlledFiriRangeM =
+                        config.tfFiriRange;
+                        
+                    const int controlledFiriIterations =
+                        4;
+                        
+                    const double controlledFiriEpsilon =
+                        1.0e-6;
+                        
+                        
+                    // --------------------------------------------------------
+                    // Controlled one-original-segment -> one-FIRI-polytope
+                    // builder.
+                    // --------------------------------------------------------
+                    auto buildControlledFiri =
+                        [&]() -> bool
+                    {
+                        controlledFiriHPolys.clear();
+                        controlledFiriDiagnostics.clear();
+                        controlledFiriLocalObstacleCounts.clear();
+                        controlledFiriSegmentMs.clear();
+                    
+                        if (controlledSegmentCount <= 0 ||
+                            static_cast<int>(
+                                route.size()) !=
+                                controlledSegmentCount + 1 ||
+                            !std::isfinite(
+                                controlledFiriRangeM) ||
+                            controlledFiriRangeM <= 0.0)
+                        {
+                            return false;
+                        }
+                    
+                    
+                        const Eigen::Vector3d lowCorner =
+                            voxelMap.getOrigin();
+                    
+                        const Eigen::Vector3d highCorner =
+                            voxelMap.getCorner();
+                    
+                    
+                        for (int segmentId = 0;
+                             segmentId <
+                                 controlledSegmentCount;
+                             ++segmentId)
+                        {
+                            const Eigen::Vector3d &a =
+                                route[segmentId];
+                        
+                            const Eigen::Vector3d &b =
+                                route[segmentId + 1];
+                        
+                        
+                            // ====================================================
+                            // Same six-face axis-aligned local bounding domain
+                            // used by sfc_gen::convexCover().
+                            // ====================================================
+                            Eigen::Matrix<double, 6, 4> bd =
+                                Eigen::Matrix<double, 6, 4>::
+                                    Zero();
+                        
+                            bd(0, 0) = 1.0;
+                            bd(1, 0) = -1.0;
+                        
+                            bd(2, 1) = 1.0;
+                            bd(3, 1) = -1.0;
+                        
+                            bd(4, 2) = 1.0;
+                            bd(5, 2) = -1.0;
+                        
+                        
+                            bd(0, 3) =
+                                -std::min(
+                                    std::max(
+                                        a(0),
+                                        b(0)) +
+                                        controlledFiriRangeM,
+                                    highCorner(0));
+                                    
+                            bd(1, 3) =
+                                +std::max(
+                                    std::min(
+                                        a(0),
+                                        b(0)) -
+                                        controlledFiriRangeM,
+                                    lowCorner(0));
+                                    
+                            bd(2, 3) =
+                                -std::min(
+                                    std::max(
+                                        a(1),
+                                        b(1)) +
+                                        controlledFiriRangeM,
+                                    highCorner(1));
+                                    
+                            bd(3, 3) =
+                                +std::max(
+                                    std::min(
+                                        a(1),
+                                        b(1)) -
+                                        controlledFiriRangeM,
+                                    lowCorner(1));
+                                    
+                            bd(4, 3) =
+                                -std::min(
+                                    std::max(
+                                        a(2),
+                                        b(2)) +
+                                        controlledFiriRangeM,
+                                    highCorner(2));
+                                    
+                            bd(5, 3) =
+                                +std::max(
+                                    std::min(
+                                        a(2),
+                                        b(2)) -
+                                        controlledFiriRangeM,
+                                    lowCorner(2));
+                                    
+                                    
+                            // ====================================================
+                            // Same local point-cloud crop as convexCover().
+                            //
+                            // Do NOT use Eigen::Map(valid_pc[0]) here because
+                            // an empty local cloud would make that undefined.
+                            // ====================================================
+                            std::vector<Eigen::Vector3d>
+                                localPoints;
+                                    
+                            localPoints.reserve(
+                                pc.size());
+                            
+                            
+                            for (const Eigen::Vector3d &point :
+                                 pc)
+                            {
+                                if ((
+                                        bd.leftCols<3>() *
+                                            point +
+                                        bd.rightCols<1>())
+                                        .maxCoeff() <
+                                    0.0)
+                                {
+                                    localPoints.push_back(
+                                        point);
+                                }
+                            }
+                        
+                        
+                            Eigen::Matrix3Xd localPc(
+                                3,
+                                static_cast<int>(
+                                    localPoints.size()));
+                                
+                                
+                            for (int pointId = 0;
+                                 pointId <
+                                     static_cast<int>(
+                                         localPoints.size());
+                                 ++pointId)
+                            {
+                                localPc.col(
+                                    pointId) =
+                                    localPoints[
+                                        pointId];
+                            }
+                        
+                        
+                            // ====================================================
+                            // STANDARD FIRI.
+                            //
+                            // All construction-conditioning weights are zero.
+                            //
+                            // metric_enabled may be true so final selected faces
+                            // can still be evaluated against the SAME Direct-MINCO
+                            // CSGN utility, but metric_weight remains zero.
+                            // ====================================================
+                            firi::TrajectoryFavorableOptions
+                                firiOptions;
+                        
+                            firiOptions.enabled =
+                                false;
+                        
+                            firiOptions.directional_width_weight =
+                                0.0;
+                        
+                            firiOptions.face_count_weight =
+                                0.0;
+                        
+                            firiOptions.max_faces =
+                                0;
+                        
+                            firiOptions.metric_enabled =
+                                false;
+                        
+                            firiOptions.metric_weight =
+                                0.0;
+                        
+                        
+                            if (segmentId <
+                                    static_cast<int>(
+                                        guideSegmentMetrics.size()) &&
+                                guideSegmentMetrics[
+                                    segmentId]
+                                    .valid &&
+                                guideSegmentMetrics[
+                                    segmentId]
+                                    .utility
+                                    .allFinite())
+                            {
+                                firiOptions.metric_enabled =
+                                    true;
+                            
+                                firiOptions.deformation_utility =
+                                    guideSegmentMetrics[
+                                        segmentId]
+                                        .utility;
+                            }
+                        
+                        
+                            Eigen::MatrixX4d hPoly;
+                        
+                            firi::TrajectoryFavorableDiagnostics
+                                diagnostics;
+                        
+                        
+                            const auto segmentStarted =
+                                std::chrono::
+                                    steady_clock::now();
+                        
+                        
+                            const bool generated =
+                                firi::firi(
+                                    bd,
+                                    localPc,
+                                    a,
+                                    b,
+                                    hPoly,
+                                    controlledFiriIterations,
+                                    controlledFiriEpsilon,
+                                    firiOptions,
+                                    &diagnostics);
+                                
+                                
+                            const double segmentMs =
+                                std::chrono::duration<
+                                    double,
+                                    std::milli>(
+                                        std::chrono::
+                                            steady_clock::now() -
+                                        segmentStarted)
+                                    .count();
+                                    
+                                    
+                            controlledFiriDiagnostics
+                                .push_back(
+                                    diagnostics);
+                                
+                            controlledFiriLocalObstacleCounts
+                                .push_back(
+                                    static_cast<int>(
+                                        localPoints.size()));
+                                    
+                            controlledFiriSegmentMs
+                                .push_back(
+                                    segmentMs);
+                                
+                                
+                            if (!generated ||
+                                hPoly.rows() <= 0 ||
+                                !hPoly.allFinite())
+                            {
+                                return false;
+                            }
+                        
+                        
+                            controlledFiriHPolys
+                                .push_back(
+                                    hPoly);
+                        }
+                    
+                    
+                        return
+                            static_cast<int>(
+                                controlledFiriHPolys.size()) ==
+                                controlledSegmentCount &&
+                            static_cast<int>(
+                                controlledFiriDiagnostics.size()) ==
+                                controlledSegmentCount &&
+                            static_cast<int>(
+                                controlledFiriLocalObstacleCounts.size()) ==
+                                controlledSegmentCount &&
+                            static_cast<int>(
+                                controlledFiriSegmentMs.size()) ==
+                                controlledSegmentCount;
+                    };
+                    
+                    
+                    // --------------------------------------------------------
+                    // Build controlled standard FIRI.
+                    //
+                    // This wall time is diagnostic only and is outside the
+                    // frozen Proposed after_route_ms.
+                    // --------------------------------------------------------
+                    const auto controlledFiriStarted =
+                        std::chrono::
+                            steady_clock::now();
+                    
+                    
+                    const bool controlledFiriSuccess =
+                        guideSegmentMetricsReady &&
+                        buildControlledFiri();
+                    
+                    
+                    const double controlledFiriGenerationMs =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::
+                                    steady_clock::now() -
+                                controlledFiriStarted)
+                            .count();
+                            
+                            
+                    const bool controlledFiriMappingValid =
+                        controlledFiriSuccess &&
+                        static_cast<int>(
+                            controlledFiriHPolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledFiriDiagnostics.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    // ========================================================
+                    // Controlled-FIRI common geometry measurements.
+                    // ========================================================
+                    int controlledFiriSeedValidCount =
+                        0;
+                        
+                    int controlledFiriOverlapValidCount =
+                        0;
+                        
+                    int controlledFiriDirectionalValidCount =
+                        0;
+                        
+                    int controlledFiriVolumeValidCount =
+                        0;
+                        
+                        
+                    int controlledFiriTotalFaces =
+                        0;
+                        
+                    int controlledFiriDomainFaces =
+                        0;
+                        
+                    int controlledFiriObstacleFaces =
+                        0;
+                        
+                    int controlledFiriTotalLocalObstacles =
+                        0;
+                        
+                    int controlledFiriUnresolvedConstraints =
+                        0;
+                        
+                        
+                    double controlledFiriMinSeedRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                        
+                    double controlledFiriMinOverlapRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                        
+                    double controlledFiriMinReferenceMarginM =
+                        std::numeric_limits<double>::
+                            infinity();
+                        
+                    double controlledFiriHardWidthSumM =
+                        0.0;
+                        
+                    double controlledFiriMiddleWidthSumM =
+                        0.0;
+                        
+                    double controlledFiriEasyWidthSumM =
+                        0.0;
+                        
+                    double controlledFiriVolumeSumM3 =
+                        0.0;
+                        
+                    double controlledFiriMaxVertexViolationM =
+                        -std::numeric_limits<double>::
+                            infinity();
+                        
+                        
+                    if (controlledFiriMappingValid)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            const Eigen::MatrixX4d &firiPoly =
+                                controlledFiriHPolys[
+                                    corridorId];
+                                
+                            const firi::
+                                TrajectoryFavorableDiagnostics
+                                    &firiDiagnostics =
+                                        controlledFiriDiagnostics[
+                                            corridorId];
+                                        
+                                        
+                            // ====================================================
+                            // This is the ONLY seedA / seedB pair in the new
+                            // D1a-1 block.
+                            //
+                            // Cross-method directional width does NOT use the
+                            // protected capsule.  Its fixed reference is the
+                            // ORIGINAL route-segment midpoint.
+                            // ====================================================
+                            const Eigen::Vector3d &seedA =
+                                route[corridorId];
+                                        
+                            const Eigen::Vector3d &seedB =
+                                route[corridorId + 1];
+                                        
+                            const Eigen::Vector3d
+                                directionalReferencePoint =
+                                    0.5 *
+                                    (
+                                        seedA +
+                                        seedB);
+                                    
+                                    
+                            // ====================================================
+                            // C2 geometry:
+                            // segment seed radius.
+                            // ====================================================
+                            const auto seedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        firiPoly,
+                                        seedA,
+                                        seedB);
+                                    
+                                    
+                            if (seedMetric.valid)
+                            {
+                                ++controlledFiriSeedValidCount;
+                            
+                                controlledFiriMinSeedRadiusM =
+                                    std::min(
+                                        controlledFiriMinSeedRadiusM,
+                                        seedMetric.radius_m);
+                            }
+                        
+                        
+                            // ====================================================
+                            // C2 geometry:
+                            // fixed route-junction overlap radius.
+                            // ====================================================
+                            gcopter_benchmark::
+                                CorridorOverlapMetric
+                                    overlapMetric;
+                        
+                        
+                            if (corridorId + 1 <
+                                controlledSegmentCount)
+                            {
+                                overlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            controlledFiriHPolys[
+                                                corridorId],
+                                            controlledFiriHPolys[
+                                                corridorId + 1],
+                                            route[corridorId + 1]);
+                                            
+                                            
+                                if (overlapMetric.valid)
+                                {
+                                    ++controlledFiriOverlapValidCount;
+                                
+                                    controlledFiriMinOverlapRadiusM =
+                                        std::min(
+                                            controlledFiriMinOverlapRadiusM,
+                                            overlapMetric.radius_m);
+                                }
+                            }
+                        
+                        
+                            // ====================================================
+                            // Secondary volume metric.
+                            // ====================================================
+                            const auto volumeMetric =
+                                gcopter_benchmark::
+                                    evaluateHPolytopeVolume(
+                                        firiPoly);
+                                    
+                                    
+                            if (volumeMetric.valid)
+                            {
+                                ++controlledFiriVolumeValidCount;
+                            
+                                controlledFiriVolumeSumM3 +=
+                                    volumeMetric.volume_m3;
+                            
+                                controlledFiriMaxVertexViolationM =
+                                    std::max(
+                                        controlledFiriMaxVertexViolationM,
+                                        volumeMetric
+                                            .max_vertex_violation_m);
+                            }
+                        
+                        
+                            // ====================================================
+                            // Common Direct-MINCO CSGN reference directions.
+                            //
+                            // IMPORTANT:
+                            // These directions measure FIRI; they do NOT alter
+                            // FIRI construction.
+                            // ====================================================
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    hardWidth;
+                        
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    middleWidth;
+                        
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    easyWidth;
+                        
+                        
+                            bool directionalValid =
+                                false;
+                        
+                        
+                            if (corridorId <
+                                    static_cast<int>(
+                                        guideSegmentMetrics.size()) &&
+                                guideSegmentMetrics[
+                                    corridorId]
+                                    .valid)
+                            {
+                                Eigen::Matrix3d utility =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .utility;
+                                    
+                                    
+                                utility =
+                                    0.5 *
+                                    (
+                                        utility +
+                                        utility.transpose());
+                                    
+                                    
+                                Eigen::SelfAdjointEigenSolver<
+                                    Eigen::Matrix3d>
+                                    utilitySolver(
+                                        utility);
+                                    
+                                    
+                                if (utilitySolver.info() ==
+                                        Eigen::Success &&
+                                    utilitySolver
+                                            .eigenvalues()
+                                            .minCoeff() >
+                                        0.0)
+                                {
+                                    Eigen::Matrix3d directions =
+                                        utilitySolver
+                                            .eigenvectors();
+                                
+                                
+                                    // Same sign canonicalization used by
+                                    // C2c/C2d.
+                                    for (int directionId = 0;
+                                         directionId < 3;
+                                         ++directionId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            directions.col(
+                                                directionId);
+                                            
+                                        Eigen::Index pivotId =
+                                            0;
+                                            
+                                        direction
+                                            .cwiseAbs()
+                                            .maxCoeff(
+                                                &pivotId);
+                                            
+                                            
+                                        if (direction(
+                                                pivotId) <
+                                            0.0)
+                                        {
+                                            direction =
+                                                -direction;
+                                        }
+                                    
+                                    
+                                        directions.col(
+                                            directionId) =
+                                            direction;
+                                    }
+                                
+                                
+                                    hardWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                firiPoly,
+                                                directionalReferencePoint,
+                                                directions.col(0));
+                                            
+                                            
+                                    middleWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                firiPoly,
+                                                directionalReferencePoint,
+                                                directions.col(1));
+                                            
+                                            
+                                    easyWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                firiPoly,
+                                                directionalReferencePoint,
+                                                directions.col(2));
+                                            
+                                            
+                                    directionalValid =
+                                        hardWidth.valid &&
+                                        middleWidth.valid &&
+                                        easyWidth.valid &&
+                                        hardWidth.reference_inside &&
+                                        middleWidth.reference_inside &&
+                                        easyWidth.reference_inside;
+                                            
+                                            
+                                    if (directionalValid)
+                                    {
+                                        ++controlledFiriDirectionalValidCount;
+                                    
+                                        controlledFiriHardWidthSumM +=
+                                            hardWidth.width_m;
+                                    
+                                        controlledFiriMiddleWidthSumM +=
+                                            middleWidth.width_m;
+                                    
+                                        controlledFiriEasyWidthSumM +=
+                                            easyWidth.width_m;
+                                    
+                                        controlledFiriMinReferenceMarginM =
+                                            std::min(
+                                                controlledFiriMinReferenceMarginM,
+                                                hardWidth
+                                                    .min_reference_margin_m);
+                                    }
+                                }
+                            }
+                        
+                        
+                            // ====================================================
+                            // Face / local-construction workload.
+                            // ====================================================
+                            const int totalFaces =
+                                static_cast<int>(
+                                    firiPoly.rows());
+                                
+                            const int obstacleFaces =
+                                firiDiagnostics
+                                    .obstacle_face_count;
+                                
+                            const int domainFaces =
+                                std::max(
+                                    0,
+                                    totalFaces -
+                                        obstacleFaces);
+                                
+                                
+                            controlledFiriTotalFaces +=
+                                totalFaces;
+                                
+                            controlledFiriDomainFaces +=
+                                domainFaces;
+                                
+                            controlledFiriObstacleFaces +=
+                                obstacleFaces;
+                                
+                            controlledFiriTotalLocalObstacles +=
+                                controlledFiriLocalObstacleCounts[
+                                    corridorId];
+                                
+                            controlledFiriUnresolvedConstraints +=
+                                firiDiagnostics
+                                    .unresolved_constraint_count;
+                                
+                                
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_FIRI_GEOMETRY "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " generated=1"
+                            
+                                << " seed_valid="
+                                << seedMetric.valid
+                            
+                                << " seed_radius_m="
+                                << seedMetric.radius_m
+                            
+                                << " junction_overlap_valid="
+                                << overlapMetric.valid
+                            
+                                << " junction_overlap_radius_m="
+                                << overlapMetric.radius_m
+                            
+                                << " directional_valid="
+                                << directionalValid
+                            
+                                << " reference_margin_m="
+                                << hardWidth
+                                       .min_reference_margin_m
+                            
+                                << " hard_pos_m="
+                                << hardWidth.positive_m
+                            
+                                << " hard_neg_m="
+                                << hardWidth.negative_m
+                            
+                                << " hard_width_m="
+                                << hardWidth.width_m
+                            
+                                << " mid_pos_m="
+                                << middleWidth.positive_m
+                            
+                                << " mid_neg_m="
+                                << middleWidth.negative_m
+                            
+                                << " mid_width_m="
+                                << middleWidth.width_m
+                            
+                                << " easy_pos_m="
+                                << easyWidth.positive_m
+                            
+                                << " easy_neg_m="
+                                << easyWidth.negative_m
+                            
+                                << " easy_width_m="
+                                << easyWidth.width_m
+                            
+                                << " volume_valid="
+                                << volumeMetric.valid
+                            
+                                << " volume_m3="
+                                << volumeMetric.volume_m3
+                            
+                                << " volume_vertices="
+                                << volumeMetric.vertex_count
+                            
+                                << " volume_triangles="
+                                << volumeMetric.triangle_count
+                            
+                                << " vertex_violation_m="
+                                << volumeMetric
+                                       .max_vertex_violation_m
+                            
+                                << " total_faces="
+                                << totalFaces
+                            
+                                << " domain_faces="
+                                << domainFaces
+                            
+                                << " obstacle_faces="
+                                << obstacleFaces
+                            
+                                << " local_obstacles="
+                                << controlledFiriLocalObstacleCounts[
+                                       corridorId]
+                                
+                                << " unresolved_constraints="
+                                << firiDiagnostics
+                                       .unresolved_constraint_count
+                                
+                                << " unresolved_boundary="
+                                << firiDiagnostics
+                                       .unresolved_boundary_count
+                                
+                                << " unresolved_obstacle="
+                                << firiDiagnostics
+                                       .unresolved_obstacle_count
+                                
+                                << " mean_metric_damage="
+                                << firiDiagnostics
+                                       .mean_metric_damage
+                                
+                                << " min_metric_damage="
+                                << firiDiagnostics
+                                       .min_metric_damage
+                                
+                                << " max_metric_damage="
+                                << firiDiagnostics
+                                       .max_metric_damage
+                                
+                                << " generation_ms="
+                                << controlledFiriSegmentMs[
+                                       corridorId]);
+                        }
+                    }
+                    
+                    
+                    // ========================================================
+                    // Aggregate Controlled-FIRI regression summary.
+                    // ========================================================
+                    if (controlledFiriSeedValidCount == 0)
+                    {
+                        controlledFiriMinSeedRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledFiriOverlapValidCount == 0)
+                    {
+                        controlledFiriMinOverlapRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledFiriDirectionalValidCount == 0)
+                    {
+                        controlledFiriMinReferenceMarginM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledFiriVolumeValidCount == 0)
+                    {
+                        controlledFiriMaxVertexViolationM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    const double controlledFiriMeanHardWidthM =
+                        controlledFiriDirectionalValidCount > 0
+                            ? controlledFiriHardWidthSumM /
+                                  static_cast<double>(
+                                      controlledFiriDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledFiriMeanMiddleWidthM =
+                        controlledFiriDirectionalValidCount > 0
+                            ? controlledFiriMiddleWidthSumM /
+                                  static_cast<double>(
+                                      controlledFiriDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledFiriMeanEasyWidthM =
+                        controlledFiriDirectionalValidCount > 0
+                            ? controlledFiriEasyWidthSumM /
+                                  static_cast<double>(
+                                      controlledFiriDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledFiriMeanVolumeM3 =
+                        controlledFiriVolumeValidCount > 0
+                            ? controlledFiriVolumeSumM3 /
+                                  static_cast<double>(
+                                      controlledFiriVolumeValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_FIRI_SUMMARY "
+                    
+                        << "success="
+                        << controlledFiriSuccess
+                    
+                        << " mapping_valid="
+                        << controlledFiriMappingValid
+                    
+                        << " route_segments="
+                        << controlledSegmentCount
+                    
+                        << " corridors="
+                        << controlledFiriHPolys.size()
+                    
+                        << " seed_valid="
+                        << controlledFiriSeedValidCount
+                    
+                        << " seed_total="
+                        << controlledSegmentCount
+                    
+                        << " min_seed_m="
+                        << controlledFiriMinSeedRadiusM
+                    
+                        << " overlap_valid="
+                        << controlledFiriOverlapValidCount
+                    
+                        << " overlap_total="
+                        << std::max(
+                               0,
+                               controlledSegmentCount - 1)
+                        
+                        << " min_overlap_m="
+                        << controlledFiriMinOverlapRadiusM
+                        
+                        << " directional_valid="
+                        << controlledFiriDirectionalValidCount
+                        
+                        << " directional_total="
+                        << controlledSegmentCount
+                        
+                        << " min_reference_margin_m="
+                        << controlledFiriMinReferenceMarginM
+                        
+                        << " mean_hard_width_m="
+                        << controlledFiriMeanHardWidthM
+                        
+                        << " mean_mid_width_m="
+                        << controlledFiriMeanMiddleWidthM
+                        
+                        << " mean_easy_width_m="
+                        << controlledFiriMeanEasyWidthM
+                        
+                        << " volume_valid="
+                        << controlledFiriVolumeValidCount
+                        
+                        << " volume_total="
+                        << controlledSegmentCount
+                        
+                        << " mean_volume_m3="
+                        << controlledFiriMeanVolumeM3
+                        
+                        << " max_vertex_violation_m="
+                        << controlledFiriMaxVertexViolationM
+                        
+                        << " total_faces="
+                        << controlledFiriTotalFaces
+                        
+                        << " domain_faces="
+                        << controlledFiriDomainFaces
+                        
+                        << " obstacle_faces="
+                        << controlledFiriObstacleFaces
+                        
+                        << " total_local_obstacles="
+                        << controlledFiriTotalLocalObstacles
+                        
+                        << " unresolved_constraints="
+                        << controlledFiriUnresolvedConstraints
+                        
+                        << " range_m="
+                        << controlledFiriRangeM
+                        
+                        << " iterations="
+                        << controlledFiriIterations
+                        
+                        << " generation_ms="
+                        << controlledFiriGenerationMs);
 
                     bool benchmarkCorridorLogSuccess =
                         true;
