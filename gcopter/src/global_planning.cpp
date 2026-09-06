@@ -10,6 +10,7 @@
 #include "gcopter/experiment_logger.hpp"
 #include "gcopter/route_replay.hpp"
 #include "gcopter/benchmark_logger.hpp"
+#include "gcopter/trajectory_metrics.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
@@ -3211,6 +3212,96 @@ public:
                                 .final_cost -
                             finalJkin));
                         
+                    // ========================================================
+                    // Unified final-trajectory evaluator.
+                    //
+                    // This evaluator is method-independent and will later be
+                    // reused unchanged by FIRI / Liu / Proposed.
+                    // ========================================================
+                    const auto finalTrajectoryEvaluation =
+                        gcopter_benchmark::
+                            evaluateFinalTrajectoryMetrics(
+                                hardProjectedTrajectory,
+                                hardProjectionResult
+                                    .final_energy,
+                                config.weightT,
+                                config.vehicleMass,
+                                config.gravAcc,
+                                config.horizDrag,
+                                config.vertDrag,
+                                config.parasDrag,
+                                config.speedEps,
+                                1.0e-3);
+                            
+                    ROS_INFO_STREAM(
+                        "TF_FINAL_TRAJ_EVALUATOR "
+                        << "source=exact_hard_projection"
+                    
+                        << " valid="
+                        << finalTrajectoryEvaluation
+                               .valid
+                    
+                        << " pieces="
+                        << finalTrajectoryEvaluation
+                               .piece_count
+                    
+                        << " metric_step_s="
+                        << finalTrajectoryEvaluation
+                               .max_sample_step_s
+                    
+                        << " flatness_samples="
+                        << finalTrajectoryEvaluation
+                               .flatness_sample_count
+                    
+                        << " duration_s="
+                        << finalTrajectoryEvaluation
+                               .duration_s
+                    
+                        << " length_m="
+                        << finalTrajectoryEvaluation
+                               .length_m
+                    
+                        << " smoothness_energy="
+                        << finalTrajectoryEvaluation
+                               .smoothness_energy
+                    
+                        << " time_cost="
+                        << finalTrajectoryEvaluation
+                               .time_cost
+                    
+                        << " j_kin="
+                        << finalTrajectoryEvaluation
+                               .j_kin
+                    
+                        << " j_kin_delta="
+                        << (finalTrajectoryEvaluation
+                                .j_kin -
+                            finalJkin)
+                        
+                        << " max_vel_mps="
+                        << finalTrajectoryEvaluation
+                               .max_velocity_mps
+                        
+                        << " max_acc_mps2="
+                        << finalTrajectoryEvaluation
+                               .max_acceleration_mps2
+                        
+                        << " max_body_rate_radps="
+                        << finalTrajectoryEvaluation
+                               .max_body_rate_radps
+                        
+                        << " max_tilt_rad="
+                        << finalTrajectoryEvaluation
+                               .max_tilt_rad
+                        
+                        << " min_thrust_N="
+                        << finalTrajectoryEvaluation
+                               .min_thrust_n
+                        
+                        << " max_thrust_N="
+                        << finalTrajectoryEvaluation
+                               .max_thrust_n);
+
                     visualizer.visualizePolytope(
                         activeGuideHPolys);
 
