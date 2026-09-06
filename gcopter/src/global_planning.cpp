@@ -7735,9 +7735,626 @@ public:
                         << " adapter_total_ms="
                         << controlledRilsBuild.total_ms);
 
-                    bool benchmarkCorridorLogSuccess =
-                        true;
+                    // ========================================================
+                    // D1b-1: Common E1 geometry evaluation for Controlled RILS.
+                    //
+                    // Construction was frozen in D1b-0.
+                    //
+                    // This stage measures the resulting RILS H-polytopes using
+                    // exactly the same common kernels already used for:
+                    //   - Controlled CSGN
+                    //   - Controlled Identity
+                    //   - Controlled FIRI
+                    //
+                    // Directional geometry:
+                    //
+                    //   q_i = midpoint of ORIGINAL route segment i
+                    //
+                    // and directions are the SAME Direct-MINCO CSGN
+                    // eigendirections:
+                    //
+                    //   eig0 = hard / low-utility
+                    //   eig1 = middle
+                    //   eig2 = easy / high-utility
+                    //
+                    // No RILS construction parameter is changed here.
+                    // ========================================================
+                                        
+                    int controlledRilsSeedValidCount =
+                        0;
+                                        
+                    int controlledRilsOverlapValidCount =
+                        0;
+                                        
+                    int controlledRilsDirectionalValidCount =
+                        0;
+                                        
+                    int controlledRilsVolumeValidCount =
+                        0;
+                                        
+                                        
+                    double controlledRilsMinSeedRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                                        
+                    double controlledRilsMinOverlapRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+                                        
+                    double controlledRilsMinReferenceMarginM =
+                        std::numeric_limits<double>::
+                            infinity();
+                                        
+                    double controlledRilsHardWidthSumM =
+                        0.0;
+                                        
+                    double controlledRilsMiddleWidthSumM =
+                        0.0;
+                                        
+                    double controlledRilsEasyWidthSumM =
+                        0.0;
+                                        
+                    double controlledRilsVolumeSumM3 =
+                        0.0;
+                                        
+                    double controlledRilsMaxVertexViolationM =
+                        -std::numeric_limits<double>::
+                            infinity();
+                                        
+                                        
+                    const bool controlledRilsGeometryMappingValid =
+                        controlledRilsBuild.success &&
+                        controlledRilsBuild.mapping_valid &&
+                        static_cast<int>(
+                            controlledRilsBuild.hpolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledRilsBuild.infos.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    if (controlledRilsGeometryMappingValid)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            const Eigen::MatrixX4d &rilsPoly =
+                                controlledRilsBuild.hpolys[
+                                    corridorId];
+                                
+                            const auto &rilsInfo =
+                                controlledRilsBuild.infos[
+                                    corridorId];
+                                
+                                
+                            // ====================================================
+                            // Fixed original route segment.
+                            //
+                            // This seedA/seedB exists ONLY inside the D1b-1
+                            // Controlled-RILS geometry block.
+                            // ====================================================
+                            const Eigen::Vector3d &seedA =
+                                route[corridorId];
+                                
+                            const Eigen::Vector3d &seedB =
+                                route[corridorId + 1];
+                                
+                                
+                            const Eigen::Vector3d
+                                directionalReferencePoint =
+                                    0.5 *
+                                    (
+                                        seedA +
+                                        seedB);
+                                    
+                                    
+                            // ====================================================
+                            // C2:
+                            // exact segment seed radius inside this H-polytope.
+                            // ====================================================
+                            const auto seedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        rilsPoly,
+                                        seedA,
+                                        seedB);
+                                    
+                                    
+                            if (seedMetric.valid)
+                            {
+                                ++controlledRilsSeedValidCount;
+                            
+                                controlledRilsMinSeedRadiusM =
+                                    std::min(
+                                        controlledRilsMinSeedRadiusM,
+                                        seedMetric.radius_m);
+                            }
+                        
+                        
+                            // ====================================================
+                            // C2:
+                            // fixed junction overlap radius with next corridor.
+                            // ====================================================
+                            gcopter_benchmark::
+                                CorridorOverlapMetric
+                                    overlapMetric;
+                        
+                        
+                            if (corridorId + 1 <
+                                controlledSegmentCount)
+                            {
+                                overlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            controlledRilsBuild.hpolys[
+                                                corridorId],
+                                            controlledRilsBuild.hpolys[
+                                                corridorId + 1],
+                                            route[corridorId + 1]);
                                             
+                                            
+                                if (overlapMetric.valid)
+                                {
+                                    ++controlledRilsOverlapValidCount;
+                                
+                                    controlledRilsMinOverlapRadiusM =
+                                        std::min(
+                                            controlledRilsMinOverlapRadiusM,
+                                            overlapMetric.radius_m);
+                                }
+                            }
+                        
+                        
+                            // ====================================================
+                            // Secondary volume metric.
+                            //
+                            // This is measured on the final stored H-polytope:
+                            //
+                            //   DecompUtil RILS planes
+                            //       +
+                            //   finite GCOPTER map-domain planes.
+                            // ====================================================
+                            const auto volumeMetric =
+                                gcopter_benchmark::
+                                    evaluateHPolytopeVolume(
+                                        rilsPoly);
+                                    
+                                    
+                            if (volumeMetric.valid)
+                            {
+                                ++controlledRilsVolumeValidCount;
+                            
+                                controlledRilsVolumeSumM3 +=
+                                    volumeMetric.volume_m3;
+                            
+                                controlledRilsMaxVertexViolationM =
+                                    std::max(
+                                        controlledRilsMaxVertexViolationM,
+                                        volumeMetric
+                                            .max_vertex_violation_m);
+                            }
+                        
+                        
+                            // ====================================================
+                            // Common cross-method point directional width.
+                            //
+                            // IMPORTANT:
+                            // RILS' own ellipsoid axes are NOT used here.
+                            //
+                            // The measurement directions come from the SAME
+                            // Direct-MINCO CSGN utility used by the other methods.
+                            // ====================================================
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    hardWidth;
+                        
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    middleWidth;
+                        
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    easyWidth;
+                        
+                        
+                            bool directionalValid =
+                                false;
+                        
+                        
+                            if (corridorId <
+                                    static_cast<int>(
+                                        guideSegmentMetrics.size()) &&
+                                guideSegmentMetrics[
+                                    corridorId]
+                                    .valid)
+                            {
+                                Eigen::Matrix3d utility =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .utility;
+                                    
+                                    
+                                utility =
+                                    0.5 *
+                                    (
+                                        utility +
+                                        utility.transpose());
+                                    
+                                    
+                                Eigen::SelfAdjointEigenSolver<
+                                    Eigen::Matrix3d>
+                                    utilitySolver(
+                                        utility);
+                                    
+                                    
+                                if (utilitySolver.info() ==
+                                        Eigen::Success &&
+                                    utilitySolver
+                                            .eigenvalues()
+                                            .minCoeff() >
+                                        0.0)
+                                {
+                                    Eigen::Matrix3d directions =
+                                        utilitySolver
+                                            .eigenvectors();
+                                
+                                
+                                    // Same deterministic sign convention used by
+                                    // Controlled CSGN / Identity / FIRI.
+                                    for (int directionId = 0;
+                                         directionId < 3;
+                                         ++directionId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            directions.col(
+                                                directionId);
+                                            
+                                        Eigen::Index pivotId =
+                                            0;
+                                            
+                                        direction
+                                            .cwiseAbs()
+                                            .maxCoeff(
+                                                &pivotId);
+                                            
+                                            
+                                        if (direction(
+                                                pivotId) <
+                                            0.0)
+                                        {
+                                            direction =
+                                                -direction;
+                                        }
+                                    
+                                    
+                                        directions.col(
+                                            directionId) =
+                                            direction;
+                                    }
+                                
+                                
+                                    hardWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                rilsPoly,
+                                                directionalReferencePoint,
+                                                directions.col(0));
+                                            
+                                            
+                                    middleWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                rilsPoly,
+                                                directionalReferencePoint,
+                                                directions.col(1));
+                                            
+                                            
+                                    easyWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                rilsPoly,
+                                                directionalReferencePoint,
+                                                directions.col(2));
+                                            
+                                            
+                                    directionalValid =
+                                        hardWidth.valid &&
+                                        middleWidth.valid &&
+                                        easyWidth.valid &&
+                                            
+                                        hardWidth.reference_inside &&
+                                        middleWidth.reference_inside &&
+                                        easyWidth.reference_inside;
+                                            
+                                            
+                                    if (directionalValid)
+                                    {
+                                        ++controlledRilsDirectionalValidCount;
+                                    
+                                        controlledRilsHardWidthSumM +=
+                                            hardWidth.width_m;
+                                    
+                                        controlledRilsMiddleWidthSumM +=
+                                            middleWidth.width_m;
+                                    
+                                        controlledRilsEasyWidthSumM +=
+                                            easyWidth.width_m;
+                                    
+                                    
+                                        const double referenceMarginM =
+                                            std::min(
+                                                hardWidth
+                                                    .min_reference_margin_m,
+                                                std::min(
+                                                    middleWidth
+                                                        .min_reference_margin_m,
+                                                    easyWidth
+                                                        .min_reference_margin_m));
+                                                
+                                                
+                                        controlledRilsMinReferenceMarginM =
+                                            std::min(
+                                                controlledRilsMinReferenceMarginM,
+                                                referenceMarginM);
+                                    }
+                                }
+                            }
+                        
+                        
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_RILS_GEOMETRY "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " generated="
+                                << rilsInfo.valid
+                            
+                                << " seed_valid="
+                                << seedMetric.valid
+                            
+                                << " seed_radius_m="
+                                << seedMetric.radius_m
+                            
+                                << " junction_overlap_valid="
+                                << overlapMetric.valid
+                            
+                                << " junction_overlap_radius_m="
+                                << overlapMetric.radius_m
+                            
+                                << " directional_valid="
+                                << directionalValid
+                            
+                                << " reference_margin_m="
+                                << hardWidth
+                                       .min_reference_margin_m
+                            
+                                << " hard_pos_m="
+                                << hardWidth.positive_m
+                            
+                                << " hard_neg_m="
+                                << hardWidth.negative_m
+                            
+                                << " hard_width_m="
+                                << hardWidth.width_m
+                            
+                                << " mid_pos_m="
+                                << middleWidth.positive_m
+                            
+                                << " mid_neg_m="
+                                << middleWidth.negative_m
+                            
+                                << " mid_width_m="
+                                << middleWidth.width_m
+                            
+                                << " easy_pos_m="
+                                << easyWidth.positive_m
+                            
+                                << " easy_neg_m="
+                                << easyWidth.negative_m
+                            
+                                << " easy_width_m="
+                                << easyWidth.width_m
+                            
+                                << " volume_valid="
+                                << volumeMetric.valid
+                            
+                                << " volume_m3="
+                                << volumeMetric.volume_m3
+                            
+                                << " volume_vertices="
+                                << volumeMetric.vertex_count
+                            
+                                << " volume_triangles="
+                                << volumeMetric.triangle_count
+                            
+                                << " vertex_violation_m="
+                                << volumeMetric
+                                       .max_vertex_violation_m
+                            
+                                << " generator_faces="
+                                << rilsInfo.generator_faces
+                            
+                                << " obstacle_faces="
+                                << rilsInfo.obstacle_faces
+                            
+                                << " local_domain_faces="
+                                << rilsInfo.local_domain_faces
+                            
+                                << " map_domain_faces="
+                                << rilsInfo.map_domain_faces
+                            
+                                << " final_rows="
+                                << rilsInfo.final_rows
+                            
+                                << " local_obstacles="
+                                << rilsInfo.local_obstacle_count
+                            
+                                << " dilate_ms="
+                                << rilsInfo.dilate_ms);
+                        }
+                    }
+                    
+                    
+                    // ========================================================
+                    // Aggregate Controlled-RILS common geometry summary.
+                    // ========================================================
+                    if (controlledRilsSeedValidCount == 0)
+                    {
+                        controlledRilsMinSeedRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledRilsOverlapValidCount == 0)
+                    {
+                        controlledRilsMinOverlapRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledRilsDirectionalValidCount == 0)
+                    {
+                        controlledRilsMinReferenceMarginM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    if (controlledRilsVolumeValidCount == 0)
+                    {
+                        controlledRilsMaxVertexViolationM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    const double controlledRilsMeanHardWidthM =
+                        controlledRilsDirectionalValidCount > 0
+                            ? controlledRilsHardWidthSumM /
+                                  static_cast<double>(
+                                      controlledRilsDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledRilsMeanMiddleWidthM =
+                        controlledRilsDirectionalValidCount > 0
+                            ? controlledRilsMiddleWidthSumM /
+                                  static_cast<double>(
+                                      controlledRilsDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledRilsMeanEasyWidthM =
+                        controlledRilsDirectionalValidCount > 0
+                            ? controlledRilsEasyWidthSumM /
+                                  static_cast<double>(
+                                      controlledRilsDirectionalValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double controlledRilsMeanVolumeM3 =
+                        controlledRilsVolumeValidCount > 0
+                            ? controlledRilsVolumeSumM3 /
+                                  static_cast<double>(
+                                      controlledRilsVolumeValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_RILS_GEOMETRY_SUMMARY "
+                    
+                        << "success="
+                        << controlledRilsBuild.success
+                    
+                        << " mapping_valid="
+                        << controlledRilsGeometryMappingValid
+                    
+                        << " route_segments="
+                        << controlledSegmentCount
+                    
+                        << " corridors="
+                        << controlledRilsBuild.hpolys.size()
+                    
+                        << " seed_valid="
+                        << controlledRilsSeedValidCount
+                    
+                        << " seed_total="
+                        << controlledSegmentCount
+                    
+                        << " min_seed_m="
+                        << controlledRilsMinSeedRadiusM
+                    
+                        << " overlap_valid="
+                        << controlledRilsOverlapValidCount
+                    
+                        << " overlap_total="
+                        << std::max(
+                               0,
+                               controlledSegmentCount - 1)
+                        
+                        << " min_overlap_m="
+                        << controlledRilsMinOverlapRadiusM
+                        
+                        << " directional_valid="
+                        << controlledRilsDirectionalValidCount
+                        
+                        << " directional_total="
+                        << controlledSegmentCount
+                        
+                        << " min_reference_margin_m="
+                        << controlledRilsMinReferenceMarginM
+                        
+                        << " mean_hard_width_m="
+                        << controlledRilsMeanHardWidthM
+                        
+                        << " mean_mid_width_m="
+                        << controlledRilsMeanMiddleWidthM
+                        
+                        << " mean_easy_width_m="
+                        << controlledRilsMeanEasyWidthM
+                        
+                        << " volume_valid="
+                        << controlledRilsVolumeValidCount
+                        
+                        << " volume_total="
+                        << controlledSegmentCount
+                        
+                        << " mean_volume_m3="
+                        << controlledRilsMeanVolumeM3
+                        
+                        << " max_vertex_violation_m="
+                        << controlledRilsMaxVertexViolationM
+                        
+                        << " generator_faces="
+                        << controlledRilsGeneratorFaces
+                        
+                        << " obstacle_faces="
+                        << controlledRilsObstacleFaces
+                        
+                        << " local_domain_faces="
+                        << controlledRilsLocalDomainFaces
+                        
+                        << " map_domain_faces="
+                        << controlledRilsMapDomainFaces
+                        
+                        << " final_rows="
+                        << controlledRilsFinalRows
+                        
+                        << " range_m="
+                        << controlledRilsBuild.range_m);
+
+                    bool benchmarkCorridorLogSuccess =
+                        true;  
+
                     if (benchmarkRunReady)
                     {
                         benchmarkCorridorLogSuccess =
