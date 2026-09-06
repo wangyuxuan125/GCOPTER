@@ -3714,6 +3714,22 @@ public:
                     int validOverlapMetricCount =
                         0;
 
+                    int validDirectionalReserveCount =
+                        0;
+
+                    double sumHardSymmetricReserveM =
+                        0.0;
+
+                    double sumEasySymmetricReserveM =
+                        0.0;
+
+                    double minDirectionalReserveM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double maxDirectionalEigenvalueDelta =
+                        0.0;
+
                     bool protectedSeedSatisfied =
                         corridorGeometryMappingValid;
 
@@ -3853,6 +3869,244 @@ public:
                                           utilityMin
                                     : std::numeric_limits<double>::
                                           quiet_NaN();
+
+                            // ========================================================
+                            // Final-polytope CSGN directional deformation reserve.
+                            //
+                            // IMPORTANT:
+                            // construction extra radii are only domain allocations.
+                            // The values below are measured from the FINAL
+                            // obstacle-clipped H-polytope.
+                            // ========================================================
+                            bool directionalReserveMetricValid =
+                                false;
+
+                            double directionalEigenvalueDelta =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    hardDirectionReserve;
+
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    middleDirectionReserve;
+
+                            gcopter_benchmark::
+                                CorridorDirectionalReserveMetric
+                                    easyDirectionReserve;
+
+                            double hardReserveRetention =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            double middleReserveRetention =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            double easyReserveRetention =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            double easyToHardSymmetricRatio =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+
+                            if (corridorId <
+                                    static_cast<int>(
+                                        guideSegmentMetrics.size()) &&
+                                guideSegmentMetrics[
+                                    corridorId]
+                                    .valid &&
+                                corridorInfo.metric_valid &&
+                                corridorInfo.anisotropic_domain)
+                            {
+                                Eigen::Matrix3d utility =
+                                    guideSegmentMetrics[
+                                        corridorId]
+                                        .utility;
+                                    
+                                utility =
+                                    0.5 *
+                                    (utility +
+                                     utility.transpose());
+                                    
+                                Eigen::SelfAdjointEigenSolver<
+                                    Eigen::Matrix3d>
+                                    utilitySolver(
+                                        utility);
+                                    
+                                if (utilitySolver.info() ==
+                                        Eigen::Success &&
+                                    utilitySolver.eigenvalues()
+                                            .minCoeff() >
+                                        0.0)
+                                {
+                                    const Eigen::Vector3d
+                                        measuredEigenvalues =
+                                            utilitySolver
+                                                .eigenvalues();
+                                
+                                    directionalEigenvalueDelta =
+                                        (
+                                            measuredEigenvalues -
+                                            corridorInfo
+                                                .utility_eigenvalues)
+                                            .cwiseAbs()
+                                            .maxCoeff();
+                                        
+                                    Eigen::Matrix3d directions =
+                                        utilitySolver
+                                            .eigenvectors();
+                                        
+                                    // Eigenvector sign is mathematically arbitrary.
+                                    // Canonicalize it so positive/negative reserve logs do
+                                    // not randomly swap sign across platforms/runs.
+                                    for (int directionId = 0;
+                                         directionId < 3;
+                                         ++directionId)
+                                    {
+                                        Eigen::Vector3d direction =
+                                            directions.col(
+                                                directionId);
+                                            
+                                        Eigen::Index pivotId =
+                                            0;
+                                            
+                                        direction
+                                            .cwiseAbs()
+                                            .maxCoeff(
+                                                &pivotId);
+                                            
+                                        if (direction(
+                                                pivotId) <
+                                            0.0)
+                                        {
+                                            direction =
+                                                -direction;
+                                        }
+                                    
+                                        directions.col(
+                                            directionId) =
+                                            direction;
+                                    }
+                                
+                                    hardDirectionReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                activeGuideHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(0));
+                                                
+                                    middleDirectionReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                activeGuideHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(1));
+                                                
+                                    easyDirectionReserve =
+                                        gcopter_benchmark::
+                                            evaluateProtectedSegmentDirectionalReserve(
+                                                activeGuideHPolys[
+                                                    corridorId],
+                                                seedA,
+                                                seedB,
+                                                protectedRadiusM,
+                                                directions.col(2));
+                                                
+                                    directionalReserveMetricValid =
+                                        hardDirectionReserve.valid &&
+                                        middleDirectionReserve.valid &&
+                                        easyDirectionReserve.valid &&
+                                        std::isfinite(
+                                            directionalEigenvalueDelta);
+                                        
+                                    if (directionalReserveMetricValid)
+                                    {
+                                        const double hardConstruction =
+                                            corridorInfo
+                                                .extra_radii(0);
+                                    
+                                        const double middleConstruction =
+                                            corridorInfo
+                                                .extra_radii(1);
+                                    
+                                        const double easyConstruction =
+                                            corridorInfo
+                                                .extra_radii(2);
+                                    
+                                        if (hardConstruction > 0.0)
+                                        {
+                                            hardReserveRetention =
+                                                hardDirectionReserve
+                                                    .symmetric_m /
+                                                hardConstruction;
+                                        }
+                                    
+                                        if (middleConstruction > 0.0)
+                                        {
+                                            middleReserveRetention =
+                                                middleDirectionReserve
+                                                    .symmetric_m /
+                                                middleConstruction;
+                                        }
+                                    
+                                        if (easyConstruction > 0.0)
+                                        {
+                                            easyReserveRetention =
+                                                easyDirectionReserve
+                                                    .symmetric_m /
+                                                easyConstruction;
+                                        }
+                                    
+                                        if (hardDirectionReserve
+                                                .symmetric_m >
+                                            1.0e-12)
+                                        {
+                                            easyToHardSymmetricRatio =
+                                                easyDirectionReserve
+                                                    .symmetric_m /
+                                                hardDirectionReserve
+                                                    .symmetric_m;
+                                        }
+
+                                        ++validDirectionalReserveCount;
+
+                                        sumHardSymmetricReserveM +=
+                                            hardDirectionReserve
+                                                .symmetric_m;
+
+                                        sumEasySymmetricReserveM +=
+                                            easyDirectionReserve
+                                                .symmetric_m;
+
+                                        minDirectionalReserveM =
+                                            std::min(
+                                                minDirectionalReserveM,
+                                                std::min(
+                                                    hardDirectionReserve
+                                                        .symmetric_m,
+                                                    std::min(
+                                                        middleDirectionReserve
+                                                            .symmetric_m,
+                                                        easyDirectionReserve
+                                                            .symmetric_m)));
+                                                    
+                                        maxDirectionalEigenvalueDelta =
+                                            std::max(
+                                                maxDirectionalEigenvalueDelta,
+                                                directionalEigenvalueDelta);
+                                    }
+                                }
+                            }
 
                             gcopter_benchmark::
                                 BenchmarkCorridorRecord
@@ -4020,6 +4274,99 @@ public:
                                 corridorRecord);
 
                             ROS_INFO_STREAM(
+                                "TF_CORRIDOR_DIRECTIONAL_RESERVE "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << directionalReserveMetricValid
+                            
+                                << " eigenvalue_delta="
+                                << directionalEigenvalueDelta
+                            
+                                // ----------------------------------------------------
+                                // Hard / low-utility direction
+                                // ----------------------------------------------------
+                                << " hard_pos_m="
+                                << hardDirectionReserve
+                                       .positive_m
+                            
+                                << " hard_neg_m="
+                                << hardDirectionReserve
+                                       .negative_m
+                            
+                                << " hard_sym_m="
+                                << hardDirectionReserve
+                                       .symmetric_m
+                            
+                                << " hard_span_m="
+                                << hardDirectionReserve
+                                       .span_m
+                            
+                                << " hard_construction_m="
+                                << corridorInfo
+                                       .extra_radii(0)
+                            
+                                << " hard_retention="
+                                << hardReserveRetention
+                            
+                                // ----------------------------------------------------
+                                // Middle direction
+                                // ----------------------------------------------------
+                                << " mid_pos_m="
+                                << middleDirectionReserve
+                                       .positive_m
+                            
+                                << " mid_neg_m="
+                                << middleDirectionReserve
+                                       .negative_m
+                            
+                                << " mid_sym_m="
+                                << middleDirectionReserve
+                                       .symmetric_m
+                            
+                                << " mid_span_m="
+                                << middleDirectionReserve
+                                       .span_m
+                            
+                                << " mid_construction_m="
+                                << corridorInfo
+                                       .extra_radii(1)
+                            
+                                << " mid_retention="
+                                << middleReserveRetention
+                            
+                                // ----------------------------------------------------
+                                // Easy / high-utility direction
+                                // ----------------------------------------------------
+                                << " easy_pos_m="
+                                << easyDirectionReserve
+                                       .positive_m
+                            
+                                << " easy_neg_m="
+                                << easyDirectionReserve
+                                       .negative_m
+                            
+                                << " easy_sym_m="
+                                << easyDirectionReserve
+                                       .symmetric_m
+                            
+                                << " easy_span_m="
+                                << easyDirectionReserve
+                                       .span_m
+                            
+                                << " easy_construction_m="
+                                << corridorInfo
+                                       .extra_radii(2)
+                            
+                                << " easy_retention="
+                                << easyReserveRetention
+                            
+                                << " easy_to_hard_sym_ratio="
+                                << easyToHardSymmetricRatio);
+
+                            ROS_INFO_STREAM(
                                 "TF_CORRIDOR_GEOMETRY "
                                 << "corridor_id="
                                 << corridorId
@@ -4169,9 +4516,68 @@ public:
                         << " protected_overlap_satisfied="
                         << protectedOverlapSatisfied);
 
+                    const double meanHardSymmetricReserveM =
+                        validDirectionalReserveCount > 0
+                            ? sumHardSymmetricReserveM /
+                                  static_cast<double>(
+                                      validDirectionalReserveCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanEasySymmetricReserveM =
+                        validDirectionalReserveCount > 0
+                            ? sumEasySymmetricReserveM /
+                                  static_cast<double>(
+                                      validDirectionalReserveCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    if (validDirectionalReserveCount == 0)
+                    {
+                        minDirectionalReserveM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    
+                        maxDirectionalEigenvalueDelta =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    ROS_INFO_STREAM(
+                        "TF_CORRIDOR_DIRECTIONAL_SUMMARY "
+                    
+                        << "valid="
+                        << validDirectionalReserveCount
+                    
+                        << " total="
+                        << controlledSegmentCount
+                    
+                        << " mean_hard_sym_m="
+                        << meanHardSymmetricReserveM
+                    
+                        << " mean_easy_sym_m="
+                        << meanEasySymmetricReserveM
+                    
+                        << " mean_easy_to_hard_ratio="
+                        << (
+                            std::isfinite(
+                                meanHardSymmetricReserveM) &&
+                            meanHardSymmetricReserveM >
+                                1.0e-12
+                                ? meanEasySymmetricReserveM /
+                                      meanHardSymmetricReserveM
+                                : std::numeric_limits<double>::
+                                      quiet_NaN())
+                            
+                        << " min_any_sym_m="
+                        << minDirectionalReserveM
+                            
+                        << " max_eigenvalue_delta="
+                        << maxDirectionalEigenvalueDelta);
+
                     bool benchmarkCorridorLogSuccess =
                         true;
-                                            
+
                     if (benchmarkRunReady)
                     {
                         benchmarkCorridorLogSuccess =
@@ -4186,7 +4592,7 @@ public:
                                 "benchmark_corridors_v1.csv.");
                         }
                     }
-                    
+
                     ROS_INFO_STREAM(
                         "TF_BENCHMARK_CORRIDORS "
                         << "rows="
