@@ -5143,6 +5143,41 @@ public:
                     int preservationValidCount =
                         0;
 
+                    // ========================================================
+                    // COMMON cross-method point-directional width.
+                    //
+                    // Unlike the protected-capsule reserve above, this uses
+                    // the original segment midpoint and is directly comparable
+                    // with Controlled FIRI.
+                    // ========================================================
+                    int pairedPointWidthValidCount =
+                        0;
+
+                    double sumCsgnHardWidthM =
+                        0.0;
+
+                    double sumIdentityHardWidthM =
+                        0.0;
+
+                    double sumCsgnMiddleWidthM =
+                        0.0;
+
+                    double sumIdentityMiddleWidthM =
+                        0.0;
+
+                    double sumCsgnEasyWidthM =
+                        0.0;
+
+                    double sumIdentityEasyWidthM =
+                        0.0;
+
+                    double minCsgnPointReferenceMarginM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double minIdentityPointReferenceMarginM =
+                        std::numeric_limits<double>::
+                            infinity();
 
                     if (controlledPairMappingValid)
                     {
@@ -5186,6 +5221,33 @@ public:
                                 CorridorDirectionalReserveMetric
                                     identityEasyReserve;
                         
+                            bool pairPointWidthValid =
+                                false;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    csgnHardWidth;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    csgnMiddleWidth;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    csgnEasyWidth;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    identityHardWidth;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    identityMiddleWidth;
+
+                            gcopter_benchmark::
+                                CorridorPointDirectionalWidthMetric
+                                    identityEasyWidth;
+
                             double hardPreservation =
                                 std::numeric_limits<double>::
                                     quiet_NaN();
@@ -5275,9 +5337,17 @@ public:
                                 
                                     const Eigen::Vector3d &seedA =
                                         route[corridorId];
-                                
+
                                     const Eigen::Vector3d &seedB =
                                         route[corridorId + 1];
+
+                                    // COMMON reference point for cross-method E1 geometry.
+                                    const Eigen::Vector3d
+                                        directionalReferencePoint =
+                                            0.5 *
+                                            (
+                                                seedA +
+                                                seedB);
                                 
                                 
                                     csgnHardReserve =
@@ -5341,7 +5411,140 @@ public:
                                                 protectedRadiusM,
                                                 directions.col(2));
                                                 
+                                    // ====================================================
+                                    // COMMON point-directional width.
+                                    //
+                                    // Both Controlled CSGN and Controlled Identity are
+                                    // measured through exactly the SAME segment midpoint
+                                    // and the SAME CSGN reference eigendirections.
+                                    //
+                                    // These values are therefore directly comparable with
+                                    // TF_CONTROLLED_FIRI_GEOMETRY.
+                                    // ====================================================
+
+                                    csgnHardWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(0));
                                                 
+                                    csgnMiddleWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(1));
+                                                
+                                    csgnEasyWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledCsgnHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(2));
+                                                
+                                                
+                                    identityHardWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(0));
+                                                
+                                    identityMiddleWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(1));
+                                                
+                                    identityEasyWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                controlledIdentityHPolys[
+                                                    corridorId],
+                                                directionalReferencePoint,
+                                                directions.col(2));
+                                                
+                                                
+                                    pairPointWidthValid =
+                                        csgnHardWidth.valid &&
+                                        csgnMiddleWidth.valid &&
+                                        csgnEasyWidth.valid &&
+                                                
+                                        identityHardWidth.valid &&
+                                        identityMiddleWidth.valid &&
+                                        identityEasyWidth.valid &&
+                                                
+                                        csgnHardWidth.reference_inside &&
+                                        csgnMiddleWidth.reference_inside &&
+                                        csgnEasyWidth.reference_inside &&
+                                                
+                                        identityHardWidth.reference_inside &&
+                                        identityMiddleWidth.reference_inside &&
+                                        identityEasyWidth.reference_inside;
+                                                
+                                                
+                                    if (pairPointWidthValid)
+                                    {
+                                        ++pairedPointWidthValidCount;
+                                    
+                                        sumCsgnHardWidthM +=
+                                            csgnHardWidth.width_m;
+                                    
+                                        sumIdentityHardWidthM +=
+                                            identityHardWidth.width_m;
+                                    
+                                        sumCsgnMiddleWidthM +=
+                                            csgnMiddleWidth.width_m;
+                                    
+                                        sumIdentityMiddleWidthM +=
+                                            identityMiddleWidth.width_m;
+                                    
+                                        sumCsgnEasyWidthM +=
+                                            csgnEasyWidth.width_m;
+                                    
+                                        sumIdentityEasyWidthM +=
+                                            identityEasyWidth.width_m;
+                                    
+                                    
+                                        const double csgnReferenceMarginM =
+                                            std::min(
+                                                csgnHardWidth
+                                                    .min_reference_margin_m,
+                                                std::min(
+                                                    csgnMiddleWidth
+                                                        .min_reference_margin_m,
+                                                    csgnEasyWidth
+                                                        .min_reference_margin_m));
+                                                
+                                        const double identityReferenceMarginM =
+                                            std::min(
+                                                identityHardWidth
+                                                    .min_reference_margin_m,
+                                                std::min(
+                                                    identityMiddleWidth
+                                                        .min_reference_margin_m,
+                                                    identityEasyWidth
+                                                        .min_reference_margin_m));
+                                                
+                                                
+                                        minCsgnPointReferenceMarginM =
+                                            std::min(
+                                                minCsgnPointReferenceMarginM,
+                                                csgnReferenceMarginM);
+                                            
+                                        minIdentityPointReferenceMarginM =
+                                            std::min(
+                                                minIdentityPointReferenceMarginM,
+                                                identityReferenceMarginM);
+                                    }                                                
+
                                     pairDirectionalValid =
                                         csgnHardReserve.valid &&
                                         csgnMiddleReserve.valid &&
@@ -5941,6 +6144,41 @@ public:
                                 << controlledIdentityInfos[
                                        corridorId]
                                        .candidate_count);
+
+                            ROS_INFO_STREAM(
+                                "TF_CSGN_IDENTITY_POINT_WIDTH "
+                            
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << pairPointWidthValid
+                            
+                                << " csgn_reference_margin_m="
+                                << csgnHardWidth
+                                       .min_reference_margin_m
+                            
+                                << " identity_reference_margin_m="
+                                << identityHardWidth
+                                       .min_reference_margin_m
+                            
+                                << " csgn_hard_width_m="
+                                << csgnHardWidth.width_m
+                            
+                                << " identity_hard_width_m="
+                                << identityHardWidth.width_m
+                            
+                                << " csgn_mid_width_m="
+                                << csgnMiddleWidth.width_m
+                            
+                                << " identity_mid_width_m="
+                                << identityMiddleWidth.width_m
+                            
+                                << " csgn_easy_width_m="
+                                << csgnEasyWidth.width_m
+                            
+                                << " identity_easy_width_m="
+                                << identityEasyWidth.width_m);
                         }
                     }
 
@@ -6108,6 +6346,102 @@ public:
                         
                         << " mean_preferential_preservation="
                         << meanPreferentialPreservation);
+
+                    if (pairedPointWidthValidCount == 0)
+                    {
+                        minCsgnPointReferenceMarginM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    
+                        minIdentityPointReferenceMarginM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+                    
+                    
+                    const double meanCsgnHardWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumCsgnHardWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanIdentityHardWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumIdentityHardWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double meanCsgnMiddleWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumCsgnMiddleWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanIdentityMiddleWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumIdentityMiddleWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    const double meanCsgnEasyWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumCsgnEasyWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                    const double meanIdentityEasyWidthM =
+                        pairedPointWidthValidCount > 0
+                            ? sumIdentityEasyWidthM /
+                                  static_cast<double>(
+                                      pairedPointWidthValidCount)
+                            : std::numeric_limits<double>::
+                                  quiet_NaN();
+                                
+                                
+                    ROS_INFO_STREAM(
+                        "TF_CSGN_IDENTITY_POINT_WIDTH_SUMMARY "
+                    
+                        << "valid="
+                        << pairedPointWidthValidCount
+                    
+                        << " total="
+                        << controlledSegmentCount
+                    
+                        << " min_csgn_reference_margin_m="
+                        << minCsgnPointReferenceMarginM
+                    
+                        << " min_identity_reference_margin_m="
+                        << minIdentityPointReferenceMarginM
+                    
+                        << " mean_csgn_hard_width_m="
+                        << meanCsgnHardWidthM
+                    
+                        << " mean_identity_hard_width_m="
+                        << meanIdentityHardWidthM
+                    
+                        << " mean_csgn_mid_width_m="
+                        << meanCsgnMiddleWidthM
+                    
+                        << " mean_identity_mid_width_m="
+                        << meanIdentityMiddleWidthM
+                    
+                        << " mean_csgn_easy_width_m="
+                        << meanCsgnEasyWidthM
+                    
+                        << " mean_identity_easy_width_m="
+                        << meanIdentityEasyWidthM);
                         
                     const double meanControlledCsgnVolumeM3 =
                         pairedVolumeValidCount > 0
@@ -6185,21 +6519,21 @@ public:
                     //
                     // This block is after all frozen Proposed timers.
                     // ========================================================
-                                        
+
                     std::vector<Eigen::MatrixX4d>
                         controlledFiriHPolys;
-                                        
+
                     std::vector<
                         firi::TrajectoryFavorableDiagnostics>
                         controlledFiriDiagnostics;
-                                        
+
                     std::vector<int>
                         controlledFiriLocalObstacleCounts;
-                                        
+
                     std::vector<double>
                         controlledFiriSegmentMs;
-                                        
-                                        
+
+
                     controlledFiriHPolys.reserve(
                         std::max(
                             0,
@@ -6517,8 +6851,8 @@ public:
                                 controlledFiriSegmentMs.size()) ==
                                 controlledSegmentCount;
                     };
-                    
-                    
+
+
                     // --------------------------------------------------------
                     // Build controlled standard FIRI.
                     //
@@ -6528,13 +6862,13 @@ public:
                     const auto controlledFiriStarted =
                         std::chrono::
                             steady_clock::now();
-                    
-                    
+
+
                     const bool controlledFiriSuccess =
                         guideSegmentMetricsReady &&
                         buildControlledFiri();
-                    
-                    
+
+
                     const double controlledFiriGenerationMs =
                         std::chrono::duration<
                             double,
@@ -7037,8 +7371,8 @@ public:
                                        corridorId]);
                         }
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Aggregate Controlled-FIRI regression summary.
                     // ========================================================
@@ -7048,32 +7382,32 @@ public:
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledFiriOverlapValidCount == 0)
                     {
                         controlledFiriMinOverlapRadiusM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledFiriDirectionalValidCount == 0)
                     {
                         controlledFiriMinReferenceMarginM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     if (controlledFiriVolumeValidCount == 0)
                     {
                         controlledFiriMaxVertexViolationM =
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     }
-                    
-                    
+
+
                     const double controlledFiriMeanHardWidthM =
                         controlledFiriDirectionalValidCount > 0
                             ? controlledFiriHardWidthSumM /
