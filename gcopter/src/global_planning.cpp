@@ -107,7 +107,6 @@ struct Config
     double decompLocalBBoxVertical;
     double decompMaxSegmentLength;
     double decompMinOverlapRadius;
-    bool runBaselineFiriBenchmark = false;
 
     Config(const ros::NodeHandle &nh_priv)
     {
@@ -164,11 +163,7 @@ struct Config
             "Benchmark/Method",
             benchmarkMethod,
             "proposed");
-        nh_priv.param(
-            "Benchmark/RunBaselineFiri",
-            runBaselineFiriBenchmark,
-            false);
-
+        
         nh_priv.param<std::string>(
             "Benchmark/Variant",
             benchmarkVariant,
@@ -3152,22 +3147,22 @@ public:
                     const double finalTrajectoryDuration =
                         hardProjectedTrajectory
                             .getTotalDuration();
-
+                                    
                     const double finalSmoothnessEnergy =
                         hardProjectionResult
                             .final_energy;
-
+                                    
                     const double finalTimeWeight =
                         config.weightT;
-
+                                    
                     const double finalTimeCost =
                         finalTimeWeight *
                         finalTrajectoryDuration;
-
+                                    
                     const double finalJkin =
                         finalSmoothnessEnergy +
                         finalTimeCost;
-
+                                    
                     const bool finalJkinValid =
                         std::isfinite(
                             finalTrajectoryDuration) &&
