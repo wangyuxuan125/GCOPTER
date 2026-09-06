@@ -11,6 +11,7 @@
 #include "gcopter/route_replay.hpp"
 #include "gcopter/benchmark_logger.hpp"
 #include "gcopter/trajectory_metrics.hpp"
+#include "gcopter/corridor_metrics.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
 #include "gcopter/voxel_map.hpp"
@@ -3665,6 +3666,330 @@ public:
                         << (config.maxThrust -
                             finalTrajectoryEvaluation
                                 .max_thrust_n));
+
+                    // ========================================================
+                    // Controlled-geometry corridor mapping.
+                    //
+                    // For the paper's Controlled Geometry protocol we require:
+                    //
+                    //     one original route segment
+                    //         <->
+                    //     one Proposed corridor.
+                    //
+                    // If the overlap shortcut ever removes a corridor, this
+                    // mapping becomes invalid and the geometry record must NOT
+                    // silently associate the wrong seed segment.
+                    // ========================================================
+                    const int controlledSegmentCount =
+                        std::max(
+                            0,
+                            static_cast<int>(
+                                route.size()) -
+                                1);
+                            
+                    const bool corridorGeometryMappingValid =
+                        activeGuideSuccess &&
+                        static_cast<int>(
+                            activeGuideHPolys.size()) ==
+                            controlledSegmentCount &&
+                        activeGuideInfos.size() ==
+                            activeGuideHPolys.size();
+
+                    double minSeedRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double minAdjacentOverlapRadiusM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    int validSeedMetricCount =
+                        0;
+
+                    int validOverlapMetricCount =
+                        0;
+
+                    bool protectedSeedSatisfied =
+                        corridorGeometryMappingValid;
+
+                    bool protectedOverlapSatisfied =
+                        corridorGeometryMappingValid;
+
+                    const double protectedRadiusM =
+                        activeGuideOptions
+                            .overlap_radius;
+
+                    const double geometryToleranceM =
+                        1.0e-6;
+
+                    if (corridorGeometryMappingValid)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 static_cast<int>(
+                                     activeGuideHPolys.size());
+                             ++corridorId)
+                        {
+                            const Eigen::Vector3d &seedA =
+                                route[corridorId];
+                        
+                            const Eigen::Vector3d &seedB =
+                                route[corridorId + 1];
+                        
+                            const auto seedMetric =
+                                gcopter_benchmark::
+                                    evaluateSegmentSeedRadius(
+                                        activeGuideHPolys[
+                                            corridorId],
+                                        seedA,
+                                        seedB);
+                                        
+                            if (seedMetric.valid)
+                            {
+                                ++validSeedMetricCount;
+                            
+                                minSeedRadiusM =
+                                    std::min(
+                                        minSeedRadiusM,
+                                        seedMetric.radius_m);
+                                    
+                                if (seedMetric.radius_m <
+                                    protectedRadiusM -
+                                        geometryToleranceM)
+                                {
+                                    protectedSeedSatisfied =
+                                        false;
+                                }
+                            }
+                            else
+                            {
+                                protectedSeedSatisfied =
+                                    false;
+                            }
+                        
+                            double nextOverlapRadiusM =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        
+                            bool nextOverlapValid =
+                                false;
+                        
+                            if (corridorId + 1 <
+                                static_cast<int>(
+                                    activeGuideHPolys.size()))
+                            {
+                                const Eigen::Vector3d &junction =
+                                    route[corridorId + 1];
+
+                                const auto overlapMetric =
+                                    gcopter_benchmark::
+                                        evaluateJunctionOverlapRadius(
+                                            activeGuideHPolys[
+                                                corridorId],
+                                            activeGuideHPolys[
+                                                corridorId + 1],
+                                            junction);
+                                            
+                                nextOverlapValid =
+                                    overlapMetric.valid;
+                                            
+                                nextOverlapRadiusM =
+                                    overlapMetric.radius_m;
+                                            
+                                if (overlapMetric.valid)
+                                {
+                                    ++validOverlapMetricCount;
+                                
+                                    minAdjacentOverlapRadiusM =
+                                        std::min(
+                                            minAdjacentOverlapRadiusM,
+                                            overlapMetric.radius_m);
+                                        
+                                    if (overlapMetric.radius_m <
+                                        protectedRadiusM -
+                                            geometryToleranceM)
+                                    {
+                                        protectedOverlapSatisfied =
+                                            false;
+                                    }
+                                }
+                                else
+                                {
+                                    protectedOverlapSatisfied =
+                                        false;
+                                }
+                            }
+                        
+                            const auto &corridorInfo =
+                                activeGuideInfos[
+                                    corridorId];
+                                
+                            const double utilityMin =
+                                corridorInfo
+                                    .utility_eigenvalues
+                                    .minCoeff();
+                                
+                            const double utilityMax =
+                                corridorInfo
+                                    .utility_eigenvalues
+                                    .maxCoeff();
+                                
+                            const double utilityAnisotropy =
+                                utilityMin > 0.0
+                                    ? utilityMax /
+                                          utilityMin
+                                    : std::numeric_limits<double>::
+                                          quiet_NaN();
+                                
+                            ROS_INFO_STREAM(
+                                "TF_CORRIDOR_GEOMETRY "
+                                << "corridor_id="
+                                << corridorId
+                            
+                                << " source_segment_id="
+                                << corridorId
+                            
+                                << " seed_valid="
+                                << seedMetric.valid
+                            
+                                << " seed_radius_m="
+                                << seedMetric.radius_m
+                            
+                                << " protected_radius_m="
+                                << protectedRadiusM
+                            
+                                << " junction_overlap_valid="
+                                << nextOverlapValid
+                            
+                                << " junction_overlap_radius_m="
+                                << nextOverlapRadiusM
+                            
+                                << " total_faces="
+                                << corridorInfo
+                                       .total_face_count
+                            
+                                << " domain_faces="
+                                << corridorInfo
+                                       .domain_face_count
+                            
+                                << " obstacle_faces="
+                                << corridorInfo
+                                       .selected_obstacle_face_count
+                            
+                                << " candidate_count="
+                                << corridorInfo
+                                       .candidate_count
+                            
+                                << " active_rounds="
+                                << corridorInfo
+                                       .active_witness_rounds
+                            
+                                << " safety_verified="
+                                << corridorInfo
+                                       .safety_verified
+                            
+                                << " metric_valid="
+                                << corridorInfo
+                                       .metric_valid
+                            
+                                << " anisotropic="
+                                << corridorInfo
+                                       .anisotropic_domain
+                            
+                                << " utility_anisotropy="
+                                << utilityAnisotropy
+                            
+                                << " utility_eig0="
+                                << corridorInfo
+                                       .utility_eigenvalues(0)
+                            
+                                << " utility_eig1="
+                                << corridorInfo
+                                       .utility_eigenvalues(1)
+                            
+                                << " utility_eig2="
+                                << corridorInfo
+                                       .utility_eigenvalues(2)
+                            
+                                << " extra_radius0_m="
+                                << corridorInfo
+                                       .extra_radii(0)
+                            
+                                << " extra_radius1_m="
+                                << corridorInfo
+                                       .extra_radii(1)
+                            
+                                << " extra_radius2_m="
+                                << corridorInfo
+                                       .extra_radii(2)
+                            
+                                << " mean_metric_damage="
+                                << corridorInfo
+                                       .mean_metric_damage
+                            
+                                << " min_metric_damage="
+                                << corridorInfo
+                                       .min_metric_damage
+                            
+                                << " max_metric_damage="
+                                << corridorInfo
+                                       .max_metric_damage);
+                        }
+                    }
+                                
+                    if (validSeedMetricCount == 0)
+                    {
+                        minSeedRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+
+                    if (validOverlapMetricCount == 0)
+                    {
+                        minAdjacentOverlapRadiusM =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_CORRIDOR_GEOMETRY_SUMMARY "
+                        << "mapping_valid="
+                        << corridorGeometryMappingValid
+                    
+                        << " route_segments="
+                        << controlledSegmentCount
+                    
+                        << " corridors="
+                        << activeGuideHPolys.size()
+                    
+                        << " seed_metrics_valid="
+                        << validSeedMetricCount
+                    
+                        << " seed_metrics_total="
+                        << controlledSegmentCount
+                    
+                        << " overlap_metrics_valid="
+                        << validOverlapMetricCount
+                    
+                        << " overlap_metrics_total="
+                        << std::max(
+                               0,
+                               controlledSegmentCount - 1)
+                        
+                        << " protected_radius_m="
+                        << protectedRadiusM
+                        
+                        << " min_seed_radius_m="
+                        << minSeedRadiusM
+                        
+                        << " min_overlap_radius_m="
+                        << minAdjacentOverlapRadiusM
+                        
+                        << " protected_seed_satisfied="
+                        << protectedSeedSatisfied
+                        
+                        << " protected_overlap_satisfied="
+                        << protectedOverlapSatisfied);
 
                     // All success-path trajectory measurements are now available.
                     // Emit exactly one structured benchmark row.
