@@ -3935,13 +3935,6 @@ public:
                                             .minCoeff() >
                                         0.0)
                                 {
-                                    referenceMetricValid =
-                                        true;
-
-                                    referenceEigenvalues =
-                                        utilitySolver
-                                            .eigenvalues();
-
                                     const Eigen::Vector3d
                                         measuredEigenvalues =
                                             utilitySolver
@@ -4955,6 +4948,13 @@ public:
                                             .minCoeff() >
                                         0.0)
                                 {
+                                    referenceMetricValid =
+                                        true;
+                                
+                                    referenceEigenvalues =
+                                        utilitySolver
+                                            .eigenvalues();
+                                
                                     Eigen::Matrix3d directions =
                                         utilitySolver
                                             .eigenvectors();
@@ -5779,19 +5779,6 @@ public:
                             
                         << " file=benchmark_corridors_v2.csv");
 
-                    ROS_INFO_STREAM(
-                        "TF_BENCHMARK_CORRIDORS "
-                        << "rows="
-                        << benchmarkCorridorRecords.size()
-                    
-                        << " mapping_valid="
-                        << corridorGeometryMappingValid
-                    
-                        << " log_success="
-                        << benchmarkCorridorLogSuccess
-                    
-                        << " file=benchmark_corridors_v1.csv");
-                    
                     // All success-path trajectory measurements are now available.
                     // Emit exactly one structured benchmark row.
                     if (benchmarkRunReady)
