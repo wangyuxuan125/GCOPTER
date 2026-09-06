@@ -4706,7 +4706,7 @@ public:
                     //
                     // A positively row-scaled copy must yield identical counts.
                     // ========================================================
-                                        
+
                     Eigen::MatrixX4d
                         effectiveFaceTestPoly(
                             8,
@@ -4766,8 +4766,8 @@ public:
                             effectiveFaceRowScales(
                                 rowId);
                     }
-                    
-                    
+
+
                     const auto effectiveFaceTestMetric =
                         gcopter_benchmark::
                             evaluateEffectiveFaces(
@@ -8564,6 +8564,394 @@ public:
                         << " range_m="
                         << controlledRilsBuild.range_m);
 
+                    // ========================================================
+                    // D1c-1: Common effective-face measurement.
+                    //
+                    // IMPORTANT:
+                    //
+                    //   Measurement only.
+                    //   No corridor is modified.
+                    //
+                    // All four controlled methods are evaluated by the SAME
+                    // D1c-0 LP-based redundancy kernel:
+                    //
+                    //     raw H rows
+                    //         ->
+                    //     duplicate geometric-plane grouping
+                    //         ->
+                    //     leave-one-plane-group-out support LP
+                    //         ->
+                    //     effective / redundant geometric faces.
+                    //
+                    // Two quantities remain deliberately distinct:
+                    //
+                    //   raw_rows
+                    //       actual stored / downstream H-constraint workload;
+                    //
+                    //   effective_faces
+                    //       distinct nonredundant geometric boundary facets.
+                    // ========================================================
+                                            
+                    struct ControlledEffectiveFaceSummary
+                    {
+                        bool mapping_valid =
+                            false;
+                    
+                        int valid_corridors =
+                            0;
+                    
+                        int total_corridors =
+                            0;
+                    
+                        int raw_rows =
+                            0;
+                    
+                        int unique_plane_groups =
+                            0;
+                    
+                        int duplicate_rows =
+                            0;
+                    
+                        int effective_faces =
+                            0;
+                    
+                        int redundant_plane_groups =
+                            0;
+                    
+                        int unbounded_support_tests =
+                            0;
+                    
+                        double max_redundant_violation_m =
+                            -std::numeric_limits<double>::
+                                infinity();
+                    
+                        double min_finite_effective_violation_m =
+                            std::numeric_limits<double>::
+                                infinity();
+                    };
+                    
+                    
+                    // --------------------------------------------------------
+                    // One common evaluator for every controlled method.
+                    // --------------------------------------------------------
+                    auto evaluateControlledEffectiveFaces =
+                        [&](const std::string &methodName,
+                            const std::vector<Eigen::MatrixX4d> &hPolys,
+                            const bool mappingValid)
+                            -> ControlledEffectiveFaceSummary
+                    {
+                        ControlledEffectiveFaceSummary summary;
+                    
+                        summary.mapping_valid =
+                            mappingValid &&
+                            static_cast<int>(
+                                hPolys.size()) ==
+                                controlledSegmentCount;
+                            
+                        summary.total_corridors =
+                            controlledSegmentCount;
+                            
+                            
+                        if (!summary.mapping_valid)
+                        {
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_EFFECTIVE_FACE_SUMMARY "
+                            
+                                << "method="
+                                << methodName
+                            
+                                << " mapping_valid=0"
+                            
+                                << " valid=0"
+                            
+                                << " total="
+                                << controlledSegmentCount);
+                            
+                            return summary;
+                        }
+                    
+                    
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            const auto metric =
+                                gcopter_benchmark::
+                                    evaluateEffectiveFaces(
+                                        hPolys[
+                                            corridorId]);
+                                        
+                                        
+                            if (metric.valid)
+                            {
+                                ++summary.valid_corridors;
+                            
+                                summary.raw_rows +=
+                                    metric.raw_rows;
+                            
+                                summary.unique_plane_groups +=
+                                    metric.unique_plane_groups;
+                            
+                                summary.duplicate_rows +=
+                                    metric.duplicate_rows;
+                            
+                                summary.effective_faces +=
+                                    metric.effective_faces;
+                            
+                                summary.redundant_plane_groups +=
+                                    metric.redundant_plane_groups;
+                            
+                                summary.unbounded_support_tests +=
+                                    metric.unbounded_support_tests;
+                            
+                            
+                                if (std::isfinite(
+                                        metric
+                                            .max_redundant_violation_m))
+                                {
+                                    summary.max_redundant_violation_m =
+                                        std::max(
+                                            summary
+                                                .max_redundant_violation_m,
+                                            metric
+                                                .max_redundant_violation_m);
+                                }
+                            
+                            
+                                if (std::isfinite(
+                                        metric
+                                            .min_finite_effective_violation_m))
+                                {
+                                    summary
+                                        .min_finite_effective_violation_m =
+                                        std::min(
+                                            summary
+                                                .min_finite_effective_violation_m,
+                                            metric
+                                                .min_finite_effective_violation_m);
+                                }
+                            }
+                        
+                        
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_EFFECTIVE_FACE "
+                            
+                                << "method="
+                                << methodName
+                            
+                                << " corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << metric.valid
+                            
+                                << " raw_rows="
+                                << metric.raw_rows
+                            
+                                << " unique_groups="
+                                << metric
+                                       .unique_plane_groups
+                            
+                                << " duplicate_rows="
+                                << metric
+                                       .duplicate_rows
+                            
+                                << " effective_faces="
+                                << metric
+                                       .effective_faces
+                            
+                                << " redundant_groups="
+                                << metric
+                                       .redundant_plane_groups
+                            
+                                << " unbounded_tests="
+                                << metric
+                                       .unbounded_support_tests
+                            
+                                << " max_redundant_violation_m="
+                                << metric
+                                       .max_redundant_violation_m
+                            
+                                << " min_finite_effective_violation_m="
+                                << metric
+                                       .min_finite_effective_violation_m);
+                        }
+                    
+                    
+                        if (!std::isfinite(
+                                summary
+                                    .max_redundant_violation_m))
+                        {
+                            summary
+                                .max_redundant_violation_m =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        }
+                    
+                    
+                        if (!std::isfinite(
+                                summary
+                                    .min_finite_effective_violation_m))
+                        {
+                            summary
+                                .min_finite_effective_violation_m =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        }
+                    
+                    
+                        ROS_INFO_STREAM(
+                            "TF_CONTROLLED_EFFECTIVE_FACE_SUMMARY "
+                        
+                            << "method="
+                            << methodName
+                        
+                            << " mapping_valid="
+                            << summary.mapping_valid
+                        
+                            << " valid="
+                            << summary.valid_corridors
+                        
+                            << " total="
+                            << summary.total_corridors
+                        
+                            << " raw_rows="
+                            << summary.raw_rows
+                        
+                            << " unique_groups="
+                            << summary
+                                   .unique_plane_groups
+                        
+                            << " duplicate_rows="
+                            << summary
+                                   .duplicate_rows
+                        
+                            << " effective_faces="
+                            << summary
+                                   .effective_faces
+                        
+                            << " redundant_groups="
+                            << summary
+                                   .redundant_plane_groups
+                        
+                            << " unbounded_tests="
+                            << summary
+                                   .unbounded_support_tests
+                        
+                            << " max_redundant_violation_m="
+                            << summary
+                                   .max_redundant_violation_m
+                        
+                            << " min_finite_effective_violation_m="
+                            << summary
+                                   .min_finite_effective_violation_m);
+                        
+                        
+                        return summary;
+                    };
+                    
+                    
+                    // ========================================================
+                    // Evaluate all four methods.
+                    //
+                    // The order is fixed for deterministic regression logs.
+                    // ========================================================
+                    
+                    const auto controlledCsgnEffectiveFaces =
+                        evaluateControlledEffectiveFaces(
+                            "csgn",
+                            controlledCsgnHPolys,
+                            controlledPairMappingValid);
+                        
+                        
+                    const auto controlledIdentityEffectiveFaces =
+                        evaluateControlledEffectiveFaces(
+                            "identity",
+                            controlledIdentityHPolys,
+                            controlledPairMappingValid);
+                        
+                        
+                    const auto controlledFiriEffectiveFaces =
+                        evaluateControlledEffectiveFaces(
+                            "firi",
+                            controlledFiriHPolys,
+                            controlledFiriMappingValid);
+                        
+                        
+                    const auto controlledRilsEffectiveFaces =
+                        evaluateControlledEffectiveFaces(
+                            "rils",
+                            controlledRilsBuild.hpolys,
+                            controlledRilsGeometryMappingValid);
+                        
+                        
+                    // --------------------------------------------------------
+                    // One compact cross-method regression line.
+                    //
+                    // Raw and effective counts are both emitted.
+                    // No ranking or success criterion is imposed on their
+                    // relative values.
+                    // --------------------------------------------------------
+                    const bool controlledEffectiveFaceComparisonValid =
+                        controlledCsgnEffectiveFaces
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledIdentityEffectiveFaces
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledFiriEffectiveFaces
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledRilsEffectiveFaces
+                                .valid_corridors ==
+                            controlledSegmentCount;
+                        
+                        
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_EFFECTIVE_FACE_COMPARE "
+                    
+                        << "valid="
+                        << controlledEffectiveFaceComparisonValid
+                    
+                        << " corridors="
+                        << controlledSegmentCount
+                    
+                        << " csgn_raw="
+                        << controlledCsgnEffectiveFaces
+                               .raw_rows
+                    
+                        << " csgn_effective="
+                        << controlledCsgnEffectiveFaces
+                               .effective_faces
+                    
+                        << " identity_raw="
+                        << controlledIdentityEffectiveFaces
+                               .raw_rows
+                    
+                        << " identity_effective="
+                        << controlledIdentityEffectiveFaces
+                               .effective_faces
+                    
+                        << " firi_raw="
+                        << controlledFiriEffectiveFaces
+                               .raw_rows
+                    
+                        << " firi_effective="
+                        << controlledFiriEffectiveFaces
+                               .effective_faces
+                    
+                        << " rils_raw="
+                        << controlledRilsEffectiveFaces
+                               .raw_rows
+                    
+                        << " rils_effective="
+                        << controlledRilsEffectiveFaces
+                               .effective_faces);
+                    
                     bool benchmarkCorridorLogSuccess =
                         true;  
 
