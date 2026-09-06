@@ -2885,14 +2885,77 @@ public:
                     << " exact_feasible="
                     << proposedFinalSuccess);
 
+                gcopter_benchmark::
+                    BenchmarkRunRecord
+                        benchmarkRun;
+
+                bool benchmarkRunReady =
+                    false;
+
+                auto emitBenchmarkRun =
+                    [&]()
+                    {
+                        if (!benchmarkRunReady)
+                        {
+                            return;
+                        }
+                    
+                        if (!benchmarkRunLogger
+                                 .logRun(
+                                     benchmarkRun))
+                        {
+                            ROS_ERROR(
+                                "Failed to append "
+                                "benchmark_runs_v1.csv.");
+                        }
+                    
+                        ROS_INFO_STREAM(
+                            "TF_BENCHMARK_RUN "
+                            << "case_id="
+                            << benchmarkRun.case_id
+                        
+                            << " fingerprint="
+                            << benchmarkRun
+                                   .route_fingerprint
+                        
+                            << " method="
+                            << benchmarkRun.method
+                        
+                            << " variant="
+                            << benchmarkRun.variant
+                        
+                            << " repeat="
+                            << benchmarkRun.repeat_id
+                        
+                            << " success="
+                            << benchmarkRun.final_success
+                        
+                            << " faces="
+                            << benchmarkRun.total_faces
+                        
+                            << " obs_faces="
+                            << benchmarkRun.obstacle_faces
+                        
+                            << " after_route_ms="
+                            << benchmarkRun.after_route_ms
+                        
+                            << " soft_exact="
+                            << benchmarkRun
+                                   .soft_exact_contained
+                        
+                            << " final_exact="
+                            << benchmarkRun
+                                   .final_exact_contained
+                        
+                            << " active_time_constraints="
+                            << benchmarkRun
+                                   .active_time_constraints);
+                    };
+
                 if (config.benchmarkEnabled &&
                     config.benchmarkMethod ==
                         "proposed")
                 {
-                    gcopter_benchmark::
-                        BenchmarkRunRecord
-                            benchmarkRun;
-
                     benchmarkRun.case_id =
                         effectiveCaseId;
 
@@ -3081,52 +3144,8 @@ public:
                         hardProjectionResult
                             .final_energy;
 
-                    if (!benchmarkRunLogger
-                             .logRun(
-                                 benchmarkRun))
-                    {
-                        ROS_ERROR(
-                            "Failed to append "
-                            "benchmark_runs_v1.csv.");
-                    }
-
-                    ROS_INFO_STREAM(
-                        "TF_BENCHMARK_RUN "
-                        << "case_id="
-                        << benchmarkRun.case_id
-
-                        << " fingerprint="
-                        << benchmarkRun.route_fingerprint
-
-                        << " method="
-                        << benchmarkRun.method
-
-                        << " variant="
-                        << benchmarkRun.variant
-
-                        << " repeat="
-                        << benchmarkRun.repeat_id
-
-                        << " success="
-                        << benchmarkRun.final_success
-
-                        << " faces="
-                        << benchmarkRun.total_faces
-
-                        << " obs_faces="
-                        << benchmarkRun.obstacle_faces
-
-                        << " after_route_ms="
-                        << benchmarkRun.after_route_ms
-
-                        << " soft_exact="
-                        << benchmarkRun.soft_exact_contained
-
-                        << " final_exact="
-                        << benchmarkRun.final_exact_contained
-
-                        << " active_time_constraints="
-                        << benchmarkRun.active_time_constraints);
+                    benchmarkRunReady =
+                        true;                           
                 }
 
                 if (proposedFinalSuccess)
@@ -3646,6 +3665,10 @@ public:
                         << (config.maxThrust -
                             finalTrajectoryEvaluation
                                 .max_thrust_n));
+
+                    // All success-path trajectory measurements are now available.
+                    // Emit exactly one structured benchmark row.
+                    emitBenchmarkRun();
                         
                     visualizer.visualizePolytope(
                         activeGuideHPolys);
@@ -3764,6 +3787,8 @@ public:
 
                     return;
                 }
+
+                emitBenchmarkRun();
 
                 record.requested_method =
                     config.benchmarkMethod;
