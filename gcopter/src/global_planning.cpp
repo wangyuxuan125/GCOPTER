@@ -4908,10 +4908,10 @@ public:
                     //     bound to -0.5 m.  The box reaches x=-1, hence map
                     //     violation must be +0.5 m.
                     // ========================================================
-                                        
+
                     std::vector<Eigen::Vector3d>
                         safetyTestSurfaceSafe;
-                                        
+
                     safetyTestSurfaceSafe.emplace_back(
                         1.0,
                         0.0,
@@ -9176,6 +9176,441 @@ public:
                         << controlledRilsEffectiveFaces
                                .effective_faces);
                     
+                    // ========================================================
+                    // D1d-1: Common independent corridor safety measurement.
+                    //
+                    // Measurement only.
+                    //
+                    // Every controlled method is verified against:
+                    //
+                    //   1. the SAME global dilated-surface point cloud `pc`;
+                    //
+                    //   2. the SAME finite voxel-map bounds;
+                    //
+                    // using the SAME post-processing evaluator.
+                    //
+                    // This intentionally does NOT use:
+                    //
+                    //   Proposed constructor safety_verified,
+                    //   FIRI unresolved constraints,
+                    //   RILS generator success
+                    //
+                    // as the cross-method safety certificate.
+                    //
+                    // Those remain construction provenance only.
+                    // ========================================================
+                                        
+                    struct ControlledSafetySummary
+                    {
+                        bool mapping_valid =
+                            false;
+                    
+                        int valid_corridors =
+                            0;
+                    
+                        int total_corridors =
+                            0;
+                    
+                        int safe_corridors =
+                            0;
+                    
+                        int obstacle_surface_safe_corridors =
+                            0;
+                    
+                        int map_contained_corridors =
+                            0;
+                    
+                        int obstacle_sample_count =
+                            0;
+                    
+                        // Minimum signed exclusion margin over all valid
+                        // corridors of this method.
+                        double min_obstacle_exclusion_margin_m =
+                            std::numeric_limits<double>::
+                                infinity();
+                    
+                        // Largest penetration over all valid corridors.
+                        double max_obstacle_penetration_m =
+                            0.0;
+                    
+                        // Largest map-bound violation over all valid corridors.
+                        //
+                        // Negative means every corridor lies strictly inside
+                        // the finite map.
+                        double max_map_violation_m =
+                            -std::numeric_limits<double>::
+                                infinity();
+                    };
+                    
+                    
+                    // --------------------------------------------------------
+                    // One common code path for all four methods.
+                    // --------------------------------------------------------
+                    auto evaluateControlledSafety =
+                        [&](const std::string &methodName,
+                            const std::vector<Eigen::MatrixX4d> &hPolys,
+                            const bool mappingValid)
+                            -> ControlledSafetySummary
+                    {
+                        ControlledSafetySummary summary;
+                    
+                        summary.mapping_valid =
+                            mappingValid &&
+                            static_cast<int>(
+                                hPolys.size()) ==
+                                controlledSegmentCount;
+                            
+                        summary.total_corridors =
+                            controlledSegmentCount;
+                            
+                        summary.obstacle_sample_count =
+                            static_cast<int>(
+                                pc.size());
+                            
+                            
+                        if (!summary.mapping_valid)
+                        {
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_CORRIDOR_SAFETY_SUMMARY "
+                            
+                                << "method="
+                                << methodName
+                            
+                                << " mapping_valid=0"
+                            
+                                << " valid=0"
+                            
+                                << " total="
+                                << controlledSegmentCount
+                            
+                                << " safe=0"
+                            
+                                << " obstacle_surface_safe=0"
+                            
+                                << " map_contained=0"
+                            
+                                << " obstacle_samples="
+                                << pc.size());
+                            
+                            return summary;
+                        }
+                    
+                    
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            const auto metric =
+                                gcopter_benchmark::
+                                    evaluateCommonCorridorSafety(
+                                        hPolys[
+                                            corridorId],
+                                        pc,
+                                        voxelMap.getOrigin(),
+                                        voxelMap.getCorner());
+                                        
+                                        
+                            if (metric.valid)
+                            {
+                                ++summary.valid_corridors;
+                            
+                                if (metric.safe)
+                                {
+                                    ++summary.safe_corridors;
+                                }
+                            
+                                if (metric.obstacle_surface_safe)
+                                {
+                                    ++summary
+                                        .obstacle_surface_safe_corridors;
+                                }
+                            
+                                if (metric.map_contained)
+                                {
+                                    ++summary
+                                        .map_contained_corridors;
+                                }
+                            
+                            
+                                if (std::isfinite(
+                                        metric
+                                            .min_obstacle_exclusion_margin_m))
+                                {
+                                    summary
+                                        .min_obstacle_exclusion_margin_m =
+                                        std::min(
+                                            summary
+                                                .min_obstacle_exclusion_margin_m,
+                                            metric
+                                                .min_obstacle_exclusion_margin_m);
+                                }
+                            
+                            
+                                if (std::isfinite(
+                                        metric
+                                            .max_obstacle_penetration_m))
+                                {
+                                    summary
+                                        .max_obstacle_penetration_m =
+                                        std::max(
+                                            summary
+                                                .max_obstacle_penetration_m,
+                                            metric
+                                                .max_obstacle_penetration_m);
+                                }
+                            
+                            
+                                if (std::isfinite(
+                                        metric
+                                            .max_map_violation_m))
+                                {
+                                    summary
+                                        .max_map_violation_m =
+                                        std::max(
+                                            summary
+                                                .max_map_violation_m,
+                                            metric
+                                                .max_map_violation_m);
+                                }
+                            }
+                        
+                        
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_CORRIDOR_SAFETY "
+                            
+                                << "method="
+                                << methodName
+                            
+                                << " corridor_id="
+                                << corridorId
+                            
+                                << " valid="
+                                << metric.valid
+                            
+                                << " safe="
+                                << metric.safe
+                            
+                                << " obstacle_surface_safe="
+                                << metric
+                                       .obstacle_surface_safe
+                            
+                                << " map_contained="
+                                << metric
+                                       .map_contained
+                            
+                                << " obstacle_samples="
+                                << metric
+                                       .obstacle_sample_count
+                            
+                                << " worst_obstacle_index="
+                                << metric
+                                       .worst_obstacle_index
+                            
+                                << " min_obstacle_exclusion_margin_m="
+                                << metric
+                                       .min_obstacle_exclusion_margin_m
+                            
+                                << " max_obstacle_penetration_m="
+                                << metric
+                                       .max_obstacle_penetration_m
+                            
+                                << " max_map_violation_m="
+                                << metric
+                                       .max_map_violation_m);
+                        }
+                    
+                    
+                        if (!std::isfinite(
+                                summary
+                                    .min_obstacle_exclusion_margin_m))
+                        {
+                            summary
+                                .min_obstacle_exclusion_margin_m =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        }
+                    
+                    
+                        if (!std::isfinite(
+                                summary
+                                    .max_map_violation_m))
+                        {
+                            summary
+                                .max_map_violation_m =
+                                std::numeric_limits<double>::
+                                    quiet_NaN();
+                        }
+                    
+                    
+                        ROS_INFO_STREAM(
+                            "TF_CONTROLLED_CORRIDOR_SAFETY_SUMMARY "
+                        
+                            << "method="
+                            << methodName
+                        
+                            << " mapping_valid="
+                            << summary.mapping_valid
+                        
+                            << " valid="
+                            << summary.valid_corridors
+                        
+                            << " total="
+                            << summary.total_corridors
+                        
+                            << " safe="
+                            << summary.safe_corridors
+                        
+                            << " obstacle_surface_safe="
+                            << summary
+                                   .obstacle_surface_safe_corridors
+                        
+                            << " map_contained="
+                            << summary
+                                   .map_contained_corridors
+                        
+                            << " obstacle_samples="
+                            << summary
+                                   .obstacle_sample_count
+                        
+                            << " min_obstacle_exclusion_margin_m="
+                            << summary
+                                   .min_obstacle_exclusion_margin_m
+                        
+                            << " max_obstacle_penetration_m="
+                            << summary
+                                   .max_obstacle_penetration_m
+                        
+                            << " max_map_violation_m="
+                            << summary
+                                   .max_map_violation_m);
+                        
+                        
+                        return summary;
+                    };
+                    
+                    
+                    // ========================================================
+                    // All four methods use exactly the same verifier.
+                    //
+                    // Fixed order keeps regression logs deterministic.
+                    // ========================================================
+                    
+                    const auto controlledCsgnSafety =
+                        evaluateControlledSafety(
+                            "csgn",
+                            controlledCsgnHPolys,
+                            controlledPairMappingValid);
+                        
+                        
+                    const auto controlledIdentitySafety =
+                        evaluateControlledSafety(
+                            "identity",
+                            controlledIdentityHPolys,
+                            controlledPairMappingValid);
+                        
+                        
+                    const auto controlledFiriSafety =
+                        evaluateControlledSafety(
+                            "firi",
+                            controlledFiriHPolys,
+                            controlledFiriMappingValid);
+                        
+                        
+                    const auto controlledRilsSafety =
+                        evaluateControlledSafety(
+                            "rils",
+                            controlledRilsBuild.hpolys,
+                            controlledRilsGeometryMappingValid);
+                        
+                        
+                    // --------------------------------------------------------
+                    // IMPORTANT:
+                    //
+                    // `valid` means the COMMON verifier ran successfully on
+                    // every corridor.
+                    //
+                    // It does NOT silently require every baseline to be safe.
+                    // Safety results remain experimental outcomes.
+                    // --------------------------------------------------------
+                    const bool controlledSafetyComparisonValid =
+                        controlledCsgnSafety
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledIdentitySafety
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledFiriSafety
+                                .valid_corridors ==
+                            controlledSegmentCount &&
+                        
+                        controlledRilsSafety
+                                .valid_corridors ==
+                            controlledSegmentCount;
+                        
+                        
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_CORRIDOR_SAFETY_COMPARE "
+                    
+                        << "valid="
+                        << controlledSafetyComparisonValid
+                    
+                        << " corridors="
+                        << controlledSegmentCount
+                    
+                        << " obstacle_samples="
+                        << pc.size()
+                    
+                        << " csgn_safe="
+                        << controlledCsgnSafety
+                               .safe_corridors
+                    
+                        << " csgn_min_exclusion_m="
+                        << controlledCsgnSafety
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " csgn_max_penetration_m="
+                        << controlledCsgnSafety
+                               .max_obstacle_penetration_m
+                    
+                        << " identity_safe="
+                        << controlledIdentitySafety
+                               .safe_corridors
+                    
+                        << " identity_min_exclusion_m="
+                        << controlledIdentitySafety
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " identity_max_penetration_m="
+                        << controlledIdentitySafety
+                               .max_obstacle_penetration_m
+                    
+                        << " firi_safe="
+                        << controlledFiriSafety
+                               .safe_corridors
+                    
+                        << " firi_min_exclusion_m="
+                        << controlledFiriSafety
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " firi_max_penetration_m="
+                        << controlledFiriSafety
+                               .max_obstacle_penetration_m
+                    
+                        << " rils_safe="
+                        << controlledRilsSafety
+                               .safe_corridors
+                    
+                        << " rils_min_exclusion_m="
+                        << controlledRilsSafety
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " rils_max_penetration_m="
+                        << controlledRilsSafety
+                               .max_obstacle_penetration_m);
+
                     bool benchmarkCorridorLogSuccess =
                         true;  
 
