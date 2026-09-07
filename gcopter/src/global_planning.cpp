@@ -4,6 +4,7 @@
 #include "gcopter/route_minco_guide.hpp"
 #include "gcopter/minco_affine_map.hpp"
 #include "gcopter/exact_sfc_projection.hpp"
+#include "gcopter/bernstein_sfc_projection.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
