@@ -35,7 +35,7 @@ struct ExactSfcProjectionOptions
         32;
 
     int max_qp_sweeps =
-        20000;
+        200000;
 };
 
 
