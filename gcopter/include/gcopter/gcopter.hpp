@@ -3895,12 +3895,87 @@ namespace gcopter
                 physicalParams;
             allocSpeed = magnitudeBd(0) * 3.0;
 
+            // getShortestPath(headPVA.col(0), tailPVA.col(0),
+            //                 vPolytopes, smoothEps, shortPath);
+            // const Eigen::Matrix3Xd deltas = shortPath.rightCols(polyN) - shortPath.leftCols(polyN);
+            // pieceIdx = (deltas.colwise().norm() / lengthPerPiece).cast<int>().transpose();
+            // pieceIdx.array() += 1;
+            // pieceN = pieceIdx.sum();
+
             getShortestPath(headPVA.col(0), tailPVA.col(0),
                             vPolytopes, smoothEps, shortPath);
-            const Eigen::Matrix3Xd deltas = shortPath.rightCols(polyN) - shortPath.leftCols(polyN);
-            pieceIdx = (deltas.colwise().norm() / lengthPerPiece).cast<int>().transpose();
-            pieceIdx.array() += 1;
+                    
+            // ------------------------------------------------------------
+            // Robust setup boundary.
+            //
+            // getShortestPath() currently has no failure return value.
+            // A numerically failed shortest-path solve may therefore leave
+            // non-finite coordinates in `shortPath`.
+            //
+            // Never allow such values to reach the floating-point -> int
+            // conversion used to build pieceIdx.  In particular, production
+            // uses lengthPerPiece = infinity, so NaN / infinity can otherwise
+            // become an invalid negative Eigen segment length in setInitial().
+            // ------------------------------------------------------------
+            if (shortPath.cols() != polyN + 1 ||
+                !shortPath.allFinite())
+            {
+                return false;
+            }
+            
+            if (!(lengthPerPiece > 0.0) ||
+                std::isnan(lengthPerPiece))
+            {
+                return false;
+            }
+            
+            const Eigen::Matrix3Xd deltas =
+                shortPath.rightCols(polyN) -
+                shortPath.leftCols(polyN);
+            
+            if (!deltas.allFinite())
+            {
+                return false;
+            }
+            
+            // Production commonly uses +infinity to request exactly one
+            // trajectory piece per corridor.  Handle that intention directly
+            // instead of relying on finite_length / infinity -> 0.
+            if (std::isinf(lengthPerPiece))
+            {
+                pieceIdx =
+                    Eigen::VectorXi::Ones(polyN);
+            }
+            else
+            {
+                const Eigen::RowVectorXd pieceRatios =
+                    deltas.colwise().norm() /
+                    lengthPerPiece;
+            
+                if (!pieceRatios.allFinite())
+                {
+                    return false;
+                }
+            
+                pieceIdx =
+                    pieceRatios
+                        .cast<int>()
+                        .transpose();
+            
+                pieceIdx.array() += 1;
+            
+                if ((pieceIdx.array() <= 0).any())
+                {
+                    return false;
+                }
+            }
+            
             pieceN = pieceIdx.sum();
+            
+            if (pieceN <= 0)
+            {
+                return false;
+            }
 
             temporalDim = pieceN;
             spatialDim = 0;
