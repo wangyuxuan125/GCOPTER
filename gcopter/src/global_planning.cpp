@@ -13,6 +13,7 @@
 #include "gcopter/trajectory_metrics.hpp"
 #include "gcopter/corridor_metrics.hpp"
 #include "gcopter/effective_face_metrics.hpp"
+#include "gcopter/corridor_safety_metrics.hpp"
 #include "gcopter/rils_baseline.hpp"
 #include "gcopter/firi.hpp"
 #include "gcopter/flatness.hpp"
@@ -4884,6 +4885,229 @@ public:
                         << " scaled_effective_faces="
                         << scaledEffectiveFaceTestMetric
                                .effective_faces);
+
+                    // ========================================================
+                    // D1d-0 common corridor-safety kernel self-test.
+                    //
+                    // Reuse the analytical box:
+                    //
+                    //     x in [-1, 1]
+                    //     y in [-2, 2]
+                    //     z in [-3, 3]
+                    //
+                    // Test A:
+                    //     all obstacle samples are outside or exactly on the
+                    //     boundary, and map bounds contain the whole box.
+                    //
+                    // Test B:
+                    //     add q=(0,0,0), which lies one metre inside the
+                    //     closest x face.
+                    //
+                    // Test C:
+                    //     no obstacle penetration, but shrink the map lower-x
+                    //     bound to -0.5 m.  The box reaches x=-1, hence map
+                    //     violation must be +0.5 m.
+                    // ========================================================
+                                        
+                    std::vector<Eigen::Vector3d>
+                        safetyTestSurfaceSafe;
+                                        
+                    safetyTestSurfaceSafe.emplace_back(
+                        1.0,
+                        0.0,
+                        0.0);   // exact boundary contact
+                    
+                    safetyTestSurfaceSafe.emplace_back(
+                        2.0,
+                        0.0,
+                        0.0);
+                    
+                    safetyTestSurfaceSafe.emplace_back(
+                        0.0,
+                        3.0,
+                        0.0);
+                    
+                    safetyTestSurfaceSafe.emplace_back(
+                        0.0,
+                        0.0,
+                        4.0);
+                    
+                    
+                    const Eigen::Vector3d safetyTestMapLow(
+                        -5.0,
+                        -5.0,
+                        -5.0);
+                    
+                    const Eigen::Vector3d safetyTestMapHigh(
+                        5.0,
+                        5.0,
+                        5.0);
+                    
+                    
+                    const auto safetyTestSafe =
+                        gcopter_benchmark::
+                            evaluateCommonCorridorSafety(
+                                volumeTestBox,
+                                safetyTestSurfaceSafe,
+                                safetyTestMapLow,
+                                safetyTestMapHigh);
+                            
+                            
+                    std::vector<Eigen::Vector3d>
+                        safetyTestSurfaceUnsafe =
+                            safetyTestSurfaceSafe;
+                            
+                    safetyTestSurfaceUnsafe.emplace_back(
+                        0.0,
+                        0.0,
+                        0.0);
+                    
+                    
+                    const auto safetyTestObstacleFailure =
+                        gcopter_benchmark::
+                            evaluateCommonCorridorSafety(
+                                volumeTestBox,
+                                safetyTestSurfaceUnsafe,
+                                safetyTestMapLow,
+                                safetyTestMapHigh);
+                            
+                            
+                    const Eigen::Vector3d
+                        safetyTestNarrowMapLow(
+                            -0.5,
+                            -5.0,
+                            -5.0);
+                        
+                        
+                    const auto safetyTestMapFailure =
+                        gcopter_benchmark::
+                            evaluateCommonCorridorSafety(
+                                volumeTestBox,
+                                safetyTestSurfaceSafe,
+                                safetyTestNarrowMapLow,
+                                safetyTestMapHigh);
+                            
+                            
+                    const bool corridorSafetySelfTestValid =
+                        // ----------------------------------------------------
+                        // Safe case.
+                        // Boundary contact is explicitly accepted.
+                        // ----------------------------------------------------
+                        safetyTestSafe.valid &&
+                        safetyTestSafe.safe &&
+                        safetyTestSafe
+                            .obstacle_surface_safe &&
+                        safetyTestSafe
+                            .map_contained &&
+                            
+                        std::abs(
+                            safetyTestSafe
+                                .min_obstacle_exclusion_margin_m) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            safetyTestSafe
+                                .max_obstacle_penetration_m) <=
+                            1.0e-9 &&
+                        
+                        
+                        // ----------------------------------------------------
+                        // Obstacle penetration case.
+                        //
+                        // At q=(0,0,0):
+                        //
+                        //     max H residual = -1 m.
+                        // ----------------------------------------------------
+                        safetyTestObstacleFailure.valid &&
+                        !safetyTestObstacleFailure.safe &&
+                        !safetyTestObstacleFailure
+                             .obstacle_surface_safe &&
+                        safetyTestObstacleFailure
+                            .map_contained &&
+                        
+                        std::abs(
+                            safetyTestObstacleFailure
+                                .min_obstacle_exclusion_margin_m +
+                            1.0) <=
+                            1.0e-9 &&
+                        
+                        std::abs(
+                            safetyTestObstacleFailure
+                                .max_obstacle_penetration_m -
+                            1.0) <=
+                            1.0e-9 &&
+                        
+                        
+                        // ----------------------------------------------------
+                        // Map-containment failure case.
+                        //
+                        // box min x = -1
+                        // map min x = -0.5
+                        // violation  = 0.5 m.
+                        // ----------------------------------------------------
+                        safetyTestMapFailure.valid &&
+                        !safetyTestMapFailure.safe &&
+                        safetyTestMapFailure
+                            .obstacle_surface_safe &&
+                        !safetyTestMapFailure
+                             .map_contained &&
+                        
+                        std::abs(
+                            safetyTestMapFailure
+                                .max_map_violation_m -
+                            0.5) <=
+                            1.0e-9;
+                        
+                        
+                    ROS_INFO_STREAM(
+                        "TF_CORRIDOR_SAFETY_SELFTEST "
+                    
+                        << "valid="
+                        << corridorSafetySelfTestValid
+                    
+                        << " safe_valid="
+                        << safetyTestSafe.valid
+                    
+                        << " safe="
+                        << safetyTestSafe.safe
+                    
+                        << " safe_obstacle="
+                        << safetyTestSafe
+                               .obstacle_surface_safe
+                    
+                        << " safe_map="
+                        << safetyTestSafe
+                               .map_contained
+                    
+                        << " safe_min_exclusion_m="
+                        << safetyTestSafe
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " safe_penetration_m="
+                        << safetyTestSafe
+                               .max_obstacle_penetration_m
+                    
+                        << " obstacle_failure_safe="
+                        << safetyTestObstacleFailure.safe
+                    
+                        << " obstacle_failure_min_exclusion_m="
+                        << safetyTestObstacleFailure
+                               .min_obstacle_exclusion_margin_m
+                    
+                        << " obstacle_failure_penetration_m="
+                        << safetyTestObstacleFailure
+                               .max_obstacle_penetration_m
+                    
+                        << " map_failure_safe="
+                        << safetyTestMapFailure.safe
+                    
+                        << " map_failure_contained="
+                        << safetyTestMapFailure
+                               .map_contained
+                    
+                        << " map_failure_violation_m="
+                        << safetyTestMapFailure
+                               .max_map_violation_m);
 
                     // ========================================================
                     // C2d: Controlled-Geometry CSGN-vs-Identity ablation.
