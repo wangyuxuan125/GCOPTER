@@ -32,7 +32,7 @@ struct ExactSfcProjectionOptions
 
     // Numerical safeguards only, not planning hyperparameters.
     int max_exchange_iterations =
-        32;
+        64;
 
     int max_qp_sweeps =
         200000;
