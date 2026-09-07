@@ -2639,6 +2639,287 @@ public:
 
             if (hardProjectionSourceReady)
             {
+                // ========================================================
+                // Bernstein hard-SFC assembly diagnostic.
+                //
+                // Read-only:
+                //   - reuse existing Active-Witness SFC;
+                //   - reuse existing optimized soft MINCO state;
+                //   - do not solve a Bernstein QP;
+                //   - do not modify the trajectory.
+                // ========================================================
+                const auto bernsteinDiagStarted =
+                    std::chrono::steady_clock::now();
+
+                traj_relevant::
+                    MincoWaypointAffineMap
+                        bernsteinAffineMap;
+
+                const auto bernsteinAffineStarted =
+                    std::chrono::steady_clock::now();
+
+                const bool bernsteinAffineValid =
+                    bernsteinAffineMap.build(
+                        iniState,
+                        finState,
+                        activeGuideBackendResult
+                            .optimized_times);
+
+                const double bernsteinAffineBuildMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            bernsteinAffineStarted)
+                        .count();
+
+                traj_relevant::
+                    BernsteinSfcConstraintSet
+                        bernsteinSet;
+
+                bool bernsteinSoftPointValid =
+                    false;
+
+                bool bernsteinSoftFeasible =
+                    false;
+
+                int bernsteinMatrixViolated =
+                    0;
+
+                int bernsteinControlFaceViolated =
+                    0;
+
+                double maxBernsteinNormalizedResidual =
+                    -std::numeric_limits<double>::
+                        infinity();
+
+                double maxBernsteinControlViolationM =
+                    -std::numeric_limits<double>::
+                        infinity();
+
+                if (bernsteinAffineValid)
+                {
+                    bernsteinSet =
+                        traj_relevant::
+                            buildBernsteinSfcConstraintSet(
+                                bernsteinAffineMap,
+                                activeGuideHPolys);
+
+                    if (bernsteinSet.valid &&
+                        !bernsteinSet.fixed_infeasible)
+                    {
+                        const Eigen::VectorXd z0 =
+                            traj_relevant::
+                                flattenMincoWaypoints(
+                                    activeGuideBackendResult
+                                        .optimized_points);
+
+                        bernsteinSoftPointValid =
+                            z0.size() ==
+                                bernsteinSet
+                                    .variable_dimension &&
+                            z0.allFinite();
+
+                        if (bernsteinSoftPointValid)
+                        {
+                            const Eigen::VectorXd residual =
+                                bernsteinSet.A * z0 -
+                                bernsteinSet.b;
+
+                            if (residual.size() > 0 &&
+                                residual.allFinite())
+                            {
+                                maxBernsteinNormalizedResidual =
+                                    residual.maxCoeff();
+
+                                for (int rowId = 0;
+                                     rowId < residual.size();
+                                     ++rowId)
+                                {
+                                    if (residual(rowId) >
+                                        1.0e-10)
+                                    {
+                                        ++bernsteinMatrixViolated;
+                                    }
+                                }
+                            }
+                        }
+
+                        // -----------------------------------------------
+                        // Independent physical-space Bernstein check.
+                        //
+                        // Signed distance:
+                        //
+                        //     (n^T C_k + d) / ||n||
+                        //
+                        // is measured in meters.
+                        // -----------------------------------------------
+                        for (int pieceId = 0;
+                             pieceId <
+                                 bernsteinAffineMap
+                                     .pieceCount();
+                             ++pieceId)
+                        {
+                            const auto &poly =
+                                activeGuideHPolys[
+                                    pieceId];
+
+                            for (int controlId = 0;
+                                 controlId < 6;
+                                 ++controlId)
+                            {
+                                Eigen::Vector3d
+                                    controlOffset;
+
+                                Eigen::VectorXd
+                                    controlBeta;
+
+                                if (!bernsteinAffineMap
+                                         .bernsteinControlAffineCoefficients(
+                                             pieceId,
+                                             controlId,
+                                             controlOffset,
+                                             controlBeta))
+                                {
+                                    continue;
+                                }
+
+                                Eigen::Vector3d controlPoint =
+                                    controlOffset;
+
+                                for (int waypointId = 0;
+                                     waypointId <
+                                         controlBeta.size();
+                                     ++waypointId)
+                                {
+                                    controlPoint +=
+                                        controlBeta(
+                                            waypointId) *
+                                        activeGuideBackendResult
+                                            .optimized_points
+                                            .col(
+                                                waypointId);
+                                }
+
+                                for (int faceId = 0;
+                                     faceId <
+                                         poly.rows();
+                                     ++faceId)
+                                {
+                                    const Eigen::Vector3d normal =
+                                        poly.block<1, 3>(
+                                                faceId,
+                                                0)
+                                            .transpose();
+
+                                    const double normalNorm =
+                                        normal.norm();
+
+                                    if (!std::isfinite(
+                                            normalNorm) ||
+                                        normalNorm <=
+                                            1.0e-12)
+                                    {
+                                        continue;
+                                    }
+
+                                    const double
+                                        signedDistanceM =
+                                            (normal.dot(
+                                                 controlPoint) +
+                                             poly(
+                                                 faceId,
+                                                 3)) /
+                                            normalNorm;
+
+                                    maxBernsteinControlViolationM =
+                                        std::max(
+                                            maxBernsteinControlViolationM,
+                                            signedDistanceM);
+
+                                    if (signedDistanceM >
+                                        1.0e-6)
+                                    {
+                                        ++bernsteinControlFaceViolated;
+                                    }
+                                }
+                            }
+                        }
+
+                        bernsteinSoftFeasible =
+                            bernsteinSoftPointValid &&
+                            std::isfinite(
+                                maxBernsteinControlViolationM) &&
+                            maxBernsteinControlViolationM <=
+                                1.0e-6;
+                    }
+                }
+
+                // Bernstein convex-hull containment is sufficient
+                // for continuous-time containment. Therefore this
+                // condition must never occur.
+                const bool bernsteinImplicationMismatch =
+                    bernsteinSoftFeasible &&
+                    activeGuideBackendResult
+                        .exact_certificate_valid &&
+                    !activeGuideBackendResult
+                         .exact_contained;
+
+                const double bernsteinDiagTotalMs =
+                    std::chrono::duration<
+                        double,
+                        std::milli>(
+                            std::chrono::
+                                steady_clock::now() -
+                            bernsteinDiagStarted)
+                        .count();
+
+                ROS_INFO_STREAM(
+                    "TF_BERNSTEIN_SFC_DIAG "
+                    << "affine_valid="
+                    << bernsteinAffineValid
+                    << " constraint_valid="
+                    << bernsteinSet.valid
+                    << " fixed_infeasible="
+                    << bernsteinSet.fixed_infeasible
+                    << " soft_point_valid="
+                    << bernsteinSoftPointValid
+                    << " soft_feasible="
+                    << bernsteinSoftFeasible
+                    << " variables="
+                    << bernsteinSet.variable_dimension
+                    << " constraints="
+                    << bernsteinSet.constraint_count
+                    << " skipped_fixed="
+                    << bernsteinSet
+                           .skipped_fixed_constraints
+                    << " matrix_violated="
+                    << bernsteinMatrixViolated
+                    << " control_face_violated="
+                    << bernsteinControlFaceViolated
+                    << " max_normalized_residual="
+                    << maxBernsteinNormalizedResidual
+                    << " max_control_violation_m="
+                    << maxBernsteinControlViolationM
+                    << " affine_build_ms="
+                    << bernsteinAffineBuildMs
+                    << " assembly_ms="
+                    << bernsteinSet.assembly_ms
+                    << " diag_total_ms="
+                    << bernsteinDiagTotalMs
+                    << " exact_cert_valid="
+                    << activeGuideBackendResult
+                           .exact_certificate_valid
+                    << " exact_contained="
+                    << activeGuideBackendResult
+                           .exact_contained
+                    << " exact_violation_m="
+                    << activeGuideBackendResult
+                           .exact_max_violation_m
+                    << " implication_mismatch="
+                    << bernsteinImplicationMismatch);
+
                 traj_relevant::
                     ExactSfcProjectionOptions
                         projectionOptions;
