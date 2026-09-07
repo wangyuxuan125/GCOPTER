@@ -358,6 +358,198 @@ public:
         return beta.allFinite();
     }
 
+    // ============================================================
+    // Quintic Bernstein control point as an affine function of
+    // the intermediate MINCO waypoints.
+    //
+    // For normalized time s in [0, 1],
+    //
+    //     p(s) = sum_{j=0}^5 a_j s^j
+    //          = sum_{k=0}^5 B_k^5(s) C_k.
+    //
+    // Power -> Bernstein:
+    //
+    //     C_k =
+    //       sum_{j=0}^k
+    //         binom(k,j) / binom(5,j) * a_j.
+    //
+    // Fixed head/tail PVA and fixed piece times imply
+    //
+    //     C_k(P)
+    //       = offset_k
+    //       + sum_j beta_k(j) P_j.
+    //
+    // No SFC is generated here.
+    // ============================================================
+    inline bool bernsteinControlAffineCoefficients(
+        const int pieceId,
+        const int controlId,
+        Eigen::Vector3d &offset,
+        Eigen::VectorXd &beta) const
+    {
+        offset.setZero();
+        beta.resize(0);
+
+        if (!valid_ ||
+            pieceId < 0 ||
+            pieceId >= piece_count_ ||
+            controlId < 0 ||
+            controlId > 5)
+        {
+            return false;
+        }
+
+        // Rows: Bernstein control index k.
+        // Columns: ascending power index j.
+        static const double weight[6][6] =
+        {
+            {1.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+            {1.0, 1.0 / 5.0, 0.0, 0.0, 0.0, 0.0},
+            {1.0, 2.0 / 5.0, 1.0 / 10.0, 0.0, 0.0, 0.0},
+            {1.0, 3.0 / 5.0, 3.0 / 10.0, 1.0 / 10.0, 0.0, 0.0},
+            {1.0, 4.0 / 5.0, 3.0 / 5.0, 2.0 / 5.0, 1.0 / 5.0, 0.0},
+            {1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
+        };
+
+        auto controlPointFromPiece =
+            [&](const Piece<5> &piece,
+                Eigen::Vector3d &control)
+            {
+                const Piece<5>::CoefficientMat power =
+                    piece.normalizePosCoeffMat();
+
+                if (!power.allFinite())
+                {
+                    return false;
+                }
+
+                control.setZero();
+
+                // normalizePosCoeffMat() preserves GCOPTER's
+                // coefficient ordering:
+                //
+                //     col(5) = s^0
+                //     col(4) = s^1
+                //       ...
+                //     col(0) = s^5
+                for (int powerId = 0;
+                     powerId <= controlId;
+                     ++powerId)
+                {
+                    control +=
+                        weight[controlId][powerId] *
+                        power.col(5 - powerId);
+                }
+
+                return control.allFinite();
+            };
+
+        if (!controlPointFromPiece(
+                offset_trajectory_[pieceId],
+                offset))
+        {
+            return false;
+        }
+
+        beta.resize(waypoint_count_);
+
+        for (int waypointId = 0;
+             waypointId < waypoint_count_;
+             ++waypointId)
+        {
+            Eigen::Vector3d basisControl;
+
+            if (!controlPointFromPiece(
+                    basis_trajectories_[waypointId][pieceId],
+                    basisControl))
+            {
+                beta.resize(0);
+                return false;
+            }
+
+            // All Cartesian axes share the same scalar MINCO
+            // waypoint response.  The basis trajectory was built
+            // with unit x displacement.
+            beta(waypointId) =
+                basisControl.x();
+        }
+
+        return offset.allFinite() &&
+               beta.allFinite();
+    }
+
+
+    // ============================================================
+    // One Bernstein-hull HARD corridor inequality.
+    //
+    // Existing SFC face:
+    //
+    //     n^T x + d <= 0.
+    //
+    // Requiring every Bernstein control point C_k to satisfy this
+    // face gives
+    //
+    //     row^T z <= rhs,
+    //
+    // where
+    //
+    //     z = [P_0^T P_1^T ...]^T.
+    //
+    // Because a Bezier curve lies in the convex hull of its
+    // control points, satisfying all six control-point inequalities
+    // is sufficient for continuous-time containment of the entire
+    // quintic piece.
+    // ============================================================
+    inline bool buildBernsteinHalfspaceConstraintRow(
+        const int pieceId,
+        const int controlId,
+        const Eigen::Vector3d &normal,
+        const double planeOffset,
+        Eigen::VectorXd &row,
+        double &rhs) const
+    {
+        row.resize(0);
+        rhs = 0.0;
+
+        if (!normal.allFinite() ||
+            !std::isfinite(planeOffset))
+        {
+            return false;
+        }
+
+        Eigen::Vector3d offset;
+        Eigen::VectorXd beta;
+
+        if (!bernsteinControlAffineCoefficients(
+                pieceId,
+                controlId,
+                offset,
+                beta))
+        {
+            return false;
+        }
+
+        row =
+            Eigen::VectorXd::Zero(
+                variableDimension());
+
+        for (int waypointId = 0;
+             waypointId < waypoint_count_;
+             ++waypointId)
+        {
+            row.segment<3>(
+                3 * waypointId) =
+                beta(waypointId) *
+                normal;
+        }
+
+        rhs =
+            -planeOffset -
+            normal.dot(offset);
+
+        return row.allFinite() &&
+               std::isfinite(rhs);
+    }
 
     inline bool evaluatePosition(
         const int pieceId,
