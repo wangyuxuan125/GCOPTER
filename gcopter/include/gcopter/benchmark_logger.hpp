@@ -660,6 +660,281 @@ struct BenchmarkCorridorRecord
 
 };
 
+struct BenchmarkControlledCorridorRecordV3
+{
+    // ========================================================
+    // Identity / pairing provenance
+    // ========================================================
+    std::string case_id;
+
+    std::string route_fingerprint;
+
+    std::string method =
+        "unknown";
+
+    std::string variant =
+        "unknown";
+
+    int repeat_id =
+        0;
+
+    double timestamp_s =
+        0.0;
+
+    int corridor_id =
+        -1;
+
+    int source_segment_id =
+        -1;
+
+    bool geometry_mapping_valid =
+        false;
+
+    std::string geometry_protocol =
+        "controlled_geometry";
+
+
+    // ========================================================
+    // Construction provenance
+    // ========================================================
+    std::string construction_algorithm =
+        "unknown";
+
+    std::string construction_direction_basis =
+        "unknown";
+
+    std::string reference_direction_source =
+        "direct_minco_csgn";
+
+    int input_obstacle_count =
+        0;
+
+    int local_obstacle_count =
+        -1;
+
+    // Actual H rows stored / consumed downstream.
+    int raw_face_count =
+        0;
+
+    int raw_domain_face_count =
+        0;
+
+    int raw_obstacle_face_count =
+        0;
+
+
+    // Active-Witness-only workload.
+    //
+    // -1 means not applicable for this method.
+    std::int64_t aw_candidate_count =
+        -1;
+
+    std::int64_t aw_active_rounds =
+        -1;
+
+    std::int64_t aw_witness_distance_tests =
+        -1;
+
+    std::int64_t aw_obstacle_face_tests =
+        -1;
+
+
+    // ========================================================
+    // COMMON independent safety measurement
+    // ========================================================
+    bool common_safety_valid =
+        false;
+
+    bool common_safe =
+        false;
+
+    bool obstacle_surface_safe =
+        false;
+
+    bool map_contained =
+        false;
+
+    int obstacle_sample_count =
+        0;
+
+    int worst_obstacle_index =
+        -1;
+
+    double min_obstacle_exclusion_margin_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_obstacle_penetration_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_map_violation_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Seed / neighboring overlap geometry
+    // ========================================================
+    bool seed_metric_valid =
+        false;
+
+    double seed_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    // True only when the construction explicitly prescribes
+    // a protected finite radius as part of the algorithm.
+    //
+    // CSGN / Identity compact ablation:
+    //     true
+    //
+    // FIRI / RILS:
+    //     false
+    bool protected_radius_prescribed =
+        false;
+
+    double prescribed_protected_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    bool prescribed_seed_satisfied =
+        false;
+
+    bool junction_overlap_valid =
+        false;
+
+    double junction_overlap_radius_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    bool prescribed_overlap_satisfied =
+        false;
+
+
+    // ========================================================
+    // COMMON Direct-MINCO CSGN reference basis
+    // ========================================================
+    bool reference_metric_valid =
+        false;
+
+    double reference_utility_eig0 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double reference_utility_eig1 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double reference_utility_eig2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    int reference_metric_source_piece_id =
+        -1;
+
+    double reference_metric_mapping_distance =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // COMMON midpoint directional widths
+    //
+    // Reference point:
+    //
+    //     q_i = 0.5 * (route[i] + route[i+1])
+    //
+    // Directions:
+    //
+    //     eig0 = hard
+    //     eig1 = middle
+    //     eig2 = easy
+    // ========================================================
+    bool point_width_valid =
+        false;
+
+    double point_reference_margin_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double hard_width_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double middle_width_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_positive_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_negative_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double easy_width_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // COMMON final-polytope volume
+    // ========================================================
+    bool volume_valid =
+        false;
+
+    double volume_m3 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    int volume_vertex_count =
+        0;
+
+    int volume_triangle_count =
+        0;
+
+    double volume_max_vertex_violation_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // COMMON LP-based effective-face measurement
+    // ========================================================
+    bool effective_face_valid =
+        false;
+
+    int unique_plane_groups =
+        0;
+
+    int duplicate_rows =
+        0;
+
+    int effective_face_count =
+        0;
+
+    int redundant_plane_groups =
+        0;
+};
+
 class CaseCsvLogger
 {
 private:
@@ -1623,6 +1898,218 @@ public:
                 << '\n';
         }
 
+        return static_cast<bool>(
+            output);
+    }
+
+    inline bool
+    logControlledCorridorsV3(
+        const std::vector<
+            BenchmarkControlledCorridorRecordV3> &records)
+    {
+        if (!enabled_ ||
+            records.empty())
+        {
+            return true;
+        }
+    
+        std::lock_guard<std::mutex>
+            lock(
+                mutex_);
+            
+        if (!ensureDirectory())
+        {
+            return false;
+        }
+    
+        const std::string path =
+            directory_ +
+            "/benchmark_corridors_v3.csv";
+    
+        const bool header =
+            fileNeedsHeader(
+                path);
+            
+        std::ofstream output(
+            path,
+            std::ios::out |
+                std::ios::app);
+        
+        if (!output)
+        {
+            return false;
+        }
+    
+    
+        if (header)
+        {
+            output
+                << "schema_version,"
+        
+                << "case_id,"
+                << "route_fingerprint,"
+                << "method,"
+                << "variant,"
+                << "repeat_id,"
+                << "timestamp_s,"
+                << "corridor_id,"
+                << "source_segment_id,"
+                << "geometry_mapping_valid,"
+                << "geometry_protocol,"
+        
+                << "construction_algorithm,"
+                << "construction_direction_basis,"
+                << "reference_direction_source,"
+                << "input_obstacle_count,"
+                << "local_obstacle_count,"
+                << "raw_face_count,"
+                << "raw_domain_face_count,"
+                << "raw_obstacle_face_count,"
+                << "aw_candidate_count,"
+                << "aw_active_rounds,"
+                << "aw_witness_distance_tests,"
+                << "aw_obstacle_face_tests,"
+        
+                << "common_safety_valid,"
+                << "common_safe,"
+                << "obstacle_surface_safe,"
+                << "map_contained,"
+                << "obstacle_sample_count,"
+                << "worst_obstacle_index,"
+                << "min_obstacle_exclusion_margin_m,"
+                << "max_obstacle_penetration_m,"
+                << "max_map_violation_m,"
+        
+                << "seed_metric_valid,"
+                << "seed_radius_m,"
+                << "protected_radius_prescribed,"
+                << "prescribed_protected_radius_m,"
+                << "prescribed_seed_satisfied,"
+                << "junction_overlap_valid,"
+                << "junction_overlap_radius_m,"
+                << "prescribed_overlap_satisfied,"
+        
+                << "reference_metric_valid,"
+                << "reference_utility_eig0,"
+                << "reference_utility_eig1,"
+                << "reference_utility_eig2,"
+                << "reference_metric_source_piece_id,"
+                << "reference_metric_mapping_distance,"
+        
+                << "point_width_valid,"
+                << "point_reference_margin_m,"
+                << "hard_positive_m,"
+                << "hard_negative_m,"
+                << "hard_width_m,"
+                << "middle_positive_m,"
+                << "middle_negative_m,"
+                << "middle_width_m,"
+                << "easy_positive_m,"
+                << "easy_negative_m,"
+                << "easy_width_m,"
+        
+                << "volume_valid,"
+                << "volume_m3,"
+                << "volume_vertex_count,"
+                << "volume_triangle_count,"
+                << "volume_max_vertex_violation_m,"
+        
+                << "effective_face_valid,"
+                << "unique_plane_groups,"
+                << "duplicate_rows,"
+                << "effective_face_count,"
+                << "redundant_plane_groups\n";
+        }
+    
+    
+        output <<
+            std::setprecision(17);
+    
+    
+        for (const auto &record :
+             records)
+        {
+            output
+                << 3 << ','
+        
+                << csv(record.case_id) << ','
+                << csv(record.route_fingerprint) << ','
+                << csv(record.method) << ','
+                << csv(record.variant) << ','
+                << record.repeat_id << ','
+                << record.timestamp_s << ','
+                << record.corridor_id << ','
+                << record.source_segment_id << ','
+                << record.geometry_mapping_valid << ','
+                << csv(record.geometry_protocol) << ','
+        
+                << csv(record.construction_algorithm) << ','
+                << csv(record.construction_direction_basis) << ','
+                << csv(record.reference_direction_source) << ','
+                << record.input_obstacle_count << ','
+                << record.local_obstacle_count << ','
+                << record.raw_face_count << ','
+                << record.raw_domain_face_count << ','
+                << record.raw_obstacle_face_count << ','
+                << record.aw_candidate_count << ','
+                << record.aw_active_rounds << ','
+                << record.aw_witness_distance_tests << ','
+                << record.aw_obstacle_face_tests << ','
+        
+                << record.common_safety_valid << ','
+                << record.common_safe << ','
+                << record.obstacle_surface_safe << ','
+                << record.map_contained << ','
+                << record.obstacle_sample_count << ','
+                << record.worst_obstacle_index << ','
+                << record.min_obstacle_exclusion_margin_m << ','
+                << record.max_obstacle_penetration_m << ','
+                << record.max_map_violation_m << ','
+        
+                << record.seed_metric_valid << ','
+                << record.seed_radius_m << ','
+                << record.protected_radius_prescribed << ','
+                << record.prescribed_protected_radius_m << ','
+                << record.prescribed_seed_satisfied << ','
+                << record.junction_overlap_valid << ','
+                << record.junction_overlap_radius_m << ','
+                << record.prescribed_overlap_satisfied << ','
+        
+                << record.reference_metric_valid << ','
+                << record.reference_utility_eig0 << ','
+                << record.reference_utility_eig1 << ','
+                << record.reference_utility_eig2 << ','
+                << record.reference_metric_source_piece_id << ','
+                << record.reference_metric_mapping_distance << ','
+        
+                << record.point_width_valid << ','
+                << record.point_reference_margin_m << ','
+                << record.hard_positive_m << ','
+                << record.hard_negative_m << ','
+                << record.hard_width_m << ','
+                << record.middle_positive_m << ','
+                << record.middle_negative_m << ','
+                << record.middle_width_m << ','
+                << record.easy_positive_m << ','
+                << record.easy_negative_m << ','
+                << record.easy_width_m << ','
+        
+                << record.volume_valid << ','
+                << record.volume_m3 << ','
+                << record.volume_vertex_count << ','
+                << record.volume_triangle_count << ','
+                << record.volume_max_vertex_violation_m << ','
+        
+                << record.effective_face_valid << ','
+                << record.unique_plane_groups << ','
+                << record.duplicate_rows << ','
+                << record.effective_face_count << ','
+                << record.redundant_plane_groups
+        
+                << '\n';
+        }
+    
+    
         return static_cast<bool>(
             output);
     }
