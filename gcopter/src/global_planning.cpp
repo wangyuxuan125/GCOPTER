@@ -9611,6 +9611,1381 @@ public:
                         << controlledRilsSafety
                                .max_obstacle_penetration_m);
 
+                    // ========================================================
+                    // D1e-1: Final Controlled-E1 v3 corridor records.
+                    //
+                    // Exactly:
+                    //
+                    //     4 methods
+                    //         x
+                    //     original route segments
+                    //
+                    // using one common post-processing path.
+                    //
+                    // Final v3 methods:
+                    //
+                    //   proposed : CSGN + Active-Witness compact corridor
+                    //   identity : Identity-metric Active-Witness ablation
+                    //   firi     : Controlled standard FIRI
+                    //   rils     : Controlled Liu/DecompUtil RILS
+                    //
+                    // IMPORTANT:
+                    //
+                    //   benchmark_corridors_v2.csv remains untouched.
+                    //
+                    //   benchmark_corridors_v3.csv is the final cross-method
+                    //   Controlled-E1 geometry table.
+                    //
+                    // This entire block remains outside all frozen Proposed
+                    // guide / CSGN / corridor / setup / optimize / hard timers.
+                    // ========================================================
+                                        
+                                        
+                    // --------------------------------------------------------
+                    // Independent per-method one-segment -> one-corridor
+                    // mapping validity.
+                    //
+                    // Do not couple Proposed validity to Identity validity here.
+                    // The final CSV must preserve method-specific failures.
+                    // --------------------------------------------------------
+                    const bool controlledV3CsgnMappingValid =
+                        controlledCsgnSuccess &&
+                        static_cast<int>(
+                            controlledCsgnHPolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledCsgnInfos.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    const bool controlledV3IdentityMappingValid =
+                        controlledIdentitySuccess &&
+                        static_cast<int>(
+                            controlledIdentityHPolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledIdentityInfos.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    const bool controlledV3FiriMappingValid =
+                        controlledFiriSuccess &&
+                        static_cast<int>(
+                            controlledFiriHPolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledFiriDiagnostics.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledFiriLocalObstacleCounts.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    const bool controlledV3RilsMappingValid =
+                        controlledRilsBuild.success &&
+                        controlledRilsBuild.mapping_valid &&
+                        static_cast<int>(
+                            controlledRilsBuild.hpolys.size()) ==
+                            controlledSegmentCount &&
+                        static_cast<int>(
+                            controlledRilsBuild.infos.size()) ==
+                            controlledSegmentCount;
+                        
+                        
+                    // ========================================================
+                    // One frozen CSGN reference basis per ORIGINAL route
+                    // segment.
+                    //
+                    // All four methods are measured against these SAME
+                    // eigendirections.
+                    //
+                    // SelfAdjointEigenSolver returns ascending eigenvalues:
+                    //
+                    //   eig0 = hard / low deformation utility
+                    //   eig1 = middle
+                    //   eig2 = easy / high deformation utility
+                    // ========================================================
+                        
+                    struct ControlledV3ReferenceBasis
+                    {
+                        bool valid =
+                            false;
+                    
+                        Eigen::Vector3d eigenvalues =
+                            Eigen::Vector3d::Constant(
+                                std::numeric_limits<double>::
+                                    quiet_NaN());
+                            
+                        Eigen::Matrix3d directions =
+                            Eigen::Matrix3d::Identity();
+                            
+                        int source_piece_id =
+                            -1;
+                            
+                        double mapping_distance =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    };
+                    
+                    
+                    std::vector<
+                        ControlledV3ReferenceBasis>
+                        controlledV3ReferenceBases(
+                            std::max(
+                                0,
+                                controlledSegmentCount));
+                            
+                            
+                    for (int segmentId = 0;
+                         segmentId <
+                             controlledSegmentCount;
+                         ++segmentId)
+                    {
+                        ControlledV3ReferenceBasis &basis =
+                            controlledV3ReferenceBases[
+                                segmentId];
+                            
+                            
+                        if (segmentId >=
+                                static_cast<int>(
+                                    guideSegmentMetrics.size()) ||
+                            !guideSegmentMetrics[
+                                 segmentId]
+                                 .valid ||
+                            !guideSegmentMetrics[
+                                 segmentId]
+                                 .utility
+                                 .allFinite())
+                        {
+                            continue;
+                        }
+                    
+                    
+                        Eigen::Matrix3d utility =
+                            guideSegmentMetrics[
+                                segmentId]
+                                .utility;
+                            
+                            
+                        utility =
+                            0.5 *
+                            (
+                                utility +
+                                utility.transpose());
+                            
+                            
+                        Eigen::SelfAdjointEigenSolver<
+                            Eigen::Matrix3d>
+                            utilitySolver(
+                                utility);
+                            
+                            
+                        if (utilitySolver.info() !=
+                                Eigen::Success ||
+                            utilitySolver
+                                    .eigenvalues()
+                                    .minCoeff() <=
+                                0.0)
+                        {
+                            continue;
+                        }
+                    
+                    
+                        basis.eigenvalues =
+                            utilitySolver
+                                .eigenvalues();
+                    
+                        basis.directions =
+                            utilitySolver
+                                .eigenvectors();
+                    
+                    
+                        // Same deterministic eigenvector sign convention as
+                        // all previous Controlled E1 measurements.
+                        for (int directionId = 0;
+                             directionId < 3;
+                             ++directionId)
+                        {
+                            Eigen::Vector3d direction =
+                                basis.directions.col(
+                                    directionId);
+                                
+                            Eigen::Index pivotId =
+                                0;
+                                
+                                
+                            direction
+                                .cwiseAbs()
+                                .maxCoeff(
+                                    &pivotId);
+                                
+                                
+                            if (direction(
+                                    pivotId) <
+                                0.0)
+                            {
+                                direction =
+                                    -direction;
+                            }
+                        
+                        
+                            basis.directions.col(
+                                directionId) =
+                                direction;
+                        }
+                    
+                    
+                        basis.source_piece_id =
+                            guideSegmentMetrics[
+                                segmentId]
+                                .source_piece_id;
+                            
+                        basis.mapping_distance =
+                            guideSegmentMetrics[
+                                segmentId]
+                                .mapping_distance;
+                            
+                        basis.valid =
+                            true;
+                    }
+                    
+                    
+                    // ========================================================
+                    // Final v3 row buffer.
+                    //
+                    // Even if one method fails mapping, we still create one row
+                    // per intended original segment, with
+                    //
+                    //     geometry_mapping_valid = false
+                    //
+                    // and invalid common metrics.
+                    //
+                    // This prevents silent deletion of failed baselines from the
+                    // future route-bank statistics.
+                    // ========================================================
+                    
+                    std::vector<
+                        gcopter_benchmark::
+                            BenchmarkControlledCorridorRecordV3>
+                        benchmarkControlledCorridorRecordsV3;
+                    
+                    
+                    benchmarkControlledCorridorRecordsV3.reserve(
+                        4 *
+                        std::max(
+                            0,
+                            controlledSegmentCount));
+                        
+                        
+                    constexpr double
+                        controlledV3GeometryToleranceM =
+                            1.0e-8;
+                        
+                        
+                    int controlledV3FaceAccountingMismatchCount =
+                        0;
+                        
+                    int controlledV3EffectiveRawMismatchCount =
+                        0;
+                        
+                        
+                    // ========================================================
+                    // Shared row constructor.
+                    //
+                    // `fillConstructionProvenance()` is the ONLY method-specific
+                    // part.
+                    //
+                    // Everything geometrical below is measured by the same:
+                    //
+                    //   evaluateCommonCorridorSafety()
+                    //   evaluateSegmentSeedRadius()
+                    //   evaluateJunctionOverlapRadius()
+                    //   evaluatePointDirectionalWidth()
+                    //   evaluateHPolytopeVolume()
+                    //   evaluateEffectiveFaces()
+                    //
+                    // kernels.
+                    // ========================================================
+                        
+                    auto appendControlledV3Method =
+                        [&](const std::string &methodName,
+                            const std::string &variantName,
+                            const std::string &constructionAlgorithm,
+                            const std::string &constructionBasis,
+                            const std::vector<Eigen::MatrixX4d> &hPolys,
+                            const bool mappingValid,
+                            const bool protectedRadiusPrescribed,
+                            const auto &fillConstructionProvenance)
+                    {
+                        for (int corridorId = 0;
+                             corridorId <
+                                 controlledSegmentCount;
+                             ++corridorId)
+                        {
+                            gcopter_benchmark::
+                                BenchmarkControlledCorridorRecordV3
+                                    record;
+                        
+                        
+                            // ====================================================
+                            // Identity / pairing provenance.
+                            // ====================================================
+                            record.case_id =
+                                effectiveCaseId;
+                        
+                            record.route_fingerprint =
+                                routeFingerprint;
+                        
+                            record.method =
+                                methodName;
+                        
+                            record.variant =
+                                variantName;
+                        
+                            record.repeat_id =
+                                config.benchmarkRepeatId;
+                        
+                            record.timestamp_s =
+                                benchmarkRunReady
+                                    ? benchmarkRun.timestamp_s
+                                    : ros::Time::now().toSec();
+                        
+                            record.corridor_id =
+                                corridorId;
+                        
+                            record.source_segment_id =
+                                corridorId;
+                        
+                            record.geometry_mapping_valid =
+                                mappingValid;
+                        
+                            record.geometry_protocol =
+                                "controlled_geometry";
+                        
+                        
+                            // ====================================================
+                            // Construction provenance.
+                            // ====================================================
+                            record.construction_algorithm =
+                                constructionAlgorithm;
+                        
+                            record.construction_direction_basis =
+                                constructionBasis;
+                        
+                            record.reference_direction_source =
+                                "direct_minco_csgn";
+                        
+                            // Every method begins from the same global shared
+                            // dilated surface cloud.
+                            record.input_obstacle_count =
+                                static_cast<int>(
+                                    pc.size());
+                                
+                                
+                            // ====================================================
+                            // COMMON reference CSGN metric provenance exists
+                            // independently of whether this method's construction
+                            // succeeded.
+                            // ====================================================
+                            if (corridorId <
+                                    static_cast<int>(
+                                        controlledV3ReferenceBases.size()) &&
+                                controlledV3ReferenceBases[
+                                    corridorId]
+                                    .valid)
+                            {
+                                const auto &basis =
+                                    controlledV3ReferenceBases[
+                                        corridorId];
+                                    
+                                    
+                                record.reference_metric_valid =
+                                    true;
+                                    
+                                record.reference_utility_eig0 =
+                                    basis.eigenvalues(0);
+                                    
+                                record.reference_utility_eig1 =
+                                    basis.eigenvalues(1);
+                                    
+                                record.reference_utility_eig2 =
+                                    basis.eigenvalues(2);
+                                    
+                                record.reference_metric_source_piece_id =
+                                    basis.source_piece_id;
+                                    
+                                record.reference_metric_mapping_distance =
+                                    basis.mapping_distance;
+                            }
+                        
+                        
+                            // ====================================================
+                            // If construction/mapping failed, preserve an explicit
+                            // failure row rather than indexing incomplete vectors.
+                            // ====================================================
+                            if (mappingValid)
+                            {
+                                const Eigen::MatrixX4d &hPoly =
+                                    hPolys[
+                                        corridorId];
+                                    
+                                    
+                                // ------------------------------------------------
+                                // Actual stored H-row workload.
+                                // ------------------------------------------------
+                                record.raw_face_count =
+                                    static_cast<int>(
+                                        hPoly.rows());
+                                    
+                                    
+                                // Method-specific construction provenance only.
+                                fillConstructionProvenance(
+                                    record,
+                                    corridorId);
+                                
+                                
+                                if (record.raw_domain_face_count +
+                                        record.raw_obstacle_face_count !=
+                                    record.raw_face_count)
+                                {
+                                    ++controlledV3FaceAccountingMismatchCount;
+                                }
+                            
+                            
+                                // =================================================
+                                // COMMON independent safety.
+                                // =================================================
+                                const auto safetyMetric =
+                                    gcopter_benchmark::
+                                        evaluateCommonCorridorSafety(
+                                            hPoly,
+                                            pc,
+                                            voxelMap.getOrigin(),
+                                            voxelMap.getCorner());
+                                        
+                                        
+                                record.common_safety_valid =
+                                    safetyMetric.valid;
+                                        
+                                record.common_safe =
+                                    safetyMetric.safe;
+                                        
+                                record.obstacle_surface_safe =
+                                    safetyMetric
+                                        .obstacle_surface_safe;
+                                        
+                                record.map_contained =
+                                    safetyMetric
+                                        .map_contained;
+                                        
+                                record.obstacle_sample_count =
+                                    safetyMetric
+                                        .obstacle_sample_count;
+                                        
+                                record.worst_obstacle_index =
+                                    safetyMetric
+                                        .worst_obstacle_index;
+                                        
+                                record.min_obstacle_exclusion_margin_m =
+                                    safetyMetric
+                                        .min_obstacle_exclusion_margin_m;
+                                        
+                                record.max_obstacle_penetration_m =
+                                    safetyMetric
+                                        .max_obstacle_penetration_m;
+                                        
+                                record.max_map_violation_m =
+                                    safetyMetric
+                                        .max_map_violation_m;
+                                        
+                                        
+                                // =================================================
+                                // COMMON seed radius.
+                                // =================================================
+                                const auto seedMetric =
+                                    gcopter_benchmark::
+                                        evaluateSegmentSeedRadius(
+                                            hPoly,
+                                            route[
+                                                corridorId],
+                                            route[
+                                                corridorId + 1]);
+                                            
+                                            
+                                record.seed_metric_valid =
+                                    seedMetric.valid;
+                                            
+                                record.seed_radius_m =
+                                    seedMetric.radius_m;
+                                            
+                                            
+                                record.protected_radius_prescribed =
+                                    protectedRadiusPrescribed;
+                                            
+                                            
+                                if (protectedRadiusPrescribed)
+                                {
+                                    record.prescribed_protected_radius_m =
+                                        protectedRadiusM;
+                                
+                                    record.prescribed_seed_satisfied =
+                                        seedMetric.valid &&
+                                        seedMetric.radius_m +
+                                                controlledV3GeometryToleranceM >=
+                                            protectedRadiusM;
+                                }
+                            
+                            
+                                // =================================================
+                                // COMMON neighboring junction overlap.
+                                //
+                                // Last corridor has no successor:
+                                //
+                                //     junction_overlap_valid = false
+                                //
+                                // by definition.
+                                // =================================================
+                                gcopter_benchmark::
+                                    CorridorOverlapMetric
+                                        overlapMetric;
+                            
+                            
+                                if (corridorId + 1 <
+                                    controlledSegmentCount)
+                                {
+                                    overlapMetric =
+                                        gcopter_benchmark::
+                                            evaluateJunctionOverlapRadius(
+                                                hPoly,
+                                                hPolys[
+                                                    corridorId + 1],
+                                                route[
+                                                    corridorId + 1]);
+                                }
+                            
+                            
+                                record.junction_overlap_valid =
+                                    overlapMetric.valid;
+                            
+                                record.junction_overlap_radius_m =
+                                    overlapMetric.radius_m;
+                            
+                            
+                                if (protectedRadiusPrescribed &&
+                                    corridorId + 1 <
+                                        controlledSegmentCount)
+                                {
+                                    record.prescribed_overlap_satisfied =
+                                        overlapMetric.valid &&
+                                        overlapMetric.radius_m +
+                                                controlledV3GeometryToleranceM >=
+                                            protectedRadiusM;
+                                }
+                            
+                            
+                                // =================================================
+                                // COMMON midpoint directional width.
+                                // =================================================
+                                if (record.reference_metric_valid)
+                                {
+                                    const auto &basis =
+                                        controlledV3ReferenceBases[
+                                            corridorId];
+                                        
+                                        
+                                    const Eigen::Vector3d
+                                        directionalReferencePoint =
+                                            0.5 *
+                                            (
+                                                route[
+                                                    corridorId] +
+                                                route[
+                                                    corridorId + 1]);
+                                                
+                                                
+                                    const auto hardWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                hPoly,
+                                                directionalReferencePoint,
+                                                basis
+                                                    .directions
+                                                    .col(0));
+                                            
+                                            
+                                    const auto middleWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                hPoly,
+                                                directionalReferencePoint,
+                                                basis
+                                                    .directions
+                                                    .col(1));
+                                            
+                                            
+                                    const auto easyWidth =
+                                        gcopter_benchmark::
+                                            evaluatePointDirectionalWidth(
+                                                hPoly,
+                                                directionalReferencePoint,
+                                                basis
+                                                    .directions
+                                                    .col(2));
+                                            
+                                            
+                                    record.point_width_valid =
+                                        hardWidth.valid &&
+                                        middleWidth.valid &&
+                                        easyWidth.valid &&
+                                        hardWidth.reference_inside &&
+                                        middleWidth.reference_inside &&
+                                        easyWidth.reference_inside;
+                                            
+                                            
+                                    if (record.point_width_valid)
+                                    {
+                                        record.point_reference_margin_m =
+                                            std::min(
+                                                hardWidth
+                                                    .min_reference_margin_m,
+                                                std::min(
+                                                    middleWidth
+                                                        .min_reference_margin_m,
+                                                    easyWidth
+                                                        .min_reference_margin_m));
+                                                
+                                                
+                                        record.hard_positive_m =
+                                            hardWidth.positive_m;
+                                                
+                                        record.hard_negative_m =
+                                            hardWidth.negative_m;
+                                                
+                                        record.hard_width_m =
+                                            hardWidth.width_m;
+                                                
+                                                
+                                        record.middle_positive_m =
+                                            middleWidth.positive_m;
+                                                
+                                        record.middle_negative_m =
+                                            middleWidth.negative_m;
+                                                
+                                        record.middle_width_m =
+                                            middleWidth.width_m;
+                                                
+                                                
+                                        record.easy_positive_m =
+                                            easyWidth.positive_m;
+                                                
+                                        record.easy_negative_m =
+                                            easyWidth.negative_m;
+                                                
+                                        record.easy_width_m =
+                                            easyWidth.width_m;
+                                    }
+                                }
+                            
+                            
+                                // =================================================
+                                // COMMON final H-polytope volume.
+                                // =================================================
+                                const auto volumeMetric =
+                                    gcopter_benchmark::
+                                        evaluateHPolytopeVolume(
+                                            hPoly);
+                                        
+                                        
+                                record.volume_valid =
+                                    volumeMetric.valid;
+                                        
+                                        
+                                if (volumeMetric.valid)
+                                {
+                                    record.volume_m3 =
+                                        volumeMetric.volume_m3;
+                                
+                                    record.volume_vertex_count =
+                                        volumeMetric.vertex_count;
+                                
+                                    record.volume_triangle_count =
+                                        volumeMetric.triangle_count;
+                                
+                                    record.volume_max_vertex_violation_m =
+                                        volumeMetric
+                                            .max_vertex_violation_m;
+                                }
+                            
+                            
+                                // =================================================
+                                // COMMON LP-based effective-face count.
+                                // =================================================
+                                const auto effectiveFaceMetric =
+                                    gcopter_benchmark::
+                                        evaluateEffectiveFaces(
+                                            hPoly);
+                                        
+                                        
+                                record.effective_face_valid =
+                                    effectiveFaceMetric.valid;
+                                        
+                                        
+                                if (effectiveFaceMetric.valid)
+                                {
+                                    record.unique_plane_groups =
+                                        effectiveFaceMetric
+                                            .unique_plane_groups;
+                                
+                                    record.duplicate_rows =
+                                        effectiveFaceMetric
+                                            .duplicate_rows;
+                                
+                                    record.effective_face_count =
+                                        effectiveFaceMetric
+                                            .effective_faces;
+                                
+                                    record.redundant_plane_groups =
+                                        effectiveFaceMetric
+                                            .redundant_plane_groups;
+                                
+                                
+                                    if (effectiveFaceMetric.raw_rows !=
+                                        record.raw_face_count)
+                                    {
+                                        ++controlledV3EffectiveRawMismatchCount;
+                                    }
+                                }
+                            }
+                        
+                        
+                            benchmarkControlledCorridorRecordsV3
+                                .push_back(
+                                    record);
+                                
+                                
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_E1_V3_ROW "
+                            
+                                << "method="
+                                << record.method
+                            
+                                << " variant="
+                                << record.variant
+                            
+                                << " corridor_id="
+                                << record.corridor_id
+                            
+                                << " mapping_valid="
+                                << record.geometry_mapping_valid
+                            
+                                << " safety_valid="
+                                << record.common_safety_valid
+                            
+                                << " safe="
+                                << record.common_safe
+                            
+                                << " seed_valid="
+                                << record.seed_metric_valid
+                            
+                                << " seed_radius_m="
+                                << record.seed_radius_m
+                            
+                                << " protected_prescribed="
+                                << record.protected_radius_prescribed
+                            
+                                << " prescribed_seed_satisfied="
+                                << record.prescribed_seed_satisfied
+                            
+                                << " overlap_valid="
+                                << record.junction_overlap_valid
+                            
+                                << " overlap_radius_m="
+                                << record.junction_overlap_radius_m
+                            
+                                << " prescribed_overlap_satisfied="
+                                << record.prescribed_overlap_satisfied
+                            
+                                << " width_valid="
+                                << record.point_width_valid
+                            
+                                << " hard_width_m="
+                                << record.hard_width_m
+                            
+                                << " mid_width_m="
+                                << record.middle_width_m
+                            
+                                << " easy_width_m="
+                                << record.easy_width_m
+                            
+                                << " volume_valid="
+                                << record.volume_valid
+                            
+                                << " volume_m3="
+                                << record.volume_m3
+                            
+                                << " raw_faces="
+                                << record.raw_face_count
+                            
+                                << " effective_valid="
+                                << record.effective_face_valid
+                            
+                                << " effective_faces="
+                                << record.effective_face_count);
+                        }
+                    };
+                    
+                    
+                    // ========================================================
+                    // Proposed / CSGN Active-Witness.
+                    // ========================================================
+                    
+                    appendControlledV3Method(
+                        "proposed",
+                        "csgn_active_controlled",
+                        "active_witness_compact",
+                        "csgn_eigenbasis",
+                        controlledCsgnHPolys,
+                        controlledV3CsgnMappingValid,
+                        true,
+                        [&](gcopter_benchmark::
+                                BenchmarkControlledCorridorRecordV3 &record,
+                            const int corridorId)
+                        {
+                            const auto &info =
+                                controlledCsgnInfos[
+                                    corridorId];
+                                
+                                
+                            record.local_obstacle_count =
+                                info.local_obstacle_count;
+                                
+                            record.raw_domain_face_count =
+                                info.domain_face_count;
+                                
+                            record.raw_obstacle_face_count =
+                                info.selected_obstacle_face_count;
+                                
+                            record.aw_candidate_count =
+                                info.candidate_count;
+                                
+                            record.aw_active_rounds =
+                                info.active_witness_rounds;
+                                
+                            record.aw_witness_distance_tests =
+                                info.witness_distance_tests;
+                                
+                            record.aw_obstacle_face_tests =
+                                info.obstacle_face_tests;
+                        });
+                    
+                    
+                    // ========================================================
+                    // Identity Active-Witness ablation.
+                    // ========================================================
+                    
+                    appendControlledV3Method(
+                        "identity",
+                        "identity_active_controlled",
+                        "active_witness_compact",
+                        "world_xyz_identity",
+                        controlledIdentityHPolys,
+                        controlledV3IdentityMappingValid,
+                        true,
+                        [&](gcopter_benchmark::
+                                BenchmarkControlledCorridorRecordV3 &record,
+                            const int corridorId)
+                        {
+                            const auto &info =
+                                controlledIdentityInfos[
+                                    corridorId];
+                                
+                                
+                            record.local_obstacle_count =
+                                info.local_obstacle_count;
+                                
+                            record.raw_domain_face_count =
+                                info.domain_face_count;
+                                
+                            record.raw_obstacle_face_count =
+                                info.selected_obstacle_face_count;
+                                
+                            record.aw_candidate_count =
+                                info.candidate_count;
+                                
+                            record.aw_active_rounds =
+                                info.active_witness_rounds;
+                                
+                            record.aw_witness_distance_tests =
+                                info.witness_distance_tests;
+                                
+                            record.aw_obstacle_face_tests =
+                                info.obstacle_face_tests;
+                        });
+                    
+                    
+                    // ========================================================
+                    // Controlled standard FIRI.
+                    //
+                    // Active-Witness counters deliberately remain -1.
+                    // ========================================================
+                    
+                    appendControlledV3Method(
+                        "firi",
+                        "standard_firi_controlled",
+                        "standard_firi_reference",
+                        "standard_firi_euclidean",
+                        controlledFiriHPolys,
+                        controlledV3FiriMappingValid,
+                        false,
+                        [&](gcopter_benchmark::
+                                BenchmarkControlledCorridorRecordV3 &record,
+                            const int corridorId)
+                        {
+                            const auto &diagnostics =
+                                controlledFiriDiagnostics[
+                                    corridorId];
+                                
+                                
+                            record.local_obstacle_count =
+                                controlledFiriLocalObstacleCounts[
+                                    corridorId];
+                                
+                            record.raw_obstacle_face_count =
+                                diagnostics
+                                    .obstacle_face_count;
+                                
+                            record.raw_domain_face_count =
+                                std::max(
+                                    0,
+                                    record.raw_face_count -
+                                        record.raw_obstacle_face_count);
+                        });
+                    
+                    
+                    // ========================================================
+                    // Controlled Liu / DecompUtil RILS.
+                    //
+                    // Active-Witness counters deliberately remain -1.
+                    //
+                    // raw domain faces:
+                    //
+                    //     local RILS bbox
+                    //         +
+                    //     appended finite GCOPTER map bounds.
+                    // ========================================================
+                    
+                    appendControlledV3Method(
+                        "rils",
+                        "liu_rils_controlled",
+                        "liu_decompros_rils_reference",
+                        "decompros_ellipsoid",
+                        controlledRilsBuild.hpolys,
+                        controlledV3RilsMappingValid,
+                        false,
+                        [&](gcopter_benchmark::
+                                BenchmarkControlledCorridorRecordV3 &record,
+                            const int corridorId)
+                        {
+                            const auto &info =
+                                controlledRilsBuild.infos[
+                                    corridorId];
+                                
+                                
+                            record.local_obstacle_count =
+                                info.local_obstacle_count;
+                                
+                            record.raw_obstacle_face_count =
+                                info.obstacle_faces;
+                                
+                            record.raw_domain_face_count =
+                                info.local_domain_faces +
+                                info.map_domain_faces;
+                        });
+                    
+                    
+                    // ========================================================
+                    // Final v3 structural / measurement audit.
+                    //
+                    // Do NOT require `common_safe` here:
+                    //
+                    // safety is an experimental result, not a condition for
+                    // deciding whether the data row itself is valid.
+                    //
+                    // Likewise, prescribed protection is only applicable to
+                    // Proposed and Identity.
+                    // ========================================================
+                    
+                    const int controlledV3ExpectedRows =
+                        4 *
+                        std::max(
+                            0,
+                            controlledSegmentCount);
+                        
+                        
+                    const int controlledV3ExpectedOverlapRows =
+                        4 *
+                        std::max(
+                            0,
+                            controlledSegmentCount - 1);
+                        
+                        
+                    int controlledV3MappingRows =
+                        0;
+                        
+                    int controlledV3SafetyValidRows =
+                        0;
+                        
+                    int controlledV3SafeRows =
+                        0;
+                        
+                    int controlledV3SeedValidRows =
+                        0;
+                        
+                    int controlledV3OverlapValidRows =
+                        0;
+                        
+                    int controlledV3ReferenceMetricValidRows =
+                        0;
+                        
+                    int controlledV3PointWidthValidRows =
+                        0;
+                        
+                    int controlledV3VolumeValidRows =
+                        0;
+                        
+                    int controlledV3EffectiveFaceValidRows =
+                        0;
+                        
+                    int controlledV3ProtectedPrescribedRows =
+                        0;
+                        
+                    int controlledV3PrescribedSeedSatisfiedRows =
+                        0;
+                        
+                    int controlledV3PrescribedOverlapSatisfiedRows =
+                        0;
+                        
+                        
+                    int controlledV3ProposedRows =
+                        0;
+                        
+                    int controlledV3IdentityRows =
+                        0;
+                        
+                    int controlledV3FiriRows =
+                        0;
+                        
+                    int controlledV3RilsRows =
+                        0;
+                        
+                        
+                    int controlledV3ProposedRawFaces =
+                        0;
+                        
+                    int controlledV3IdentityRawFaces =
+                        0;
+                        
+                    int controlledV3FiriRawFaces =
+                        0;
+                        
+                    int controlledV3RilsRawFaces =
+                        0;
+                        
+                        
+                    int controlledV3ProposedEffectiveFaces =
+                        0;
+                        
+                    int controlledV3IdentityEffectiveFaces =
+                        0;
+                        
+                    int controlledV3FiriEffectiveFaces =
+                        0;
+                        
+                    int controlledV3RilsEffectiveFaces =
+                        0;
+                        
+                        
+                    for (const auto &record :
+                         benchmarkControlledCorridorRecordsV3)
+                    {
+                        controlledV3MappingRows +=
+                            record.geometry_mapping_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3SafetyValidRows +=
+                            record.common_safety_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3SafeRows +=
+                            record.common_safe
+                                ? 1
+                                : 0;
+                    
+                        controlledV3SeedValidRows +=
+                            record.seed_metric_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3OverlapValidRows +=
+                            record.junction_overlap_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3ReferenceMetricValidRows +=
+                            record.reference_metric_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3PointWidthValidRows +=
+                            record.point_width_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3VolumeValidRows +=
+                            record.volume_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3EffectiveFaceValidRows +=
+                            record.effective_face_valid
+                                ? 1
+                                : 0;
+                    
+                        controlledV3ProtectedPrescribedRows +=
+                            record.protected_radius_prescribed
+                                ? 1
+                                : 0;
+                    
+                        controlledV3PrescribedSeedSatisfiedRows +=
+                            record.prescribed_seed_satisfied
+                                ? 1
+                                : 0;
+                    
+                        controlledV3PrescribedOverlapSatisfiedRows +=
+                            record.prescribed_overlap_satisfied
+                                ? 1
+                                : 0;
+                    
+                    
+                        if (record.method ==
+                            "proposed")
+                        {
+                            ++controlledV3ProposedRows;
+                        
+                            controlledV3ProposedRawFaces +=
+                                record.raw_face_count;
+                        
+                            controlledV3ProposedEffectiveFaces +=
+                                record.effective_face_count;
+                        }
+                        else if (record.method ==
+                                 "identity")
+                        {
+                            ++controlledV3IdentityRows;
+                        
+                            controlledV3IdentityRawFaces +=
+                                record.raw_face_count;
+                        
+                            controlledV3IdentityEffectiveFaces +=
+                                record.effective_face_count;
+                        }
+                        else if (record.method ==
+                                 "firi")
+                        {
+                            ++controlledV3FiriRows;
+                        
+                            controlledV3FiriRawFaces +=
+                                record.raw_face_count;
+                        
+                            controlledV3FiriEffectiveFaces +=
+                                record.effective_face_count;
+                        }
+                        else if (record.method ==
+                                 "rils")
+                        {
+                            ++controlledV3RilsRows;
+                        
+                            controlledV3RilsRawFaces +=
+                                record.raw_face_count;
+                        
+                            controlledV3RilsEffectiveFaces +=
+                                record.effective_face_count;
+                        }
+                    }
+                    
+                    
+                    // --------------------------------------------------------
+                    // Schema completeness, NOT experimental method success.
+                    //
+                    // This is intentionally strict for the fixed dev regression.
+                    // On a route-bank case where one baseline construction fails,
+                    // the v3 rows are still written, but schema_valid becomes 0.
+                    // --------------------------------------------------------
+                    
+                    const bool controlledV3SchemaValid =
+                        static_cast<int>(
+                            benchmarkControlledCorridorRecordsV3.size()) ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3ProposedRows ==
+                            controlledSegmentCount &&
+                        
+                        controlledV3IdentityRows ==
+                            controlledSegmentCount &&
+                        
+                        controlledV3FiriRows ==
+                            controlledSegmentCount &&
+                        
+                        controlledV3RilsRows ==
+                            controlledSegmentCount &&
+                        
+                        controlledV3MappingRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3SafetyValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3SeedValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3OverlapValidRows ==
+                            controlledV3ExpectedOverlapRows &&
+                        
+                        controlledV3ReferenceMetricValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3PointWidthValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3VolumeValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3EffectiveFaceValidRows ==
+                            controlledV3ExpectedRows &&
+                        
+                        controlledV3FaceAccountingMismatchCount ==
+                            0 &&
+                        
+                        controlledV3EffectiveRawMismatchCount ==
+                            0;
+                        
+                        
+                    // ========================================================
+                    // Write final Controlled-E1 v3 table.
+                    //
+                    // Keep v2 logging immediately below unchanged.
+                    // ========================================================
+                        
+                    bool benchmarkControlledCorridorV3LogSuccess =
+                        true;
+                        
+                        
+                    if (benchmarkRunReady)
+                    {
+                        benchmarkControlledCorridorV3LogSuccess =
+                            benchmarkCorridorLogger
+                                .logControlledCorridorsV3(
+                                    benchmarkControlledCorridorRecordsV3);
+                                
+                                
+                        if (!benchmarkControlledCorridorV3LogSuccess)
+                        {
+                            ROS_ERROR(
+                                "Failed to append "
+                                "benchmark_corridors_v3.csv.");
+                        }
+                    }
+                    
+                    
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_CORRIDORS_V3 "
+                    
+                        << "schema_valid="
+                        << controlledV3SchemaValid
+                    
+                        << " rows="
+                        << benchmarkControlledCorridorRecordsV3
+                               .size()
+                    
+                        << " expected_rows="
+                        << controlledV3ExpectedRows
+                    
+                        << " mapping_rows="
+                        << controlledV3MappingRows
+                    
+                        << " safety_valid_rows="
+                        << controlledV3SafetyValidRows
+                    
+                        << " safe_rows="
+                        << controlledV3SafeRows
+                    
+                        << " seed_valid_rows="
+                        << controlledV3SeedValidRows
+                    
+                        << " overlap_valid_rows="
+                        << controlledV3OverlapValidRows
+                    
+                        << " expected_overlap_rows="
+                        << controlledV3ExpectedOverlapRows
+                    
+                        << " reference_metric_valid_rows="
+                        << controlledV3ReferenceMetricValidRows
+                    
+                        << " point_width_valid_rows="
+                        << controlledV3PointWidthValidRows
+                    
+                        << " volume_valid_rows="
+                        << controlledV3VolumeValidRows
+                    
+                        << " effective_face_valid_rows="
+                        << controlledV3EffectiveFaceValidRows
+                    
+                        << " protected_prescribed_rows="
+                        << controlledV3ProtectedPrescribedRows
+                    
+                        << " prescribed_seed_satisfied_rows="
+                        << controlledV3PrescribedSeedSatisfiedRows
+                    
+                        << " prescribed_overlap_satisfied_rows="
+                        << controlledV3PrescribedOverlapSatisfiedRows
+                    
+                        << " face_accounting_mismatches="
+                        << controlledV3FaceAccountingMismatchCount
+                    
+                        << " effective_raw_mismatches="
+                        << controlledV3EffectiveRawMismatchCount
+                    
+                        << " proposed_raw="
+                        << controlledV3ProposedRawFaces
+                    
+                        << " proposed_effective="
+                        << controlledV3ProposedEffectiveFaces
+                    
+                        << " identity_raw="
+                        << controlledV3IdentityRawFaces
+                    
+                        << " identity_effective="
+                        << controlledV3IdentityEffectiveFaces
+                    
+                        << " firi_raw="
+                        << controlledV3FiriRawFaces
+                    
+                        << " firi_effective="
+                        << controlledV3FiriEffectiveFaces
+                    
+                        << " rils_raw="
+                        << controlledV3RilsRawFaces
+                    
+                        << " rils_effective="
+                        << controlledV3RilsEffectiveFaces
+                    
+                        << " log_success="
+                        << benchmarkControlledCorridorV3LogSuccess
+                    
+                        << " file=benchmark_corridors_v3.csv");
+
                     bool benchmarkCorridorLogSuccess =
                         true;  
 
