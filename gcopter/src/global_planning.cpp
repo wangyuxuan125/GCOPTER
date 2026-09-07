@@ -9639,8 +9639,8 @@ public:
                     // This entire block remains outside all frozen Proposed
                     // guide / CSGN / corridor / setup / optimize / hard timers.
                     // ========================================================
-                                        
-                                        
+
+
                     // --------------------------------------------------------
                     // Independent per-method one-segment -> one-corridor
                     // mapping validity.
@@ -9726,8 +9726,8 @@ public:
                             std::numeric_limits<double>::
                                 quiet_NaN();
                     };
-                    
-                    
+
+
                     std::vector<
                         ControlledV3ReferenceBasis>
                         controlledV3ReferenceBases(
@@ -9848,8 +9848,8 @@ public:
                         basis.valid =
                             true;
                     }
-                    
-                    
+
+
                     // ========================================================
                     // Final v3 row buffer.
                     //
@@ -9863,13 +9863,13 @@ public:
                     // This prevents silent deletion of failed baselines from the
                     // future route-bank statistics.
                     // ========================================================
-                    
+
                     std::vector<
                         gcopter_benchmark::
                             BenchmarkControlledCorridorRecordV3>
                         benchmarkControlledCorridorRecordsV3;
-                    
-                    
+
+
                     benchmarkControlledCorridorRecordsV3.reserve(
                         4 *
                         std::max(
@@ -10433,12 +10433,12 @@ public:
                                 << record.effective_face_count);
                         }
                     };
-                    
-                    
+
+
                     // ========================================================
                     // Proposed / CSGN Active-Witness.
                     // ========================================================
-                    
+
                     appendControlledV3Method(
                         "proposed",
                         "csgn_active_controlled",
@@ -10814,8 +10814,8 @@ public:
                                 record.effective_face_count;
                         }
                     }
-                    
-                    
+
+
                     // --------------------------------------------------------
                     // Schema completeness, NOT experimental method success.
                     //
@@ -10823,7 +10823,7 @@ public:
                     // On a route-bank case where one baseline construction fails,
                     // the v3 rows are still written, but schema_valid becomes 0.
                     // --------------------------------------------------------
-                    
+
                     const bool controlledV3SchemaValid =
                         static_cast<int>(
                             benchmarkControlledCorridorRecordsV3.size()) ==
@@ -10897,8 +10897,8 @@ public:
                                 "benchmark_corridors_v3.csv.");
                         }
                     }
-                    
-                    
+
+
                     ROS_INFO_STREAM(
                         "TF_BENCHMARK_CORRIDORS_V3 "
                     
@@ -10985,6 +10985,817 @@ public:
                         << benchmarkControlledCorridorV3LogSuccess
                     
                         << " file=benchmark_corridors_v3.csv");
+
+                    // ========================================================
+                    // D2a-0 / E2-0:
+                    // Four-method COMMON soft-GCOPTER backend replay.
+                    //
+                    // Experimental control:
+                    //
+                    //   same route
+                    //   same initial / final PVA states
+                    //   same GCOPTER backend implementation
+                    //   same physical parameters
+                    //   same dynamic limits
+                    //   same penalty weights
+                    //   same quadrature resolution
+                    //   same optimizer stopping tolerance
+                    //
+                    // ONLY the controlled corridor set changes.
+                    //
+                    // IMPORTANT:
+                    //
+                    // This is a post-hoc E2 diagnostic block.
+                    // Its setup_ms / optimize_ms are NOT part of the frozen E4
+                    // Proposed timing protocol.
+                    //
+                    // E2 compares the SOFT common-backend trajectories.
+                    // Exact-Hard remains a separate E5 experiment.
+                    // ========================================================
+                                        
+                    struct ControlledE2BackendEvaluation
+                    {
+                        bool mapping_valid =
+                            false;
+                    
+                        bool backend_attempted =
+                            false;
+                    
+                        BackendAbResult backend;
+                    
+                        bool trajectory_rebuild_ready =
+                            false;
+                    
+                        double rebuilt_smoothness_energy =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    
+                        double rebuild_duration_delta_s =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+                    
+                        gcopter_benchmark::
+                            FinalTrajectoryMetrics
+                                trajectory_metrics;
+                    };
+                    
+                    
+                    // --------------------------------------------------------
+                    // One common E2 execution path.
+                    //
+                    // runBackendAb() performs the SAME GCOPTER setup/optimize
+                    // for every corridor method.
+                    //
+                    // We then reconstruct the exact optimized MINCO state from
+                    // the returned internal waypoints and piece times and feed it
+                    // to the already-frozen common trajectory evaluator.
+                    // --------------------------------------------------------
+                    auto evaluateControlledE2Backend =
+                        [&](const std::string &methodName,
+                            const std::vector<Eigen::MatrixX4d> &hPolys,
+                            const bool mappingValid)
+                            -> ControlledE2BackendEvaluation
+                    {
+                        ControlledE2BackendEvaluation result;
+                    
+                        result.mapping_valid =
+                            mappingValid &&
+                            static_cast<int>(
+                                hPolys.size()) ==
+                                controlledSegmentCount;
+                            
+                            
+                        if (!result.mapping_valid)
+                        {
+                            ROS_INFO_STREAM(
+                                "TF_CONTROLLED_E2_BACKEND "
+                            
+                                << "method="
+                                << methodName
+                            
+                                << " mapping_valid=0"
+                            
+                                << " backend_attempted=0"
+                            
+                                << " setup_success=0"
+                            
+                                << " optimize_success=0"
+                            
+                                << " optimized_state_ready=0"
+                            
+                                << " rebuild_ready=0"
+                            
+                                << " metrics_valid=0");
+                            
+                            return result;
+                        }
+                    
+                    
+                        result.backend_attempted =
+                            true;
+                    
+                    
+                        // ====================================================
+                        // SAME backend call for every method.
+                        // ====================================================
+                        result.backend =
+                            runBackendAb(
+                                hPolys);
+                            
+                            
+                        // ====================================================
+                        // Reconstruct exactly the optimized soft MINCO state.
+                        //
+                        // No additional optimization occurs here.
+                        // ====================================================
+                        if (result.backend
+                                .optimized_state_ready)
+                        {
+                            const int pieceCount =
+                                static_cast<int>(
+                                    result.backend
+                                        .optimized_times
+                                        .size());
+                                
+                                
+                            const bool stateValid =
+                                pieceCount > 0 &&
+                                
+                                result.backend
+                                        .optimized_points
+                                        .rows() ==
+                                    3 &&
+                                
+                                result.backend
+                                        .optimized_points
+                                        .cols() ==
+                                    pieceCount - 1 &&
+                                
+                                result.backend
+                                        .optimized_points
+                                        .allFinite() &&
+                                
+                                result.backend
+                                        .optimized_times
+                                        .allFinite() &&
+                                
+                                (
+                                    result.backend
+                                        .optimized_times
+                                        .array() >
+                                    0.0)
+                                    .all();
+                                
+                                
+                            if (stateValid)
+                            {
+                                minco::MINCO_S3NU
+                                    rebuiltMinco;
+                            
+                            
+                                rebuiltMinco.setConditions(
+                                    iniState,
+                                    finState,
+                                    pieceCount);
+                                
+                                
+                                rebuiltMinco.setParameters(
+                                    result.backend
+                                        .optimized_points,
+                                    result.backend
+                                        .optimized_times);
+                                
+                                
+                                Trajectory<5>
+                                    rebuiltTrajectory;
+                                
+                                
+                                rebuiltMinco.getTrajectory(
+                                    rebuiltTrajectory);
+                                
+                                
+                                rebuiltMinco.getEnergy(
+                                    result
+                                        .rebuilt_smoothness_energy);
+                                
+                                
+                                result.trajectory_rebuild_ready =
+                                    rebuiltTrajectory
+                                            .getPieceNum() ==
+                                        pieceCount &&
+                                
+                                    std::isfinite(
+                                        result
+                                            .rebuilt_smoothness_energy);
+                                    
+                                    
+                                if (result
+                                        .trajectory_rebuild_ready)
+                                {
+                                    result.trajectory_metrics =
+                                        gcopter_benchmark::
+                                            evaluateFinalTrajectoryMetrics(
+                                                rebuiltTrajectory,
+                                                result
+                                                    .rebuilt_smoothness_energy,
+                                                config.weightT,
+                                                config.vehicleMass,
+                                                config.gravAcc,
+                                                config.horizDrag,
+                                                config.vertDrag,
+                                                config.parasDrag,
+                                                config.speedEps,
+                                                1.0e-3);
+                                            
+                                            
+                                    if (result
+                                            .trajectory_metrics
+                                            .valid &&
+                                        std::isfinite(
+                                            result.backend
+                                                .trajectory_duration))
+                                    {
+                                        result
+                                            .rebuild_duration_delta_s =
+                                            result
+                                                .trajectory_metrics
+                                                .duration_s -
+                                            result.backend
+                                                .trajectory_duration;
+                                    }
+                                }
+                            }
+                        }
+                    
+                    
+                        // ====================================================
+                        // One complete E2 diagnostic line.
+                        //
+                        // Precision semantics:
+                        //
+                        // vmax / amax:
+                        //     polynomial root-based exact extrema
+                        //
+                        // length:
+                        //     deterministic Simpson quadrature, dt <= 1 ms
+                        //
+                        // body-rate / tilt / thrust:
+                        //     sampled, dt <= 1 ms
+                        //
+                        // exact_contained:
+                        //     exact polynomial continuous-time SFC certificate
+                        //     for the SOFT GCOPTER trajectory.
+                        // ====================================================
+                        ROS_INFO_STREAM(
+                            "TF_CONTROLLED_E2_BACKEND "
+                        
+                            << "method="
+                            << methodName
+                        
+                            << " mapping_valid="
+                            << result.mapping_valid
+                        
+                            << " backend_attempted="
+                            << result.backend_attempted
+                        
+                            << " setup_success="
+                            << result.backend
+                                   .setup_success
+                        
+                            << " optimize_success="
+                            << result.backend
+                                   .optimize_success
+                        
+                            << " optimized_state_ready="
+                            << result.backend
+                                   .optimized_state_ready
+                        
+                            << " rebuild_ready="
+                            << result
+                                   .trajectory_rebuild_ready
+                        
+                            << " metrics_valid="
+                            << result
+                                   .trajectory_metrics
+                                   .valid
+                        
+                            << " corridors="
+                            << result.backend
+                                   .corridor_count
+                        
+                            << " raw_faces="
+                            << result.backend
+                                   .total_faces
+                        
+                            << " pieces="
+                            << result.backend
+                                   .trajectory_pieces
+                        
+                            << " setup_ms="
+                            << result.backend
+                                   .setup_ms
+                        
+                            << " optimize_ms="
+                            << result.backend
+                                   .optimize_ms
+                        
+                            << " optimizer_cost="
+                            << result.backend
+                                   .final_cost
+                        
+                            << " duration_s="
+                            << result
+                                   .trajectory_metrics
+                                   .duration_s
+                        
+                            << " length_m="
+                            << result
+                                   .trajectory_metrics
+                                   .length_m
+                        
+                            << " smoothness_energy="
+                            << result
+                                   .trajectory_metrics
+                                   .smoothness_energy
+                        
+                            << " time_cost="
+                            << result
+                                   .trajectory_metrics
+                                   .time_cost
+                        
+                            << " j_kin="
+                            << result
+                                   .trajectory_metrics
+                                   .j_kin
+                        
+                            << " max_vel_mps="
+                            << result
+                                   .trajectory_metrics
+                                   .max_velocity_mps
+                        
+                            << " max_acc_mps2="
+                            << result
+                                   .trajectory_metrics
+                                   .max_acceleration_mps2
+                        
+                            << " max_body_rate_radps="
+                            << result
+                                   .trajectory_metrics
+                                   .max_body_rate_radps
+                        
+                            << " max_tilt_rad="
+                            << result
+                                   .trajectory_metrics
+                                   .max_tilt_rad
+                        
+                            << " min_thrust_N="
+                            << result
+                                   .trajectory_metrics
+                                   .min_thrust_n
+                        
+                            << " max_thrust_N="
+                            << result
+                                   .trajectory_metrics
+                                   .max_thrust_n
+                        
+                            << " rebuild_duration_delta_s="
+                            << result
+                                   .rebuild_duration_delta_s
+                        
+                            << " soft_exact_mapping_valid="
+                            << result.backend
+                                   .exact_mapping_valid
+                        
+                            << " soft_exact_cert_valid="
+                            << result.backend
+                                   .exact_certificate_valid
+                        
+                            << " soft_exact_contained="
+                            << result.backend
+                                   .exact_contained
+                        
+                            << " soft_exact_violation_m="
+                            << result.backend
+                                   .exact_max_violation_m
+                        
+                            << " soft_exact_min_margin_m="
+                            << result.backend
+                                   .exact_min_margin_m);
+                        
+                        
+                        return result;
+                    };
+                    
+                    
+                    // ========================================================
+                    // Fixed E2 execution order.
+                    //
+                    // Do not change this order across experiments.
+                    // ========================================================
+                    
+                    const auto controlledE2Proposed =
+                        evaluateControlledE2Backend(
+                            "proposed",
+                            controlledCsgnHPolys,
+                            controlledV3CsgnMappingValid);
+                        
+                        
+                    const auto controlledE2Identity =
+                        evaluateControlledE2Backend(
+                            "identity",
+                            controlledIdentityHPolys,
+                            controlledV3IdentityMappingValid);
+                        
+                        
+                    const auto controlledE2Firi =
+                        evaluateControlledE2Backend(
+                            "firi",
+                            controlledFiriHPolys,
+                            controlledV3FiriMappingValid);
+                        
+                        
+                    const auto controlledE2Rils =
+                        evaluateControlledE2Backend(
+                            "rils",
+                            controlledRilsBuild.hpolys,
+                            controlledV3RilsMappingValid);
+                        
+                        
+                    // ========================================================
+                    // Proposed replay / determinism cross-check.
+                    //
+                    // The Controlled Proposed H-polytopes have already been
+                    // independently checked against the native Proposed set.
+                    //
+                    // Now verify that sending those corridors through the SAME
+                    // backend reproduces the original Proposed soft optimizer
+                    // state.
+                    //
+                    // This test reports RAW deltas.  It does not alter success.
+                    // ========================================================
+                        
+                    bool controlledE2ProposedReplayComparable =
+                        controlledV3CsgnMappingValid &&
+                        controlledCsgnNativeMatchValid &&
+                        
+                        activeGuideBackendResult
+                            .setup_success &&
+                        activeGuideBackendResult
+                            .optimize_success &&
+                        activeGuideBackendResult
+                            .optimized_state_ready &&
+                        
+                        controlledE2Proposed
+                            .backend
+                            .setup_success &&
+                        controlledE2Proposed
+                            .backend
+                            .optimize_success &&
+                        controlledE2Proposed
+                            .backend
+                            .optimized_state_ready;
+                        
+                        
+                    double controlledE2ProposedPointDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    double controlledE2ProposedTimeDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    double controlledE2ProposedCostDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    double controlledE2ProposedDurationDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    double controlledE2ProposedSoftJkinDelta =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                    double controlledE2ProposedSoftLengthDeltaM =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+                        
+                        
+                    if (controlledE2ProposedReplayComparable)
+                    {
+                        const bool pointShapeMatch =
+                            activeGuideBackendResult
+                                    .optimized_points
+                                    .rows() ==
+                                controlledE2Proposed
+                                    .backend
+                                    .optimized_points
+                                    .rows() &&
+                    
+                            activeGuideBackendResult
+                                    .optimized_points
+                                    .cols() ==
+                                controlledE2Proposed
+                                    .backend
+                                    .optimized_points
+                                    .cols();
+                    
+                    
+                        const bool timeShapeMatch =
+                            activeGuideBackendResult
+                                    .optimized_times
+                                    .size() ==
+                                controlledE2Proposed
+                                    .backend
+                                    .optimized_times
+                                    .size();
+                    
+                    
+                        if (!pointShapeMatch ||
+                            !timeShapeMatch)
+                        {
+                            controlledE2ProposedReplayComparable =
+                                false;
+                        }
+                        else
+                        {
+                            controlledE2ProposedPointDelta =
+                                (
+                                    activeGuideBackendResult
+                                        .optimized_points -
+                                    controlledE2Proposed
+                                        .backend
+                                        .optimized_points)
+                                    .cwiseAbs()
+                                    .maxCoeff();
+                                
+                                
+                            controlledE2ProposedTimeDelta =
+                                (
+                                    activeGuideBackendResult
+                                        .optimized_times -
+                                    controlledE2Proposed
+                                        .backend
+                                        .optimized_times)
+                                    .cwiseAbs()
+                                    .maxCoeff();
+                                
+                                
+                            controlledE2ProposedCostDelta =
+                                std::abs(
+                                    activeGuideBackendResult
+                                        .final_cost -
+                                    controlledE2Proposed
+                                        .backend
+                                        .final_cost);
+                                
+                                
+                            controlledE2ProposedDurationDelta =
+                                std::abs(
+                                    activeGuideBackendResult
+                                        .trajectory_duration -
+                                    controlledE2Proposed
+                                        .backend
+                                        .trajectory_duration);
+                                
+                                
+                            if (softTrajectoryEvaluation.valid &&
+                                controlledE2Proposed
+                                    .trajectory_metrics
+                                    .valid)
+                            {
+                                controlledE2ProposedSoftJkinDelta =
+                                    std::abs(
+                                        softTrajectoryEvaluation
+                                            .j_kin -
+                                        controlledE2Proposed
+                                            .trajectory_metrics
+                                            .j_kin);
+                                    
+                                    
+                                controlledE2ProposedSoftLengthDeltaM =
+                                    std::abs(
+                                        softTrajectoryEvaluation
+                                            .length_m -
+                                        controlledE2Proposed
+                                            .trajectory_metrics
+                                            .length_m);
+                            }
+                        }
+                    }
+                    
+                    
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_E2_PROPOSED_REPLAY "
+                    
+                        << "comparable="
+                        << controlledE2ProposedReplayComparable
+                    
+                        << " corridor_native_match="
+                        << controlledCsgnNativeMatchValid
+                    
+                        << " max_point_delta_m="
+                        << controlledE2ProposedPointDelta
+                    
+                        << " max_time_delta_s="
+                        << controlledE2ProposedTimeDelta
+                    
+                        << " optimizer_cost_delta="
+                        << controlledE2ProposedCostDelta
+                    
+                        << " duration_delta_s="
+                        << controlledE2ProposedDurationDelta
+                    
+                        << " soft_j_kin_delta="
+                        << controlledE2ProposedSoftJkinDelta
+                    
+                        << " soft_length_delta_m="
+                        << controlledE2ProposedSoftLengthDeltaM);
+                    
+                    
+                    // ========================================================
+                    // Compact four-method E2 execution audit.
+                    //
+                    // `valid` means all four methods produced a reconstructed,
+                    // measurable common-backend soft trajectory.
+                    //
+                    // Do NOT require continuous-time exact containment here:
+                    // that is a measured outcome, not the definition of backend
+                    // optimization success.
+                    // ========================================================
+                    
+                    const int controlledE2MetricValidCount =
+                        (controlledE2Proposed
+                             .trajectory_metrics
+                             .valid
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Identity
+                             .trajectory_metrics
+                             .valid
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Firi
+                             .trajectory_metrics
+                             .valid
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Rils
+                             .trajectory_metrics
+                             .valid
+                             ? 1
+                             : 0);
+                        
+                        
+                    const int controlledE2SetupSuccessCount =
+                        (controlledE2Proposed
+                             .backend
+                             .setup_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Identity
+                             .backend
+                             .setup_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Firi
+                             .backend
+                             .setup_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Rils
+                             .backend
+                             .setup_success
+                             ? 1
+                             : 0);
+                        
+                        
+                    const int controlledE2OptimizeSuccessCount =
+                        (controlledE2Proposed
+                             .backend
+                             .optimize_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Identity
+                             .backend
+                             .optimize_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Firi
+                             .backend
+                             .optimize_success
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Rils
+                             .backend
+                             .optimize_success
+                             ? 1
+                             : 0);
+                        
+                        
+                    const int controlledE2SoftExactContainedCount =
+                        (controlledE2Proposed
+                             .backend
+                             .exact_contained
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Identity
+                             .backend
+                             .exact_contained
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Firi
+                             .backend
+                             .exact_contained
+                             ? 1
+                             : 0) +
+                        
+                        (controlledE2Rils
+                             .backend
+                             .exact_contained
+                             ? 1
+                             : 0);
+                        
+                        
+                    const bool controlledE2ExecutionValid =
+                        controlledE2SetupSuccessCount ==
+                            4 &&
+                        
+                        controlledE2OptimizeSuccessCount ==
+                            4 &&
+                        
+                        controlledE2MetricValidCount ==
+                            4;
+                        
+                        
+                    ROS_INFO_STREAM(
+                        "TF_CONTROLLED_E2_COMPARE "
+                    
+                        << "valid="
+                        << controlledE2ExecutionValid
+                    
+                        << " setup_success="
+                        << controlledE2SetupSuccessCount
+                    
+                        << " optimize_success="
+                        << controlledE2OptimizeSuccessCount
+                    
+                        << " metrics_valid="
+                        << controlledE2MetricValidCount
+                    
+                        << " soft_exact_contained="
+                        << controlledE2SoftExactContainedCount
+                    
+                        << " proposed_j_kin="
+                        << controlledE2Proposed
+                               .trajectory_metrics
+                               .j_kin
+                    
+                        << " identity_j_kin="
+                        << controlledE2Identity
+                               .trajectory_metrics
+                               .j_kin
+                    
+                        << " firi_j_kin="
+                        << controlledE2Firi
+                               .trajectory_metrics
+                               .j_kin
+                    
+                        << " rils_j_kin="
+                        << controlledE2Rils
+                               .trajectory_metrics
+                               .j_kin
+                    
+                        << " proposed_length_m="
+                        << controlledE2Proposed
+                               .trajectory_metrics
+                               .length_m
+                    
+                        << " identity_length_m="
+                        << controlledE2Identity
+                               .trajectory_metrics
+                               .length_m
+                    
+                        << " firi_length_m="
+                        << controlledE2Firi
+                               .trajectory_metrics
+                               .length_m
+                    
+                        << " rils_length_m="
+                        << controlledE2Rils
+                               .trajectory_metrics
+                               .length_m);
 
                     bool benchmarkCorridorLogSuccess =
                         true;  
