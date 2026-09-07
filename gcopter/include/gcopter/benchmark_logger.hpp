@@ -385,6 +385,165 @@ struct BenchmarkRunRecord
             quiet_NaN();
 };
 
+struct BenchmarkControlledE2Record
+{
+    // ========================================================
+    // Identity / pairing
+    // ========================================================
+    std::string case_id;
+
+    std::string route_fingerprint;
+
+    std::string method =
+        "unknown";
+
+    std::string variant =
+        "unknown";
+
+    int repeat_id =
+        0;
+
+    double timestamp_s =
+        0.0;
+
+    std::string protocol =
+        "controlled_geometry_common_soft_gcopter";
+
+
+    // ========================================================
+    // Common-backend status
+    // ========================================================
+    bool mapping_valid =
+        false;
+
+    bool backend_attempted =
+        false;
+
+    bool setup_success =
+        false;
+
+    bool optimize_success =
+        false;
+
+    bool optimized_state_ready =
+        false;
+
+    bool trajectory_rebuild_ready =
+        false;
+
+    bool trajectory_metrics_valid =
+        false;
+
+
+    // ========================================================
+    // Corridor / backend workload
+    //
+    // setup_ms / optimize_ms here are descriptive E2 backend
+    // measurements. They are NOT the final E4 timing protocol.
+    // ========================================================
+    int corridor_count =
+        0;
+
+    int raw_face_count =
+        0;
+
+    int trajectory_piece_count =
+        0;
+
+    double setup_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double optimize_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double optimizer_cost =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Common soft-trajectory quality
+    // ========================================================
+    double duration_s =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double length_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double smoothness_energy =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double time_cost =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double j_kin =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_velocity_mps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_acceleration_mps2 =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_body_rate_radps =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_tilt_rad =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double min_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double max_thrust_n =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Reconstruction provenance
+    // ========================================================
+    double rebuild_duration_delta_s =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Exact continuous-time certificate of the SOFT optimum
+    // ========================================================
+    bool soft_exact_mapping_valid =
+        false;
+
+    bool soft_exact_certificate_valid =
+        false;
+
+    bool soft_exact_contained =
+        false;
+
+    double soft_exact_max_violation_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_exact_min_margin_m =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double soft_exact_certificate_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+};
+
 struct BenchmarkCorridorRecord
 {
     // ========================================================
@@ -1577,6 +1736,168 @@ public:
         return static_cast<bool>(
             output);
     }
+
+    inline bool
+    logControlledE2(
+        const std::vector<
+            BenchmarkControlledE2Record> &records)
+    {
+        if (!enabled_ ||
+            records.empty())
+        {
+            return true;
+        }
+
+
+        std::lock_guard<std::mutex>
+            lock(
+                mutex_);
+
+
+        if (!ensureDirectory())
+        {
+            return false;
+        }
+
+
+        const std::string path =
+            directory_ +
+            "/benchmark_e2_v1.csv";
+
+
+        const bool header =
+            fileNeedsHeader(
+                path);
+
+
+        std::ofstream output(
+            path,
+            std::ios::out |
+                std::ios::app);
+
+
+        if (!output)
+        {
+            return false;
+        }
+
+
+        if (header)
+        {
+            output
+                << "schema_version,"
+
+                << "case_id,"
+                << "route_fingerprint,"
+                << "method,"
+                << "variant,"
+                << "repeat_id,"
+                << "timestamp_s,"
+                << "protocol,"
+
+                << "mapping_valid,"
+                << "backend_attempted,"
+                << "setup_success,"
+                << "optimize_success,"
+                << "optimized_state_ready,"
+                << "trajectory_rebuild_ready,"
+                << "trajectory_metrics_valid,"
+
+                << "corridor_count,"
+                << "raw_face_count,"
+                << "trajectory_piece_count,"
+
+                << "setup_ms,"
+                << "optimize_ms,"
+                << "optimizer_cost,"
+
+                << "duration_s,"
+                << "length_m,"
+                << "smoothness_energy,"
+                << "time_cost,"
+                << "j_kin,"
+
+                << "max_velocity_mps,"
+                << "max_acceleration_mps2,"
+                << "max_body_rate_radps,"
+                << "max_tilt_rad,"
+                << "min_thrust_n,"
+                << "max_thrust_n,"
+
+                << "rebuild_duration_delta_s,"
+
+                << "soft_exact_mapping_valid,"
+                << "soft_exact_certificate_valid,"
+                << "soft_exact_contained,"
+                << "soft_exact_max_violation_m,"
+                << "soft_exact_min_margin_m,"
+                << "soft_exact_certificate_ms\n";
+        }
+
+
+        output <<
+            std::setprecision(17);
+
+
+        for (const auto &record :
+             records)
+        {
+            output
+                << 1 << ','
+
+                << csv(record.case_id) << ','
+                << csv(record.route_fingerprint) << ','
+                << csv(record.method) << ','
+                << csv(record.variant) << ','
+                << record.repeat_id << ','
+                << record.timestamp_s << ','
+                << csv(record.protocol) << ','
+
+                << record.mapping_valid << ','
+                << record.backend_attempted << ','
+                << record.setup_success << ','
+                << record.optimize_success << ','
+                << record.optimized_state_ready << ','
+                << record.trajectory_rebuild_ready << ','
+                << record.trajectory_metrics_valid << ','
+
+                << record.corridor_count << ','
+                << record.raw_face_count << ','
+                << record.trajectory_piece_count << ','
+
+                << record.setup_ms << ','
+                << record.optimize_ms << ','
+                << record.optimizer_cost << ','
+
+                << record.duration_s << ','
+                << record.length_m << ','
+                << record.smoothness_energy << ','
+                << record.time_cost << ','
+                << record.j_kin << ','
+
+                << record.max_velocity_mps << ','
+                << record.max_acceleration_mps2 << ','
+                << record.max_body_rate_radps << ','
+                << record.max_tilt_rad << ','
+                << record.min_thrust_n << ','
+                << record.max_thrust_n << ','
+
+                << record.rebuild_duration_delta_s << ','
+
+                << record.soft_exact_mapping_valid << ','
+                << record.soft_exact_certificate_valid << ','
+                << record.soft_exact_contained << ','
+                << record.soft_exact_max_violation_m << ','
+                << record.soft_exact_min_margin_m << ','
+                << record.soft_exact_certificate_ms
+
+                << '\n';
+        }
+
+        return static_cast<bool>(
+            output);
+    }
+
 };
 
 class CorridorCsvLogger

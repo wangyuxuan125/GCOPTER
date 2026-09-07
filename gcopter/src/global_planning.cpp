@@ -11012,7 +11012,7 @@ public:
                     // E2 compares the SOFT common-backend trajectories.
                     // Exact-Hard remains a separate E5 experiment.
                     // ========================================================
-                                        
+
                     struct ControlledE2BackendEvaluation
                     {
                         bool mapping_valid =
@@ -11038,8 +11038,8 @@ public:
                             FinalTrajectoryMetrics
                                 trajectory_metrics;
                     };
-                    
-                    
+
+
                     // --------------------------------------------------------
                     // One common E2 execution path.
                     //
@@ -11385,14 +11385,14 @@ public:
                         
                         return result;
                     };
-                    
-                    
+
+
                     // ========================================================
                     // Fixed E2 execution order.
                     //
                     // Do not change this order across experiments.
                     // ========================================================
-                    
+
                     const auto controlledE2Proposed =
                         evaluateControlledE2Backend(
                             "proposed",
@@ -11583,8 +11583,8 @@ public:
                             }
                         }
                     }
-                    
-                    
+
+
                     ROS_INFO_STREAM(
                         "TF_CONTROLLED_E2_PROPOSED_REPLAY "
                     
@@ -11796,6 +11796,294 @@ public:
                         << controlledE2Rils
                                .trajectory_metrics
                                .length_m);
+
+                    // ========================================================
+                    // D2a-1:
+                    // Final four-method Controlled E2 CSV.
+                    //
+                    // Exactly one row per method and replay case.
+                    //
+                    // IMPORTANT:
+                    //
+                    // This serializes the already-computed D2a-0 results.
+                    // It does NOT run another optimizer and does NOT modify any
+                    // corridor or trajectory.
+                    // ========================================================
+                                        
+                    std::vector<
+                        gcopter_benchmark::
+                            BenchmarkControlledE2Record>
+                        benchmarkControlledE2Records;
+                                        
+                                        
+                    benchmarkControlledE2Records.reserve(
+                        4);
+                    
+                    
+                    const double controlledE2TimestampS =
+                        ros::Time::now().toSec();
+                    
+                    
+                    auto appendControlledE2Record =
+                        [&](const std::string &methodName,
+                            const std::string &variantName,
+                            const ControlledE2BackendEvaluation &evaluation)
+                    {
+                        gcopter_benchmark::
+                            BenchmarkControlledE2Record
+                                record;
+                    
+                    
+                        record.case_id =
+                            effectiveCaseId;
+                    
+                        record.route_fingerprint =
+                            routeFingerprint;
+                    
+                        record.method =
+                            methodName;
+                    
+                        record.variant =
+                            variantName;
+                    
+                        record.repeat_id =
+                            config.benchmarkRepeatId;
+                    
+                        record.timestamp_s =
+                            controlledE2TimestampS;
+                    
+                    
+                        record.mapping_valid =
+                            evaluation.mapping_valid;
+                    
+                        record.backend_attempted =
+                            evaluation.backend_attempted;
+                    
+                        record.setup_success =
+                            evaluation.backend
+                                .setup_success;
+                    
+                        record.optimize_success =
+                            evaluation.backend
+                                .optimize_success;
+                    
+                        record.optimized_state_ready =
+                            evaluation.backend
+                                .optimized_state_ready;
+                    
+                        record.trajectory_rebuild_ready =
+                            evaluation
+                                .trajectory_rebuild_ready;
+                    
+                        record.trajectory_metrics_valid =
+                            evaluation
+                                .trajectory_metrics
+                                .valid;
+                    
+                    
+                        record.corridor_count =
+                            evaluation.backend
+                                .corridor_count;
+                    
+                        record.raw_face_count =
+                            evaluation.backend
+                                .total_faces;
+                    
+                        record.trajectory_piece_count =
+                            evaluation.backend
+                                .trajectory_pieces;
+                    
+                    
+                        record.setup_ms =
+                            evaluation.backend
+                                .setup_ms;
+                    
+                        record.optimize_ms =
+                            evaluation.backend
+                                .optimize_ms;
+                    
+                        record.optimizer_cost =
+                            evaluation.backend
+                                .final_cost;
+                    
+                    
+                        record.duration_s =
+                            evaluation
+                                .trajectory_metrics
+                                .duration_s;
+                    
+                        record.length_m =
+                            evaluation
+                                .trajectory_metrics
+                                .length_m;
+                    
+                        record.smoothness_energy =
+                            evaluation
+                                .trajectory_metrics
+                                .smoothness_energy;
+                    
+                        record.time_cost =
+                            evaluation
+                                .trajectory_metrics
+                                .time_cost;
+                    
+                        record.j_kin =
+                            evaluation
+                                .trajectory_metrics
+                                .j_kin;
+                    
+                        record.max_velocity_mps =
+                            evaluation
+                                .trajectory_metrics
+                                .max_velocity_mps;
+                    
+                        record.max_acceleration_mps2 =
+                            evaluation
+                                .trajectory_metrics
+                                .max_acceleration_mps2;
+                    
+                        record.max_body_rate_radps =
+                            evaluation
+                                .trajectory_metrics
+                                .max_body_rate_radps;
+                    
+                        record.max_tilt_rad =
+                            evaluation
+                                .trajectory_metrics
+                                .max_tilt_rad;
+                    
+                        record.min_thrust_n =
+                            evaluation
+                                .trajectory_metrics
+                                .min_thrust_n;
+                    
+                        record.max_thrust_n =
+                            evaluation
+                                .trajectory_metrics
+                                .max_thrust_n;
+                    
+                    
+                        record.rebuild_duration_delta_s =
+                            evaluation
+                                .rebuild_duration_delta_s;
+                    
+                    
+                        record.soft_exact_mapping_valid =
+                            evaluation.backend
+                                .exact_mapping_valid;
+                    
+                        record.soft_exact_certificate_valid =
+                            evaluation.backend
+                                .exact_certificate_valid;
+                    
+                        record.soft_exact_contained =
+                            evaluation.backend
+                                .exact_contained;
+                    
+                        record.soft_exact_max_violation_m =
+                            evaluation.backend
+                                .exact_max_violation_m;
+                    
+                        record.soft_exact_min_margin_m =
+                            evaluation.backend
+                                .exact_min_margin_m;
+                    
+                        record.soft_exact_certificate_ms =
+                            evaluation.backend
+                                .exact_certificate_ms;
+                    
+                    
+                        benchmarkControlledE2Records
+                            .push_back(
+                                record);
+                    };
+                    
+                    
+                    appendControlledE2Record(
+                        "proposed",
+                        "csgn_active_controlled",
+                        controlledE2Proposed);
+                    
+                    
+                    appendControlledE2Record(
+                        "identity",
+                        "identity_active_controlled",
+                        controlledE2Identity);
+                    
+                    
+                    appendControlledE2Record(
+                        "firi",
+                        "standard_firi_controlled",
+                        controlledE2Firi);
+                    
+                    
+                    appendControlledE2Record(
+                        "rils",
+                        "liu_rils_controlled",
+                        controlledE2Rils);
+                    
+                    
+                    // --------------------------------------------------------
+                    // Structural validity only.
+                    //
+                    // Experimental failures remain rows and must NOT disappear
+                    // from route-bank statistics.
+                    // --------------------------------------------------------
+                    const bool controlledE2CsvSchemaValid =
+                        benchmarkControlledE2Records.size() ==
+                            4;
+                    
+                    
+                    bool benchmarkControlledE2LogSuccess =
+                        true;
+                    
+                    
+                    if (benchmarkRunReady)
+                    {
+                        benchmarkControlledE2LogSuccess =
+                            benchmarkRunLogger
+                                .logControlledE2(
+                                    benchmarkControlledE2Records);
+                                
+                                
+                        if (!benchmarkControlledE2LogSuccess)
+                        {
+                            ROS_ERROR(
+                                "Failed to append "
+                                "benchmark_e2_v1.csv.");
+                        }
+                    }
+                    
+                    
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_E2 "
+                    
+                        << "schema_valid="
+                        << controlledE2CsvSchemaValid
+                    
+                        << " rows="
+                        << benchmarkControlledE2Records
+                               .size()
+                    
+                        << " setup_success="
+                        << controlledE2SetupSuccessCount
+                    
+                        << " optimize_success="
+                        << controlledE2OptimizeSuccessCount
+                    
+                        << " metrics_valid="
+                        << controlledE2MetricValidCount
+                    
+                        << " soft_exact_contained="
+                        << controlledE2SoftExactContainedCount
+                    
+                        << " proposed_replay_comparable="
+                        << controlledE2ProposedReplayComparable
+                    
+                        << " log_success="
+                        << benchmarkControlledE2LogSuccess
+                    
+                        << " file=benchmark_e2_v1.csv");
 
                     bool benchmarkCorridorLogSuccess =
                         true;  
