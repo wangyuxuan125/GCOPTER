@@ -4,6 +4,7 @@
 #include "gcopter/minco_affine_map.hpp"
 
 #include <Eigen/Eigen>
+#include <array>
 
 #include <chrono>
 #include <cmath>
@@ -12,6 +13,196 @@
 
 namespace traj_relevant
 {
+
+struct BernsteinAffineControlPoint
+{
+    Eigen::Vector3d offset =
+        Eigen::Vector3d::Zero();
+
+    Eigen::VectorXd beta;
+};
+
+
+using BernsteinAffineControlPolygon =
+    std::array<
+        BernsteinAffineControlPoint,
+        6>;
+
+inline bool
+buildBernsteinAffineControlPolygon(
+    const MincoWaypointAffineMap &affineMap,
+    const int pieceId,
+    BernsteinAffineControlPolygon &controls)
+{
+    if (!affineMap.valid() ||
+        pieceId < 0 ||
+        pieceId >= affineMap.pieceCount())
+    {
+        return false;
+    }
+
+    for (int controlId = 0;
+         controlId < 6;
+         ++controlId)
+    {
+        if (!affineMap
+                 .bernsteinControlAffineCoefficients(
+                     pieceId,
+                     controlId,
+                     controls[controlId].offset,
+                     controls[controlId].beta))
+        {
+            return false;
+        }
+
+        if (!controls[controlId]
+                 .offset.allFinite() ||
+            !controls[controlId]
+                 .beta.allFinite())
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+inline bool
+splitBernsteinAffineControlPolygonHalf(
+    const BernsteinAffineControlPolygon &parent,
+    BernsteinAffineControlPolygon &left,
+    BernsteinAffineControlPolygon &right)
+{
+    const int betaSize =
+        parent[0].beta.size();
+
+    for (int controlId = 0;
+         controlId < 6;
+         ++controlId)
+    {
+        if (parent[controlId].beta.size() !=
+                betaSize ||
+            !parent[controlId]
+                 .offset.allFinite() ||
+            !parent[controlId]
+                 .beta.allFinite())
+        {
+            return false;
+        }
+    }
+
+    BernsteinAffineControlPoint
+        work[6][6];
+
+    for (int i = 0;
+         i < 6;
+         ++i)
+    {
+        work[0][i] =
+            parent[i];
+    }
+
+    left[0] =
+        parent[0];
+
+    right[5] =
+        parent[5];
+
+    for (int level = 1;
+         level < 6;
+         ++level)
+    {
+        for (int i = 0;
+             i < 6 - level;
+             ++i)
+        {
+            work[level][i].offset =
+                0.5 *
+                (
+                    work[level - 1][i]
+                        .offset +
+                    work[level - 1][i + 1]
+                        .offset
+                );
+
+            work[level][i].beta =
+                0.5 *
+                (
+                    work[level - 1][i]
+                        .beta +
+                    work[level - 1][i + 1]
+                        .beta
+                );
+        }
+
+        left[level] =
+            work[level][0];
+
+        right[5 - level] =
+            work[level][5 - level];
+    }
+
+    for (int i = 0;
+         i < 6;
+         ++i)
+    {
+        if (!left[i].offset.allFinite() ||
+            !left[i].beta.allFinite() ||
+            !right[i].offset.allFinite() ||
+            !right[i].beta.allFinite())
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+inline bool
+subdivideBernsteinAffineControlPolygon(
+    const BernsteinAffineControlPolygon &parent,
+    const int depth,
+    std::vector<
+        BernsteinAffineControlPolygon> &leaves)
+{
+    if (depth < 0)
+    {
+        return false;
+    }
+
+    if (depth == 0)
+    {
+        leaves.push_back(
+            parent);
+
+        return true;
+    }
+
+    BernsteinAffineControlPolygon
+        left;
+
+    BernsteinAffineControlPolygon
+        right;
+
+    if (!splitBernsteinAffineControlPolygonHalf(
+            parent,
+            left,
+            right))
+    {
+        return false;
+    }
+
+    return
+        subdivideBernsteinAffineControlPolygon(
+            left,
+            depth - 1,
+            leaves) &&
+        subdivideBernsteinAffineControlPolygon(
+            right,
+            depth - 1,
+            leaves);
+}
+
 
 struct BernsteinSfcConstraintSet
 {
@@ -185,6 +376,265 @@ buildBernsteinSfcConstraintSet(
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() -
             started)
+            .count();
+
+    return result;
+}
+
+inline BernsteinSfcConstraintSet
+buildSubdividedBernsteinSfcConstraintSet(
+    const MincoWaypointAffineMap &affineMap,
+    const std::vector<Eigen::MatrixX4d> &corridors,
+    const int subdivisionDepth)
+{
+    BernsteinSfcConstraintSet result;
+
+    const auto started =
+        std::chrono::steady_clock::now();
+
+    if (!affineMap.valid() ||
+        subdivisionDepth < 0 ||
+        affineMap.pieceCount() !=
+            static_cast<int>(
+                corridors.size()))
+    {
+        return result;
+    }
+
+    result.variable_dimension =
+        affineMap.variableDimension();
+
+    std::vector<Eigen::VectorXd>
+        rows;
+
+    std::vector<double>
+        rhsValues;
+
+    const std::size_t leafCount =
+        static_cast<std::size_t>(
+            1ULL <<
+            subdivisionDepth);
+
+    std::size_t estimatedRows =
+        0;
+
+    for (const auto &poly :
+         corridors)
+    {
+        estimatedRows +=
+            leafCount *
+            6ULL *
+            static_cast<std::size_t>(
+                poly.rows());
+    }
+
+    rows.reserve(
+        estimatedRows);
+
+    rhsValues.reserve(
+        estimatedRows);
+
+    for (int pieceId = 0;
+         pieceId <
+             affineMap.pieceCount();
+         ++pieceId)
+    {
+        const auto &poly =
+            corridors[pieceId];
+
+        if (poly.cols() != 4 ||
+            !poly.allFinite())
+        {
+            return result;
+        }
+
+        BernsteinAffineControlPolygon
+            whole;
+
+        if (!buildBernsteinAffineControlPolygon(
+                affineMap,
+                pieceId,
+                whole))
+        {
+            return result;
+        }
+
+        std::vector<
+            BernsteinAffineControlPolygon>
+                leaves;
+
+        leaves.reserve(
+            leafCount);
+
+        if (!subdivideBernsteinAffineControlPolygon(
+                whole,
+                subdivisionDepth,
+                leaves))
+        {
+            return result;
+        }
+
+        if (leaves.size() !=
+            leafCount)
+        {
+            return result;
+        }
+
+        for (const auto &leaf :
+             leaves)
+        {
+            for (int faceId = 0;
+                 faceId <
+                     poly.rows();
+                 ++faceId)
+            {
+                const Eigen::Vector3d
+                    normal =
+                        poly.block<1, 3>(
+                                faceId,
+                                0)
+                            .transpose();
+
+                const double
+                    planeOffset =
+                        poly(
+                            faceId,
+                            3);
+
+                const double
+                    normalNorm =
+                        normal.norm();
+
+                if (!normal.allFinite() ||
+                    !std::isfinite(
+                        planeOffset) ||
+                    !std::isfinite(
+                        normalNorm) ||
+                    normalNorm <=
+                        1.0e-12)
+                {
+                    return result;
+                }
+
+                for (int controlId = 0;
+                     controlId < 6;
+                     ++controlId)
+                {
+                    const auto &control =
+                        leaf[
+                            controlId];
+
+                    Eigen::VectorXd row =
+                        Eigen::VectorXd::Zero(
+                            result
+                                .variable_dimension);
+
+                    for (int waypointId = 0;
+                         waypointId <
+                             control.beta.size();
+                         ++waypointId)
+                    {
+                        row.segment<3>(
+                            3 *
+                            waypointId) =
+                            control.beta(
+                                waypointId) *
+                            normal;
+                    }
+
+                    double rhs =
+                        -planeOffset -
+                        normal.dot(
+                            control.offset);
+
+                    const double
+                        rowNorm =
+                            row.norm();
+
+                    if (!std::isfinite(
+                            rowNorm) ||
+                        !std::isfinite(
+                            rhs))
+                    {
+                        return result;
+                    }
+
+                    if (rowNorm <=
+                        1.0e-12)
+                    {
+                        if (rhs <
+                            -1.0e-10)
+                        {
+                            result
+                                .fixed_infeasible =
+                                    true;
+
+                            return result;
+                        }
+
+                        ++result
+                              .skipped_fixed_constraints;
+
+                        continue;
+                    }
+
+                    row /=
+                        rowNorm;
+
+                    rhs /=
+                        rowNorm;
+
+                    rows.push_back(
+                        row);
+
+                    rhsValues.push_back(
+                        rhs);
+                }
+            }
+        }
+    }
+
+    result.A.resize(
+        static_cast<int>(
+            rows.size()),
+        result.variable_dimension);
+
+    result.b.resize(
+        static_cast<int>(
+            rows.size()));
+
+    for (int rowId = 0;
+         rowId <
+             static_cast<int>(
+                 rows.size());
+         ++rowId)
+    {
+        result.A.row(
+            rowId) =
+                rows[rowId]
+                    .transpose();
+
+        result.b(
+            rowId) =
+                rhsValues[
+                    rowId];
+    }
+
+    result.constraint_count =
+        static_cast<int>(
+            rows.size());
+
+    result.valid =
+        result.A.allFinite() &&
+        result.b.allFinite();
+
+    result.assembly_ms =
+        std::chrono::duration<
+            double,
+            std::milli>(
+                std::chrono::
+                    steady_clock::now() -
+                started)
             .count();
 
     return result;

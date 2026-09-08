@@ -2920,6 +2920,75 @@ public:
                     << " implication_mismatch="
                     << bernsteinImplicationMismatch);
 
+                for (int subdivisionDepth = 0;
+                     subdivisionDepth <= 3;
+                     ++subdivisionDepth)
+                {
+                    const auto subdividedSet =
+                        traj_relevant::
+                            buildSubdividedBernsteinSfcConstraintSet(
+                                bernsteinAffineMap,
+                                activeGuideHPolys,
+                                subdivisionDepth);
+                            
+                    double maxResidual =
+                        -std::numeric_limits<double>::
+                            infinity();
+                            
+                    int violated =
+                        0;
+                            
+                    if (subdividedSet.valid &&
+                        !subdividedSet.fixed_infeasible)
+                    {
+                        const Eigen::VectorXd z0 =
+                            traj_relevant::
+                                flattenMincoWaypoints(
+                                    activeGuideBackendResult
+                                        .optimized_points);
+                                
+                        const Eigen::VectorXd residual =
+                            subdividedSet.A * z0 -
+                            subdividedSet.b;
+                                
+                        if (residual.size() > 0 &&
+                            residual.allFinite())
+                        {
+                            maxResidual =
+                                residual.maxCoeff();
+                        
+                            for (int rowId = 0;
+                                 rowId <
+                                     residual.size();
+                                 ++rowId)
+                            {
+                                if (residual(rowId) >
+                                    1.0e-10)
+                                {
+                                    ++violated;
+                                }
+                            }
+                        }
+                    }
+                
+                    ROS_INFO_STREAM(
+                        "TF_BERNSTEIN_SUBDIV_DIAG "
+                        << "depth="
+                        << subdivisionDepth
+                        << " valid="
+                        << subdividedSet.valid
+                        << " fixed_infeasible="
+                        << subdividedSet.fixed_infeasible
+                        << " constraints="
+                        << subdividedSet.constraint_count
+                        << " violated="
+                        << violated
+                        << " max_normalized_residual="
+                        << maxResidual
+                        << " assembly_ms="
+                        << subdividedSet.assembly_ms);
+                }
+
                 traj_relevant::
                     ExactSfcProjectionOptions
                         projectionOptions;
