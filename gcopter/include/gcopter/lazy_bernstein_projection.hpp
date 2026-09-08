@@ -4,6 +4,7 @@
 #include "gcopter/bernstein_sfc_projection.hpp"
 #include "gcopter/exact_sfc_projection.hpp"
 #include "gcopter/active_set_projection.hpp"
+#include "gcopter/root_finder.hpp"
 
 #include <Eigen/Eigen>
 
@@ -12,9 +13,288 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <set>
 
 namespace traj_relevant
 {
+
+struct ExactFaceViolationInterval
+{
+    bool valid = false;
+
+    double begin = 0.0;
+    double end = 1.0;
+
+    int interior_root_count = 0;
+};
+
+
+template <int D>
+inline ExactFaceViolationInterval
+exactFaceViolationInterval(
+    const Piece<D> &piece,
+    const Eigen::Vector3d &normal,
+    const double planeOffset,
+    const double witnessTau,
+    const double rootTolerance = 1.0e-10,
+    const double coefficientTolerance = 1.0e-12)
+{
+    ExactFaceViolationInterval result;
+
+    if (!normal.allFinite() ||
+        !std::isfinite(planeOffset) ||
+        !std::isfinite(witnessTau) ||
+        witnessTau < 0.0 ||
+        witnessTau > 1.0)
+    {
+        return result;
+    }
+
+    const double normalNorm =
+        normal.norm();
+
+    if (!std::isfinite(normalNorm) ||
+        normalNorm <= coefficientTolerance)
+    {
+        return result;
+    }
+
+    const auto coeffMat =
+        piece.normalizePosCoeffMat();
+
+    Eigen::VectorXd coeffs(
+        D + 1);
+
+    for (int coefficientId = 0;
+         coefficientId <= D;
+         ++coefficientId)
+    {
+        coeffs(coefficientId) =
+            normal.dot(
+                coeffMat.col(
+                    coefficientId));
+    }
+
+    // Storage is descending:
+    //
+    //   coeffs(0) = tau^D
+    //   ...
+    //   coeffs(D) = constant.
+    coeffs(D) +=
+        planeOffset;
+
+    if (!coeffs.allFinite())
+    {
+        return result;
+    }
+
+    const double scale =
+        coeffs.cwiseAbs()
+            .maxCoeff();
+
+    if (!std::isfinite(scale) ||
+        scale <= coefficientTolerance)
+    {
+        return result;
+    }
+
+    const double witnessValue =
+        RootFinder::polyVal(
+            coeffs,
+            witnessTau,
+            true);
+
+    // This helper is intended only for a genuinely
+    // violated face witness.
+    if (!std::isfinite(witnessValue) ||
+        witnessValue <= 0.0)
+    {
+        return result;
+    }
+
+    const Eigen::VectorXd scaled =
+        coeffs / scale;
+
+    // RootFinder's isolation routine assumes nonzero
+    // polynomial values at the search boundaries.
+    //
+    // Boundary roots themselves do not need to be returned:
+    // begin/end already default to 0/1.
+    double searchBegin =
+        0.0;
+
+    double searchEnd =
+        1.0;
+
+    if (std::abs(
+            RootFinder::polyVal(
+                scaled,
+                0.0,
+                true)) <=
+        coefficientTolerance)
+    {
+        searchBegin =
+            rootTolerance;
+    }
+
+    if (std::abs(
+            RootFinder::polyVal(
+                scaled,
+                1.0,
+                true)) <=
+        coefficientTolerance)
+    {
+        searchEnd =
+            1.0 -
+            rootTolerance;
+    }
+
+    std::set<double> roots;
+
+    if (searchBegin <
+        searchEnd)
+    {
+        roots =
+            RootFinder::solvePolynomial(
+                scaled,
+                searchBegin,
+                searchEnd,
+                rootTolerance);
+    }
+
+    result.interior_root_count =
+        static_cast<int>(
+            roots.size());
+
+    double leftRoot =
+        0.0;
+
+    double rightRoot =
+        1.0;
+
+    for (const double root : roots)
+    {
+        if (!std::isfinite(root))
+        {
+            continue;
+        }
+
+        if (root <
+            witnessTau -
+                rootTolerance)
+        {
+            leftRoot =
+                std::max(
+                    leftRoot,
+                    root);
+        }
+        else if (root >
+                 witnessTau +
+                     rootTolerance)
+        {
+            rightRoot =
+                std::min(
+                    rightRoot,
+                    root);
+        }
+    }
+
+    if (leftRoot >
+            witnessTau +
+                rootTolerance ||
+        rightRoot <
+            witnessTau -
+                rootTolerance ||
+        leftRoot >=
+            rightRoot)
+    {
+        return result;
+    }
+
+    result.begin =
+        leftRoot;
+
+    result.end =
+        rightRoot;
+
+    result.valid =
+        true;
+
+    return result;
+}
+
+
+inline int
+minimumDyadicDepthInsideInterval(
+    const double normalizedTime,
+    const double intervalBegin,
+    const double intervalEnd,
+    const int maxDepth,
+    const double tolerance = 1.0e-12)
+{
+    if (!std::isfinite(normalizedTime) ||
+        !std::isfinite(intervalBegin) ||
+        !std::isfinite(intervalEnd) ||
+        maxDepth < 0 ||
+        normalizedTime <
+            intervalBegin -
+                tolerance ||
+        normalizedTime >
+            intervalEnd +
+                tolerance ||
+        intervalBegin <
+            -tolerance ||
+        intervalEnd >
+            1.0 +
+                tolerance ||
+        intervalBegin >=
+            intervalEnd)
+    {
+        return -1;
+    }
+
+    for (int depth = 0;
+         depth <= maxDepth;
+         ++depth)
+    {
+        const int leaf =
+            bernsteinLeafForNormalizedTime(
+                normalizedTime,
+                depth);
+
+        if (leaf < 0)
+        {
+            return -1;
+        }
+
+        const int leafCount =
+            1 << depth;
+
+        const double leafBegin =
+            static_cast<double>(
+                leaf) /
+            static_cast<double>(
+                leafCount);
+
+        const double leafEnd =
+            static_cast<double>(
+                leaf + 1) /
+            static_cast<double>(
+                leafCount);
+
+        if (leafBegin >=
+                intervalBegin -
+                    tolerance &&
+            leafEnd <=
+                intervalEnd +
+                    tolerance)
+        {
+            return depth;
+        }
+    }
+
+    return -1;
+}
 
 struct LazyBernsteinProjectionOptions
 {
@@ -51,6 +331,18 @@ struct LazyBernsteinIterationRecord
     int face = -1;
 
     double tau = 0.0;
+
+    bool violation_interval_valid =
+        false;
+
+    double violation_interval_begin =
+        0.0;
+
+    double violation_interval_end =
+        1.0;
+
+    int locality_depth =
+        -1;
 
     double pre_violation_m =
         std::numeric_limits<double>::
@@ -407,6 +699,86 @@ projectMincoToLazyBernsteinSfc(
             certificate.worst
                 .violation_m;
 
+        const int witnessPiece =
+            certificate.worst.piece;
+
+        const int witnessFace =
+            certificate.worst.face;
+
+        if (witnessPiece < 0 ||
+            witnessPiece >=
+                currentTrajectory
+                    .getPieceNum() ||
+            witnessFace < 0 ||
+            witnessFace >=
+                corridors[
+                    witnessPiece]
+                    .rows())
+        {
+            stampTotal();
+            return result;
+        }
+
+        const auto &witnessPoly =
+            corridors[
+                witnessPiece];
+
+        const Eigen::Vector3d
+            witnessNormal =
+                witnessPoly
+                    .block<1, 3>(
+                        witnessFace,
+                        0)
+                    .transpose();
+
+        const double
+            witnessPlaneOffset =
+                witnessPoly(
+                    witnessFace,
+                    3);
+
+        const auto violationInterval =
+            exactFaceViolationInterval(
+                currentTrajectory[
+                    witnessPiece],
+                witnessNormal,
+                witnessPlaneOffset,
+                certificate.worst
+                    .normalized_time);
+
+        record.violation_interval_valid =
+            violationInterval.valid;
+
+        record.violation_interval_begin =
+            violationInterval.begin;
+
+        record.violation_interval_end =
+            violationInterval.end;
+
+        if (!violationInterval.valid)
+        {
+            stampTotal();
+            return result;
+        }
+
+        const int localityDepth =
+            minimumDyadicDepthInsideInterval(
+                certificate.worst
+                    .normalized_time,
+                violationInterval.begin,
+                violationInterval.end,
+                options
+                    .max_adaptive_depth);
+
+        record.locality_depth =
+            localityDepth;
+
+        if (localityDepth < 0)
+        {
+            stampTotal();
+            return result;
+        }
+
         int selectedDepth =
             -1;
 
@@ -427,7 +799,8 @@ projectMincoToLazyBernsteinSfc(
         double selectedEnd =
             1.0;
 
-        for (int depth = 0;
+        for (int depth =
+                 localityDepth;
              depth <=
                  options.max_adaptive_depth;
              ++depth)

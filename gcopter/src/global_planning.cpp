@@ -3670,6 +3670,14 @@ public:
                         << iter.face
                         << " tau="
                         << iter.tau
+                        << " violation_interval_valid="
+                        << iter.violation_interval_valid
+                        << " violation_interval_begin="
+                        << iter.violation_interval_begin
+                        << " violation_interval_end="
+                        << iter.violation_interval_end
+                        << " locality_depth="
+                        << iter.locality_depth
                         << " pre_violation_m="
                         << iter.pre_violation_m
                         << " depth="
