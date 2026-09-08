@@ -365,6 +365,11 @@ struct LazyBernsteinIterationRecord
     bool depth_saturated = false;
 
     int cut_rows = 0;
+
+    // Number of polytope faces included in this
+    // local Bernstein block.
+    int block_face_count = 0;
+
     int rows_added = 0;
     int active_rows = 0;
 
@@ -916,43 +921,72 @@ projectMincoToLazyBernsteinSfc(
                   .depth_saturation_count;
         }
 
-        const LocalBernsteinCut localCut =
-            buildLocalBernsteinCut(
-                affineMap,
-                corridors,
-                certificate.worst.piece,
-                certificate.worst.face,
-                certificate.worst
-                    .normalized_time,
-                selectedDepth);
+        // ====================================================
+        // Whole-polytope local Bernstein block.
+        //
+        // The exact certificate still selects ONE worst witness:
+        //
+        //     (piece*, face*, tau*)
+        //
+        // but after selecting the local dyadic leaf around tau*,
+        // we enforce ALL faces of the corresponding corridor on
+        // that leaf.
+        //
+        // For a quintic piece this creates at most
+        //
+        //     6 * face_count
+        //
+        // finite linear inequalities.
+        //
+        // This prevents a correction for one face from simply
+        // pushing the same local curve segment through another
+        // face of the same corridor.
+        // ====================================================
+        const int blockPiece =
+            certificate.worst.piece;
 
-        if (!localCut.valid ||
-            localCut.fixed_infeasible ||
-            localCut.A.rows() <= 0 ||
-            localCut.A.rows() > 6 ||
-            localCut.A.cols() !=
-                z0.size())
+        const int blockLeaf =
+            selectedLeaf;
+
+        if (blockPiece < 0 ||
+            blockPiece >=
+                static_cast<int>(
+                    corridors.size()) ||
+            blockLeaf < 0)
         {
             stampTotal();
             return result;
         }
 
-        record.cut_rows =
-            localCut.A.rows();
+        const auto &blockPoly =
+            corridors[
+                blockPiece];
+
+        if (blockPoly.rows() <= 0 ||
+            blockPoly.cols() != 4 ||
+            !blockPoly.allFinite())
+        {
+            stampTotal();
+            return result;
+        }
+
+        record.block_face_count =
+            blockPoly.rows();
 
         LazyBernsteinCutKey key;
 
         key.piece =
-            localCut.piece;
+            blockPiece;
 
+        // face = -1 denotes a whole-polytope block.
         key.face =
-            localCut.face;
+            -1;
 
         key.depth =
-            localCut.depth;
+            selectedDepth;
 
         key.leaf =
-            localCut.leaf;
+            blockLeaf;
 
         bool duplicateCut =
             false;
@@ -976,6 +1010,9 @@ projectMincoToLazyBernsteinSfc(
             }
         }
 
+        // If an already-enforced whole-polytope Bernstein leaf
+        // contains a newly certified violation, the hard-cut
+        // implication has become numerically inconsistent.
         if (duplicateCut)
         {
             ++result
@@ -992,61 +1029,129 @@ projectMincoToLazyBernsteinSfc(
         int rowsAdded =
             0;
 
-        for (int rowId = 0;
-             rowId <
-                 localCut.A.rows();
-             ++rowId)
+        int blockRows =
+            0;
+
+        bool blockValid =
+            true;
+
+        bool blockFixedInfeasible =
+            false;
+
+        for (int blockFaceId = 0;
+             blockFaceId <
+                 blockPoly.rows();
+             ++blockFaceId)
         {
-            const Eigen::VectorXd row =
-                localCut.A
-                    .row(rowId)
-                    .transpose();
+            const LocalBernsteinCut faceCut =
+                buildLocalBernsteinCut(
+                    affineMap,
+                    corridors,
+                    blockPiece,
+                    blockFaceId,
+                    certificate.worst
+                        .normalized_time,
+                    selectedDepth);
 
-            const double rhs =
-                localCut.b(rowId);
-
-            bool duplicateRow =
-                false;
-
-            for (int oldId = 0;
-                 oldId <
-                     static_cast<int>(
-                         activeRows.size());
-                 ++oldId)
+            if (!faceCut.valid ||
+                faceCut.A.cols() !=
+                    z0.size() ||
+                faceCut.piece !=
+                    blockPiece ||
+                faceCut.depth !=
+                    selectedDepth ||
+                faceCut.leaf !=
+                    blockLeaf)
             {
-                if ((activeRows[oldId] -
-                     row)
-                            .norm() <=
-                        options
-                            .duplicate_tolerance &&
-                    std::abs(
-                        activeRhs[oldId] -
-                        rhs) <=
-                        options
-                            .duplicate_tolerance)
+                blockValid =
+                    false;
+
+                break;
+            }
+
+            if (faceCut.fixed_infeasible)
+            {
+                blockFixedInfeasible =
+                    true;
+
+                break;
+            }
+
+            blockRows +=
+                faceCut.A.rows();
+
+            for (int rowId = 0;
+                 rowId <
+                     faceCut.A.rows();
+                 ++rowId)
+            {
+                const Eigen::VectorXd row =
+                    faceCut.A
+                        .row(rowId)
+                        .transpose();
+
+                const double rhs =
+                    faceCut.b(
+                        rowId);
+
+                bool duplicateRow =
+                    false;
+
+                for (int oldId = 0;
+                     oldId <
+                         static_cast<int>(
+                             activeRows.size());
+                     ++oldId)
                 {
-                    duplicateRow =
-                        true;
+                    if ((activeRows[oldId] -
+                         row)
+                                .norm() <=
+                            options
+                                .duplicate_tolerance &&
+                        std::abs(
+                            activeRhs[oldId] -
+                            rhs) <=
+                            options
+                                .duplicate_tolerance)
+                    {
+                        duplicateRow =
+                            true;
 
-                    break;
+                        break;
+                    }
                 }
+
+                if (duplicateRow)
+                {
+                    ++result
+                          .duplicate_row_count;
+
+                    continue;
+                }
+
+                activeRows.push_back(
+                    row);
+
+                activeRhs.push_back(
+                    rhs);
+
+                ++rowsAdded;
             }
+        }
 
-            if (duplicateRow)
-            {
-                ++result
-                      .duplicate_row_count;
+        record.cut_rows =
+            blockRows;
 
-                continue;
-            }
+        if (!blockValid ||
+            blockFixedInfeasible ||
+            blockRows <= 0)
+        {
+            result.iteration_records
+                .push_back(
+                    record);
 
-            activeRows.push_back(
-                row);
-
-            activeRhs.push_back(
-                rhs);
-
-            ++rowsAdded;
+            stampTotal();
+            return result;
         }
 
         record.rows_added =

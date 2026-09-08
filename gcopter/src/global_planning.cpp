@@ -3696,6 +3696,8 @@ public:
                         << iter.depth_saturated
                         << " cut_rows="
                         << iter.cut_rows
+                        << " block_faces="
+                        << iter.block_face_count
                         << " rows_added="
                         << iter.rows_added
                         << " active_rows="
