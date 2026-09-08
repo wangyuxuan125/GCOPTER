@@ -3639,9 +3639,9 @@ public:
                     << " depth_saturated="
                     << lazyBernsteinResult
                            .depth_saturation_count
-                    << " qp_sweeps="
+                    << " qp_iterations="
                     << lazyBernsteinResult
-                           .total_qp_sweeps
+                           .total_qp_iterations
                     << " qp_ms="
                     << lazyBernsteinResult.qp_ms
                     << " cert_ms="
@@ -3694,8 +3694,16 @@ public:
                         << iter.active_rows
                         << " qp_success="
                         << iter.qp_success
-                        << " qp_sweeps="
-                        << iter.qp_sweeps
+                        << " qp_iterations="
+                        << iter.qp_iterations
+                        << " qp_working_set="
+                        << iter.qp_working_set_size
+                        << " qp_max_primal="
+                        << iter.qp_max_primal_violation
+                        << " qp_min_lambda="
+                        << iter.qp_min_active_multiplier
+                        << " qp_eq_residual="
+                        << iter.qp_equality_residual
                         << " qp_ms="
                         << iter.qp_ms
                         << " post_violation_m="
