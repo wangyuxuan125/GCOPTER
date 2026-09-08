@@ -5,6 +5,7 @@
 #include "gcopter/minco_affine_map.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/trajectory.hpp"
+#include "gcopter/active_set_projection.hpp"
 
 #include <Eigen/Eigen>
 
@@ -36,6 +37,12 @@ struct ExactSfcProjectionOptions
 
     int max_qp_sweeps =
         20000;
+
+    // Experimental A/B switch.
+    // false: frozen Hildreth implementation.
+    // true : dense active-set Euclidean projection.
+    bool use_active_set_qp =
+        false;
 };
 
 
@@ -124,6 +131,14 @@ struct ExactSfcProjectionResult
         0;
 
     int total_qp_sweeps =
+        0;
+
+    // Active-set-only diagnostics.
+    // These remain zero for the frozen Hildreth path.
+    int total_qp_iterations =
+        0;
+
+    int max_qp_working_set_size =
         0;
 
     int duplicate_witness_count =
@@ -831,38 +846,95 @@ projectMincoToExactSfc(
             std::chrono::
                 steady_clock::now();
 
-        const ProjectionQpResult qp =
-            solveEuclideanHalfspaceProjection(
-                z0,
-                activeRows,
-                activeRhs,
-                options
-                    .qp_primal_tolerance,
-                options
-                    .qp_dual_tolerance,
-                options
-                    .max_qp_sweeps);
+        bool qpSuccess =
+            false;
 
-        result.qp_ms +=
-            std::chrono::duration<
-                double,
-                std::milli>(
-                    std::chrono::
-                        steady_clock::now() -
-                    qpStarted)
-                .count();
+        Eigen::VectorXd qpSolution;
 
-        result.total_qp_sweeps +=
-            qp.sweeps;
+        if (options.use_active_set_qp)
+        {
+            const ActiveSetProjectionResult qp =
+                solveEuclideanHalfspaceProjectionActiveSet(
+                    z0,
+                    activeRows,
+                    activeRhs,
+                    options
+                        .qp_primal_tolerance,
+                    options
+                        .qp_dual_tolerance);
 
-        if (!qp.success ||
-            !qp.solution.allFinite())
+            result.qp_ms +=
+                std::chrono::duration<
+                    double,
+                    std::milli>(
+                        std::chrono::
+                            steady_clock::now() -
+                        qpStarted)
+                    .count();
+
+            result.total_qp_iterations +=
+                qp.iterations;
+
+            result.max_qp_working_set_size =
+                std::max(
+                    result
+                        .max_qp_working_set_size,
+                    qp.working_set_size);
+
+            qpSuccess =
+                qp.success &&
+                qp.solution.allFinite();
+
+            if (qpSuccess)
+            {
+                qpSolution =
+                    qp.solution;
+            }
+        }
+        else
+        {
+            const ProjectionQpResult qp =
+                solveEuclideanHalfspaceProjection(
+                    z0,
+                    activeRows,
+                    activeRhs,
+                    options
+                        .qp_primal_tolerance,
+                    options
+                        .qp_dual_tolerance,
+                    options
+                        .max_qp_sweeps);
+
+            result.qp_ms +=
+                std::chrono::duration<
+                    double,
+                    std::milli>(
+                        std::chrono::
+                            steady_clock::now() -
+                        qpStarted)
+                    .count();
+
+            result.total_qp_sweeps +=
+                qp.sweeps;
+
+            qpSuccess =
+                qp.success &&
+                qp.solution.allFinite();
+
+            if (qpSuccess)
+            {
+                qpSolution =
+                    qp.solution;
+            }
+        }
+
+        if (!qpSuccess)
         {
             return result;
         }
 
         z =
-            qp.solution;
+            qpSolution;
 
         if (!unflattenMincoWaypoints(
                 z,

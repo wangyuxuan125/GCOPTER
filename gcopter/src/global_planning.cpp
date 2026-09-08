@@ -3728,6 +3728,135 @@ public:
                         << iter.post_contained);
                 }
 
+                // ====================================================
+                // Exact-support exchange + active-set QP A/B diagnostic.
+                //
+                // IMPORTANT:
+                //   - same soft optimized points/times;
+                //   - same SFC;
+                //   - same exact certificate;
+                //   - same one-witness-per-exchange rule;
+                //   - same tolerances / 32 exchange ceiling;
+                //   - ONLY the finite projection QP solver differs.
+                //
+                // The frozen hardProjectionResult below still uses
+                // the default Hildreth solver.
+                // ====================================================
+                traj_relevant::
+                    ExactSfcProjectionResult
+                        exactActiveSetResult;
+
+                Trajectory<5>
+                    exactActiveSetTrajectory;
+
+                Eigen::Matrix3Xd
+                    exactActiveSetPoints;
+
+                {
+                    traj_relevant::
+                        ExactSfcProjectionOptions
+                            exactActiveSetOptions;
+
+                    exactActiveSetOptions
+                        .containment_tolerance_m =
+                            1.0e-6;
+
+                    exactActiveSetOptions
+                        .use_active_set_qp =
+                            true;
+
+                    exactActiveSetResult =
+                        traj_relevant::
+                            projectMincoToExactSfc(
+                                iniState,
+                                finState,
+                                activeGuideBackendResult
+                                    .optimized_points,
+                                activeGuideBackendResult
+                                    .optimized_times,
+                                activeGuideHPolys,
+                                exactActiveSetTrajectory,
+                                exactActiveSetPoints,
+                                exactActiveSetOptions);
+                }
+
+                ROS_INFO_STREAM(
+                    "TF_EXACT_ACTIVESET_RESULT "
+                    << "success="
+                    << exactActiveSetResult.success
+
+                    << " initial_cert_valid="
+                    << exactActiveSetResult
+                           .initial_certificate_valid
+
+                    << " initial_contained="
+                    << exactActiveSetResult
+                           .initial_contained
+
+                    << " initial_violation_m="
+                    << exactActiveSetResult
+                           .initial_max_violation_m
+
+                    << " final_cert_valid="
+                    << exactActiveSetResult
+                           .final_certificate_valid
+
+                    << " final_contained="
+                    << exactActiveSetResult
+                           .final_contained
+
+                    << " final_violation_m="
+                    << exactActiveSetResult
+                           .final_max_violation_m
+
+                    << " exchange_iterations="
+                    << exactActiveSetResult
+                           .exchange_iterations
+
+                    << " active_constraints="
+                    << exactActiveSetResult
+                           .active_constraint_count
+
+                    << " qp_iterations="
+                    << exactActiveSetResult
+                           .total_qp_iterations
+
+                    << " qp_working_set_max="
+                    << exactActiveSetResult
+                           .max_qp_working_set_size
+
+                    << " duplicate_witnesses="
+                    << exactActiveSetResult
+                           .duplicate_witness_count
+
+                    << " correction_l2_m="
+                    << exactActiveSetResult
+                           .correction_l2_m
+
+                    << " max_waypoint_disp_m="
+                    << exactActiveSetResult
+                           .max_waypoint_displacement_m
+
+                    << " initial_energy="
+                    << exactActiveSetResult
+                           .initial_energy
+
+                    << " final_energy="
+                    << exactActiveSetResult
+                           .final_energy
+
+                    << " qp_ms="
+                    << exactActiveSetResult
+                           .qp_ms
+
+                    << " cert_ms="
+                    << exactActiveSetResult
+                           .certificate_ms
+
+                    << " total_ms="
+                    << exactActiveSetResult
+                           .total_ms);
+
                 hardProjectionResult =
                     traj_relevant::
                         projectMincoToExactSfc(
