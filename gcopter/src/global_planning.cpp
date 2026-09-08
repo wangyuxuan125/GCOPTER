@@ -2989,6 +2989,180 @@ public:
                         << subdividedSet.assembly_ms);
                 }
 
+                // ========================================================
+                // Local Bernstein cut diagnostic.
+                //
+                // Uses ONLY the exact worst witness:
+                //
+                //   (piece*, face*, tau*)
+                //
+                // and constructs one dyadic leaf for that witness.
+                //
+                // Constraint count must remain <= 6 regardless of depth.
+                // ========================================================
+                if (bernsteinAffineValid &&
+                    activeGuideBackendResult
+                        .exact_certificate_valid &&
+                    !activeGuideBackendResult
+                         .exact_contained &&
+                    activeGuideBackendResult
+                        .exact_worst_piece >= 0 &&
+                    activeGuideBackendResult
+                        .exact_worst_face >= 0)
+                {
+                    const Eigen::VectorXd z0 =
+                        traj_relevant::
+                            flattenMincoWaypoints(
+                                activeGuideBackendResult
+                                    .optimized_points);
+
+                    double previousBoundM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    for (int localDepth = 0;
+                         localDepth <= 8;
+                         ++localDepth)
+                    {
+                        const auto localCut =
+                            traj_relevant::
+                                buildLocalBernsteinCut(
+                                    bernsteinAffineMap,
+                                    activeGuideHPolys,
+                                    activeGuideBackendResult
+                                        .exact_worst_piece,
+                                    activeGuideBackendResult
+                                        .exact_worst_face,
+                                    activeGuideBackendResult
+                                        .exact_worst_tau,
+                                    localDepth);
+
+                        double maxNormalizedResidual =
+                            -std::numeric_limits<double>::
+                                infinity();
+
+                        if (localCut.valid &&
+                            !localCut.fixed_infeasible &&
+                            localCut.A.rows() > 0 &&
+                            z0.size() ==
+                                localCut.A.cols())
+                        {
+                            const Eigen::VectorXd residual =
+                                localCut.A * z0 -
+                                localCut.b;
+
+                            if (residual.size() > 0 &&
+                                residual.allFinite())
+                            {
+                                maxNormalizedResidual =
+                                    residual.maxCoeff();
+                            }
+                        }
+
+                        double boundM =
+                            -std::numeric_limits<double>::
+                                infinity();
+
+                        int boundLeaf =
+                            -1;
+
+                        double boundIntervalBegin =
+                            0.0;
+
+                        double boundIntervalEnd =
+                            1.0;
+
+                        const bool boundValid =
+                            traj_relevant::
+                                evaluateLocalBernsteinFaceBoundM(
+                                    bernsteinAffineMap,
+                                    activeGuideHPolys,
+                                    activeGuideBackendResult
+                                        .optimized_points,
+                                    activeGuideBackendResult
+                                        .exact_worst_piece,
+                                    activeGuideBackendResult
+                                        .exact_worst_face,
+                                    activeGuideBackendResult
+                                        .exact_worst_tau,
+                                    localDepth,
+                                    boundM,
+                                    boundLeaf,
+                                    boundIntervalBegin,
+                                    boundIntervalEnd);
+
+                        const double boundGapM =
+                            boundValid
+                                ? boundM -
+                                      activeGuideBackendResult
+                                          .exact_max_violation_m
+                                : std::numeric_limits<double>::
+                                      infinity();
+
+                        // For the SAME violating face and interval
+                        // containing the exact maximizer, Bernstein
+                        // must remain an upper bound.
+                        const bool upperBoundMismatch =
+                            boundValid &&
+                            boundM + 1.0e-9 <
+                                activeGuideBackendResult
+                                    .exact_max_violation_m;
+
+                        const bool nonMonotone =
+                            boundValid &&
+                            std::isfinite(
+                                previousBoundM) &&
+                            boundM >
+                                previousBoundM +
+                                    1.0e-9;
+
+                        ROS_INFO_STREAM(
+                            "TF_BERNSTEIN_LOCAL_DIAG "
+                            << "depth="
+                            << localDepth
+                            << " valid="
+                            << localCut.valid
+                            << " fixed_infeasible="
+                            << localCut.fixed_infeasible
+                            << " piece="
+                            << localCut.piece
+                            << " face="
+                            << localCut.face
+                            << " tau="
+                            << activeGuideBackendResult
+                                   .exact_worst_tau
+                            << " leaf="
+                            << localCut.leaf
+                            << " interval_begin="
+                            << localCut.interval_begin
+                            << " interval_end="
+                            << localCut.interval_end
+                            << " constraints="
+                            << localCut.A.rows()
+                            << " max_normalized_residual="
+                            << maxNormalizedResidual
+                            << " bound_valid="
+                            << boundValid
+                            << " bound_m="
+                            << boundM
+                            << " exact_violation_m="
+                            << activeGuideBackendResult
+                                   .exact_max_violation_m
+                            << " bound_gap_m="
+                            << boundGapM
+                            << " upper_bound_mismatch="
+                            << upperBoundMismatch
+                            << " non_monotone="
+                            << nonMonotone);
+
+                        if (boundValid)
+                        {
+                            previousBoundM =
+                                boundM;
+                        }
+                    }
+                }
+
                 traj_relevant::
                     ExactSfcProjectionOptions
                         projectionOptions;
