@@ -3,6 +3,7 @@
 
 #include "gcopter/bernstein_sfc_projection.hpp"
 #include "gcopter/exact_sfc_projection.hpp"
+#include "gcopter/active_set_projection.hpp"
 
 #include <Eigen/Eigen>
 
@@ -37,8 +38,8 @@ struct LazyBernsteinProjectionOptions
     double qp_dual_tolerance =
         1.0e-12;
 
-    int max_qp_sweeps =
-        20000;
+    // int max_qp_sweeps =
+    //     20000;
 
     double duplicate_tolerance =
         1.0e-10;
@@ -80,7 +81,21 @@ struct LazyBernsteinIterationRecord
 
     bool qp_success = false;
 
-    int qp_sweeps = 0;
+    int qp_iterations = 0;
+
+    int qp_working_set_size = 0;
+
+    double qp_max_primal_violation =
+        std::numeric_limits<double>::
+            infinity();
+
+    double qp_min_active_multiplier =
+        std::numeric_limits<double>::
+            infinity();
+
+    double qp_equality_residual =
+        std::numeric_limits<double>::
+            infinity();
 
     double qp_ms = 0.0;
 
@@ -129,7 +144,7 @@ struct LazyBernsteinProjectionResult
 
     int depth_saturation_count = 0;
 
-    int total_qp_sweeps = 0;
+    int total_qp_iterations = 0;
 
     double qp_ms = 0.0;
 
@@ -210,8 +225,8 @@ projectMincoToLazyBernsteinSfc(
         !times.allFinite() ||
         options.max_adaptive_depth < 0 ||
         options.max_adaptive_depth > 20 ||
-        options.max_iterations <= 0 ||
-        options.max_qp_sweeps <= 0)
+        options.max_iterations <= 0 
+        )
     {
         stampTotal();
         return result;
@@ -692,17 +707,13 @@ projectMincoToLazyBernsteinSfc(
             std::chrono::
                 steady_clock::now();
 
-        const ProjectionQpResult qp =
-            solveEuclideanHalfspaceProjection(
+        const ActiveSetProjectionResult qp =
+            solveEuclideanHalfspaceProjectionActiveSet(
                 z0,
                 activeRows,
                 activeRhs,
-                options
-                    .qp_primal_tolerance,
-                options
-                    .qp_dual_tolerance,
-                options
-                    .max_qp_sweeps);
+                options.qp_primal_tolerance,
+                options.qp_dual_tolerance);
 
         record.qp_ms =
             std::chrono::duration<
@@ -719,12 +730,24 @@ projectMincoToLazyBernsteinSfc(
         record.qp_success =
             qp.success &&
             qp.solution.allFinite();
-
-        record.qp_sweeps =
-            qp.sweeps;
-
-        result.total_qp_sweeps +=
-            qp.sweeps;
+                        
+        record.qp_iterations =
+            qp.iterations;
+                        
+        record.qp_working_set_size =
+            qp.working_set_size;
+                        
+        record.qp_max_primal_violation =
+            qp.max_primal_violation;
+                        
+        record.qp_min_active_multiplier =
+            qp.min_active_multiplier;
+                        
+        record.qp_equality_residual =
+            qp.equality_residual;
+                        
+        result.total_qp_iterations +=
+            qp.iterations;
 
         if (!record.qp_success)
         {
