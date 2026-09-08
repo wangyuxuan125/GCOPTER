@@ -43,6 +43,15 @@ struct ActiveSetProjectionResult
     double equality_residual =
         std::numeric_limits<double>::infinity();
 
+    // Direct KKT solve diagnostics.
+    double stationarity_residual =
+        std::numeric_limits<double>::infinity();
+
+    double kkt_residual =
+        std::numeric_limits<double>::infinity();
+
+    int last_kkt_rank = 0;
+
     // Rank-revealing working-set diagnostics.
     int rank_compression_count = 0;
 
@@ -328,27 +337,84 @@ solveEuclideanHalfspaceProjectionActiveSet(
                 continue;
             }
 
-            const Eigen::MatrixXd gram =
-                Aw * Aw.transpose();
+            // --------------------------------------------------------
+            // Direct KKT solve.
+            //
+            // Avoid the normal equations
+            //
+            //     (Aw Aw^T) lambda = Aw z0 - bw
+            //
+            // because forming Aw Aw^T squares the condition number.
+            //
+            // Solve instead
+            //
+            //   [ I   Aw^T ] [ z      ] = [ z0 ]
+            //   [ Aw   0   ] [ lambda ]   [ bw ].
+            //
+            // ColPivHouseholderQR is used directly on the KKT matrix
+            // so the near-dependent geometry is not squared through
+            // a Gram matrix.
+            // --------------------------------------------------------
+            const int kktDimension =
+                variableDimension +
+                activeCount;
 
-            const Eigen::VectorXd c =
-                Aw * z0 - bw;
+            Eigen::MatrixXd kkt =
+                Eigen::MatrixXd::Zero(
+                    kktDimension,
+                    kktDimension);
 
-            multipliers =
-                gram
-                    .completeOrthogonalDecomposition()
-                    .solve(c);
+            kkt.topLeftCorner(
+                    variableDimension,
+                    variableDimension)
+                .setIdentity();
 
-            if (!multipliers.allFinite())
+            kkt.topRightCorner(
+                    variableDimension,
+                    activeCount) =
+                Aw.transpose();
+
+            kkt.bottomLeftCorner(
+                    activeCount,
+                    variableDimension) =
+                Aw;
+
+            Eigen::VectorXd kktRhs(
+                kktDimension);
+
+            kktRhs.head(
+                variableDimension) =
+                z0;
+
+            kktRhs.tail(
+                activeCount) =
+                bw;
+
+            Eigen::ColPivHouseholderQR<
+                Eigen::MatrixXd>
+                    kktQr(kkt);
+
+            result.last_kkt_rank =
+                kktQr.rank();
+
+            const Eigen::VectorXd
+                kktSolution =
+                    kktQr.solve(
+                        kktRhs);
+
+            if (!kktSolution.allFinite())
             {
-                result.failure_reason = 2;
+                result.failure_reason = 3;
                 return result;
             }
 
             z =
-                z0 -
-                Aw.transpose() *
-                    multipliers;
+                kktSolution.head(
+                    variableDimension);
+
+            multipliers =
+                kktSolution.tail(
+                    activeCount);
 
             if (!z.allFinite())
             {
@@ -356,9 +422,30 @@ solveEuclideanHalfspaceProjectionActiveSet(
                 return result;
             }
 
+            if (!multipliers.allFinite())
+            {
+                result.failure_reason = 2;
+                return result;
+            }
+
             result.equality_residual =
                 (Aw * z - bw)
                     .lpNorm<Eigen::Infinity>();
+
+            result.stationarity_residual =
+                (
+                    z -
+                    z0 +
+                    Aw.transpose() *
+                        multipliers
+                ).lpNorm<Eigen::Infinity>();
+
+            result.kkt_residual =
+                (
+                    kkt *
+                        kktSolution -
+                    kktRhs
+                ).lpNorm<Eigen::Infinity>();
 
             result.min_active_multiplier =
                 multipliers.minCoeff();

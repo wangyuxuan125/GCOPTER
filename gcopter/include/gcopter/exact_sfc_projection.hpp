@@ -176,6 +176,15 @@ struct ExactSfcProjectionResult
     double last_qp_equality_residual =
         std::numeric_limits<double>::infinity();
 
+    double last_qp_stationarity_residual =
+        std::numeric_limits<double>::infinity();
+
+    double last_qp_kkt_residual =
+        std::numeric_limits<double>::infinity();
+
+    int last_qp_kkt_rank =
+        0;
+
     double last_qp_min_multiplier =
         std::numeric_limits<double>::infinity();
 
@@ -1128,6 +1137,15 @@ projectMincoToExactSfc(
 
             result.last_qp_equality_residual =
                 qp.equality_residual;
+
+            result.last_qp_stationarity_residual =
+                qp.stationarity_residual;
+
+            result.last_qp_kkt_residual =
+                qp.kkt_residual;
+
+            result.last_qp_kkt_rank =
+                qp.last_kkt_rank;
 
             result.last_qp_min_multiplier =
                 qp.min_active_multiplier;
