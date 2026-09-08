@@ -3946,7 +3946,31 @@ public:
                            .certificate_ms
                     << " total_ms="
                     << exactBatchResult
-                           .total_ms);
+                           .total_ms
+                    << " last_qp_failure_reason="
+                    << exactBatchResult
+                           .last_qp_failure_reason
+                    << " last_qp_failure_constraint="
+                    << exactBatchResult
+                           .last_qp_failure_constraint
+                    << " last_qp_failure_residual="
+                    << exactBatchResult
+                           .last_qp_failure_residual
+                    << " last_qp_max_primal="
+                    << exactBatchResult
+                           .last_qp_max_primal_violation
+                    << " last_qp_eq_residual="
+                    << exactBatchResult
+                           .last_qp_equality_residual
+                    << " last_qp_min_lambda="
+                    << exactBatchResult
+                           .last_qp_min_multiplier
+                    << " last_qp_iterations="
+                    << exactBatchResult
+                           .last_qp_iterations
+                    << " last_qp_working_set="
+                    << exactBatchResult
+                           .last_qp_working_set_size);
 
                 hardProjectionResult =
                     traj_relevant::

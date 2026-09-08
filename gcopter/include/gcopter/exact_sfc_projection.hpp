@@ -161,6 +161,30 @@ struct ExactSfcProjectionResult
     int max_batch_size =
         0;
 
+    int last_qp_failure_reason =
+        0;
+
+    int last_qp_failure_constraint =
+        -1;
+
+    double last_qp_failure_residual =
+        std::numeric_limits<double>::infinity();
+
+    double last_qp_max_primal_violation =
+        std::numeric_limits<double>::infinity();
+
+    double last_qp_equality_residual =
+        std::numeric_limits<double>::infinity();
+
+    double last_qp_min_multiplier =
+        std::numeric_limits<double>::infinity();
+
+    int last_qp_iterations =
+        0;
+
+    int last_qp_working_set_size =
+        0;
+
     double initial_max_violation_m =
         std::numeric_limits<double>::
             infinity();
@@ -1081,6 +1105,30 @@ projectMincoToExactSfc(
                     options
                         .qp_dual_tolerance);
 
+            result.last_qp_failure_reason =
+                qp.failure_reason;
+
+            result.last_qp_failure_constraint =
+                qp.failure_constraint;
+
+            result.last_qp_failure_residual =
+                qp.failure_constraint_residual;
+
+            result.last_qp_max_primal_violation =
+                qp.max_primal_violation;
+
+            result.last_qp_equality_residual =
+                qp.equality_residual;
+
+            result.last_qp_min_multiplier =
+                qp.min_active_multiplier;
+
+            result.last_qp_iterations =
+                qp.iterations;
+
+            result.last_qp_working_set_size =
+                qp.working_set_size;
+
             result.qp_ms +=
                 std::chrono::duration<
                     double,
@@ -1148,6 +1196,19 @@ projectMincoToExactSfc(
 
         if (!qpSuccess)
         {
+            result.active_constraint_count =
+                static_cast<int>(
+                    activeRows.size());
+
+            result.total_ms =
+                std::chrono::duration<
+                    double,
+                    std::milli>(
+                        std::chrono::
+                            steady_clock::now() -
+                        totalStarted)
+                    .count();
+
             return result;
         }
 

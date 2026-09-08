@@ -16,6 +16,20 @@ struct ActiveSetProjectionResult
 {
     bool success = false;
 
+    // 0 = no failure / success
+    // 1 = invalid input
+    // 2 = nonfinite multiplier
+    // 3 = nonfinite solution
+    // 4 = nonfinite residual
+    // 5 = active-row reselection
+    // 6 = iteration cap
+    int failure_reason = 0;
+
+    int failure_constraint = -1;
+
+    double failure_constraint_residual =
+        std::numeric_limits<double>::infinity();
+
     int iterations = 0;
 
     int working_set_size = 0;
@@ -76,6 +90,7 @@ solveEuclideanHalfspaceProjectionActiveSet(
         primalTolerance < 0.0 ||
         dualTolerance < 0.0)
     {
+        result.failure_reason = 1;
         return result;
     }
 
@@ -107,6 +122,7 @@ solveEuclideanHalfspaceProjectionActiveSet(
             !rows[rowId].allFinite() ||
             !std::isfinite(rhs[rowId]))
         {
+            result.failure_reason = 1;
             return result;
         }
 
@@ -210,6 +226,7 @@ solveEuclideanHalfspaceProjectionActiveSet(
 
             if (!multipliers.allFinite())
             {
+                result.failure_reason = 2;
                 return result;
             }
 
@@ -220,6 +237,7 @@ solveEuclideanHalfspaceProjectionActiveSet(
 
             if (!z.allFinite())
             {
+                result.failure_reason = 3;
                 return result;
             }
 
@@ -273,6 +291,7 @@ solveEuclideanHalfspaceProjectionActiveSet(
 
         if (!residual.allFinite())
         {
+            result.failure_reason = 4;
             return result;
         }
 
@@ -314,6 +333,13 @@ solveEuclideanHalfspaceProjectionActiveSet(
         // solve is numerically inconsistent.
         if (isActive[violatedId])
         {
+            result.failure_reason = 5;
+            result.failure_constraint =
+                violatedId;
+            result.failure_constraint_residual =
+                maxViolation;
+            result.solution =
+                z;
             return result;
         }
 
@@ -324,8 +350,8 @@ solveEuclideanHalfspaceProjectionActiveSet(
             violatedId);
     }
 
-    result.solution =
-        z;
+    result.failure_reason = 6;
+    result.solution = z;
 
     return result;
 }
