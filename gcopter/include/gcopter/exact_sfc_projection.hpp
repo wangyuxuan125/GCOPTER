@@ -43,6 +43,17 @@ struct ExactSfcProjectionOptions
     // true : dense active-set Euclidean projection.
     bool use_active_set_qp =
         false;
+    
+    // Experimental separation mode.
+    //
+    // false:
+    //   frozen single global-worst witness exchange.
+    //
+    // true:
+    //   add one exact support witness for every currently
+    //   violated corridor face before each QP solve.
+    bool batch_all_violated_faces =
+        false;
 };
 
 
@@ -142,6 +153,12 @@ struct ExactSfcProjectionResult
         0;
 
     int duplicate_witness_count =
+        0;
+
+    int total_witnesses_added =
+        0;
+
+    int max_batch_size =
         0;
 
     double initial_max_violation_m =
@@ -343,6 +360,149 @@ certifyMincoTrajectoryInCorridors(
     return result;
 }
 
+inline bool
+collectViolatedExactSfcWitnesses(
+    const Trajectory<5> &trajectory,
+    const std::vector<Eigen::MatrixX4d> &corridors,
+    const double containmentToleranceM,
+    std::vector<ExactSfcWitness> &witnesses)
+{
+    witnesses.clear();
+
+    if (trajectory.getPieceNum() <= 0 ||
+        trajectory.getPieceNum() !=
+            static_cast<int>(
+                corridors.size()))
+    {
+        return false;
+    }
+
+    for (int pieceId = 0;
+         pieceId <
+             trajectory.getPieceNum();
+         ++pieceId)
+    {
+        const auto &poly =
+            corridors[pieceId];
+
+        if (poly.rows() <= 0 ||
+            poly.cols() != 4 ||
+            !poly.allFinite())
+        {
+            return false;
+        }
+
+        for (int faceId = 0;
+             faceId <
+                 poly.rows();
+             ++faceId)
+        {
+            const Eigen::Vector3d normal =
+                poly.block<1, 3>(
+                        faceId,
+                        0)
+                    .transpose();
+
+            const double normalNorm =
+                normal.norm();
+
+            if (!normal.allFinite() ||
+                !std::isfinite(normalNorm) ||
+                normalNorm <= 1.0e-12)
+            {
+                return false;
+            }
+
+            const auto support =
+                exactMincoDirectionalSupport(
+                    trajectory[pieceId],
+                    normal,
+                    1.0e-10,
+                    1.0e-12);
+
+            if (!support.valid)
+            {
+                return false;
+            }
+
+            const double violationM =
+                (
+                    support.support +
+                    poly(faceId, 3)
+                ) /
+                normalNorm;
+
+            if (!std::isfinite(
+                    violationM))
+            {
+                return false;
+            }
+
+            if (violationM >
+                containmentToleranceM)
+            {
+                ExactSfcWitness witness;
+
+                witness.valid =
+                    true;
+
+                witness.piece =
+                    pieceId;
+
+                witness.face =
+                    faceId;
+
+                witness.normalized_time =
+                    support.normalized_time;
+
+                witness.physical_time =
+                    support.physical_time;
+
+                witness.violation_m =
+                    violationM;
+
+                witnesses.push_back(
+                    witness);
+            }
+        }
+    }
+
+    // Deterministic ordering: strongest separation first.
+    std::sort(
+        witnesses.begin(),
+        witnesses.end(),
+        [](const ExactSfcWitness &a,
+           const ExactSfcWitness &b)
+        {
+            if (a.violation_m !=
+                b.violation_m)
+            {
+                return
+                    a.violation_m >
+                    b.violation_m;
+            }
+
+            if (a.piece != b.piece)
+            {
+                return
+                    a.piece <
+                    b.piece;
+            }
+
+            if (a.face != b.face)
+            {
+                return
+                    a.face <
+                    b.face;
+            }
+
+            return
+                a.normalized_time <
+                b.normalized_time;
+        });
+
+    return true;
+}
 
 // ================================================================
 // Solve
