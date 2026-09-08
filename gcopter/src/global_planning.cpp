@@ -5,6 +5,7 @@
 #include "gcopter/minco_affine_map.hpp"
 #include "gcopter/exact_sfc_projection.hpp"
 #include "gcopter/bernstein_sfc_projection.hpp"
+#include "gcopter/lazy_bernstein_projection.hpp"
 #include "gcopter/minco_support.hpp"
 #include "gcopter/minco_piece_corridor.hpp"
 #include "gcopter/gcopter.hpp"
@@ -3571,6 +3572,144 @@ public:
                     .containment_tolerance_m =
                         1.0e-6;
             
+                Trajectory<5>
+                    lazyBernsteinTrajectory;
+
+                Eigen::Matrix3Xd
+                    lazyBernsteinPoints;
+
+                traj_relevant::
+                    LazyBernsteinProjectionOptions
+                        lazyBernsteinOptions;
+
+                lazyBernsteinOptions
+                    .containment_tolerance_m =
+                        1.0e-6;
+
+                lazyBernsteinOptions
+                    .bound_gap_tolerance_m =
+                        1.0e-6;
+
+                const auto lazyBernsteinResult =
+                    traj_relevant::
+                        projectMincoToLazyBernsteinSfc(
+                            iniState,
+                            finState,
+                            activeGuideBackendResult
+                                .optimized_points,
+                            activeGuideBackendResult
+                                .optimized_times,
+                            activeGuideHPolys,
+                            lazyBernsteinTrajectory,
+                            lazyBernsteinPoints,
+                            lazyBernsteinOptions);
+                        
+                ROS_INFO_STREAM(
+                    "TF_LAZY_BERNSTEIN_RESULT "
+                    << "success="
+                    << lazyBernsteinResult.success
+                    << " initial_contained="
+                    << lazyBernsteinResult.initial_contained
+                    << " initial_violation_m="
+                    << lazyBernsteinResult
+                           .initial_max_violation_m
+                    << " final_cert_valid="
+                    << lazyBernsteinResult
+                           .final_certificate_valid
+                    << " final_contained="
+                    << lazyBernsteinResult
+                           .final_contained
+                    << " final_violation_m="
+                    << lazyBernsteinResult
+                           .final_max_violation_m
+                    << " iterations="
+                    << lazyBernsteinResult.iterations
+                    << " cuts="
+                    << lazyBernsteinResult
+                           .activated_cut_count
+                    << " active_constraints="
+                    << lazyBernsteinResult
+                           .active_constraint_count
+                    << " duplicate_cuts="
+                    << lazyBernsteinResult
+                           .duplicate_cut_count
+                    << " duplicate_rows="
+                    << lazyBernsteinResult
+                           .duplicate_row_count
+                    << " depth_saturated="
+                    << lazyBernsteinResult
+                           .depth_saturation_count
+                    << " qp_sweeps="
+                    << lazyBernsteinResult
+                           .total_qp_sweeps
+                    << " qp_ms="
+                    << lazyBernsteinResult.qp_ms
+                    << " cert_ms="
+                    << lazyBernsteinResult
+                           .certificate_ms
+                    << " total_ms="
+                    << lazyBernsteinResult.total_ms
+                    << " correction_l2_m="
+                    << lazyBernsteinResult
+                           .correction_l2_m
+                    << " max_waypoint_disp_m="
+                    << lazyBernsteinResult
+                           .max_waypoint_displacement_m);
+                
+                for (const auto &iter :
+                     lazyBernsteinResult
+                         .iteration_records)
+                {
+                    ROS_INFO_STREAM(
+                        "TF_LAZY_BERNSTEIN_ITER "
+                        << "iter="
+                        << iter.iteration
+                        << " piece="
+                        << iter.piece
+                        << " face="
+                        << iter.face
+                        << " tau="
+                        << iter.tau
+                        << " pre_violation_m="
+                        << iter.pre_violation_m
+                        << " depth="
+                        << iter.depth
+                        << " leaf="
+                        << iter.leaf
+                        << " interval_begin="
+                        << iter.interval_begin
+                        << " interval_end="
+                        << iter.interval_end
+                        << " bound_m="
+                        << iter.bernstein_bound_m
+                        << " bound_gap_m="
+                        << iter.bound_gap_m
+                        << " depth_saturated="
+                        << iter.depth_saturated
+                        << " cut_rows="
+                        << iter.cut_rows
+                        << " rows_added="
+                        << iter.rows_added
+                        << " active_rows="
+                        << iter.active_rows
+                        << " qp_success="
+                        << iter.qp_success
+                        << " qp_sweeps="
+                        << iter.qp_sweeps
+                        << " qp_ms="
+                        << iter.qp_ms
+                        << " post_violation_m="
+                        << iter.post_violation_m
+                        << " post_worst_piece="
+                        << iter.post_worst_piece
+                        << " post_worst_face="
+                        << iter.post_worst_face
+                        << " post_worst_tau="
+                        << iter.post_worst_tau
+                        << " post_contained="
+                        << iter.post_contained);
+                }
+
                 hardProjectionResult =
                     traj_relevant::
                         projectMincoToExactSfc(
