@@ -2612,54 +2612,17 @@ public:
             }
 
             // ============================================================
-            // Paper soft-refinement pilot.
+            // Common clean trajectory metric reconstruction.
             //
-            // IMPORTANT:
-            //   1. nominal backend remains exactly the frozen 1x solve;
-            //   2. refinement is triggered only when the exact continuous-
-            //      time certificate is valid but not contained;
-            //   3. only the position/SFC penalty is multiplied;
-            //   4. exactly ONE extra optimization is allowed;
-            //   5. this diagnostic does NOT replace activeGuideBackendResult
-            //      and therefore does NOT modify frozen E1/E2 outputs.
-            // ============================================================
-            const double
-                softRefinePenaltyScale =
-                    5.0;
-
-            const bool
-                softRefineTriggered =
-                    activeGuideSuccess &&
-                    activeGuideBackendResult
-                        .setup_success &&
-                    activeGuideBackendResult
-                        .optimize_success &&
-                    activeGuideBackendResult
-                        .optimized_state_ready &&
-                    activeGuideBackendResult
-                        .exact_certificate_valid &&
-                    !activeGuideBackendResult
-                         .exact_contained;
-
-            BackendAbResult
-                activeGuideRefinedBackendResult;
-
-            if (softRefineTriggered)
-            {
-                activeGuideRefinedBackendResult =
-                    runBackendAb(
-                        activeGuideHPolys,
-                        softRefinePenaltyScale);
-            }
-
-            // ------------------------------------------------------------
-            // Rebuild a BackendAbResult into the SAME clean trajectory
-            // metrics used by the paper:
+            // This helper evaluates the optimized MINCO state using the
+            // same paper trajectory metric:
             //
             //     J_kin = E_smooth + rho_T * T
             //
-            // No corridor / feasibility penalty is included.
-            // ------------------------------------------------------------
+            // Corridor / feasibility penalties are NOT included.
+            //
+            // It is shared by the controlled four-method E5 experiment.
+            // ============================================================
             auto evaluateBackendCleanMetrics =
                 [&](const BackendAbResult &backend)
                     -> gcopter_benchmark::
@@ -2731,172 +2694,6 @@ public:
                                 config.speedEps,
                                 1.0e-3);
                 };
-
-            const auto
-                softNominalMetrics =
-                    evaluateBackendCleanMetrics(
-                        activeGuideBackendResult);
-
-            const auto
-                softRefinedMetrics =
-                    evaluateBackendCleanMetrics(
-                        activeGuideRefinedBackendResult);
-
-            const bool
-                softRefineResultReady =
-                    softRefineTriggered &&
-                    activeGuideRefinedBackendResult
-                        .setup_success &&
-                    activeGuideRefinedBackendResult
-                        .optimize_success &&
-                    activeGuideRefinedBackendResult
-                        .optimized_state_ready &&
-                    activeGuideRefinedBackendResult
-                        .exact_certificate_valid &&
-                    softRefinedMetrics.valid;
-
-            const double
-                softRefineViolationDeltaM =
-                    softRefineResultReady &&
-                    activeGuideBackendResult
-                        .exact_certificate_valid
-                        ? activeGuideRefinedBackendResult
-                              .exact_max_violation_m -
-                          activeGuideBackendResult
-                              .exact_max_violation_m
-                        : std::numeric_limits<double>::
-                              quiet_NaN();
-
-            const double
-                softRefineJkinDelta =
-                    softRefineResultReady &&
-                    softNominalMetrics.valid
-                        ? softRefinedMetrics.j_kin -
-                          softNominalMetrics.j_kin
-                        : std::numeric_limits<double>::
-                              quiet_NaN();
-
-            const double
-                softRefineLengthDeltaM =
-                    softRefineResultReady &&
-                    softNominalMetrics.valid
-                        ? softRefinedMetrics.length_m -
-                          softNominalMetrics.length_m
-                        : std::numeric_limits<double>::
-                              quiet_NaN();
-
-            const double
-                softRefineDurationDeltaS =
-                    softRefineResultReady &&
-                    softNominalMetrics.valid
-                        ? softRefinedMetrics.duration_s -
-                          softNominalMetrics.duration_s
-                        : std::numeric_limits<double>::
-                              quiet_NaN();
-
-            ROS_INFO_STREAM(
-                "TF_SOFT_REFINE_PROPOSED "
-
-                << "triggered="
-                << softRefineTriggered
-
-                << " penalty_scale="
-                << softRefinePenaltyScale
-
-                << " nominal_setup_success="
-                << activeGuideBackendResult
-                       .setup_success
-
-                << " nominal_opt_success="
-                << activeGuideBackendResult
-                       .optimize_success
-
-                << " nominal_exact_valid="
-                << activeGuideBackendResult
-                       .exact_certificate_valid
-
-                << " nominal_contained="
-                << activeGuideBackendResult
-                       .exact_contained
-
-                << " nominal_violation_m="
-                << activeGuideBackendResult
-                       .exact_max_violation_m
-
-                << " nominal_opt_ms="
-                << activeGuideBackendResult
-                       .optimize_ms
-
-                << " nominal_metrics_valid="
-                << softNominalMetrics.valid
-
-                << " nominal_jkin="
-                << softNominalMetrics.j_kin
-
-                << " nominal_length_m="
-                << softNominalMetrics.length_m
-
-                << " nominal_duration_s="
-                << softNominalMetrics.duration_s
-
-                << " nominal_smoothness="
-                << softNominalMetrics
-                       .smoothness_energy
-
-                << " refined_ready="
-                << softRefineResultReady
-
-                << " refined_setup_success="
-                << activeGuideRefinedBackendResult
-                       .setup_success
-
-                << " refined_opt_success="
-                << activeGuideRefinedBackendResult
-                       .optimize_success
-
-                << " refined_exact_valid="
-                << activeGuideRefinedBackendResult
-                       .exact_certificate_valid
-
-                << " refined_contained="
-                << activeGuideRefinedBackendResult
-                       .exact_contained
-
-                << " refined_violation_m="
-                << activeGuideRefinedBackendResult
-                       .exact_max_violation_m
-
-                << " refined_opt_ms="
-                << activeGuideRefinedBackendResult
-                       .optimize_ms
-
-                << " refined_metrics_valid="
-                << softRefinedMetrics.valid
-
-                << " refined_jkin="
-                << softRefinedMetrics.j_kin
-
-                << " refined_length_m="
-                << softRefinedMetrics.length_m
-
-                << " refined_duration_s="
-                << softRefinedMetrics.duration_s
-
-                << " refined_smoothness="
-                << softRefinedMetrics
-                       .smoothness_energy
-
-                << " delta_violation_m="
-                << softRefineViolationDeltaM
-
-                << " delta_jkin="
-                << softRefineJkinDelta
-
-                << " delta_length_m="
-                << softRefineLengthDeltaM
-
-                << " delta_duration_s="
-                << softRefineDurationDeltaS);
 
             // ------------------------------------------------------------
             // Exact continuous-time hard SFC closure.
@@ -11708,7 +11505,443 @@ public:
                             controlledV3RilsMappingValid);
                         
                         
+                    
+
                     // ========================================================
+                    // E5: common one-pass soft corridor refinement.
+                    //
+                    // The nominal trajectory is EXACTLY the already-computed
+                    // Controlled E2 trajectory for each corridor method.
+                    //
+                    // Policy is frozen and identical for all methods:
+                    //
+                    //   nominal exact-contained
+                    //       -> no additional optimization;
+                    //
+                    //   nominal exact-valid but not contained
+                    //       -> exactly ONE additional GCOPTER solve with
+                    //          position/SFC penalty multiplied by 5.
+                    //
+                    // No hard projection is used in E5.
+                    // No method-specific tuning is allowed.
+                    // ========================================================
+
+                    const double
+                        controlledE5PenaltyScale =
+                            5.0;
+
+
+                    struct ControlledE5SoftRefineEvaluation
+                    {
+                        bool mapping_valid =
+                            false;
+
+                        bool nominal_ready =
+                            false;
+
+                        bool triggered =
+                            false;
+
+                        bool refined_ready =
+                            false;
+
+                        bool post_contained =
+                            false;
+
+                        BackendAbResult
+                            refined_backend;
+
+                        gcopter_benchmark::
+                            FinalTrajectoryMetrics
+                                refined_metrics;
+
+                        double delta_violation_m =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+
+                        double delta_j_kin =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+
+                        double delta_length_m =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+
+                        double delta_duration_s =
+                            std::numeric_limits<double>::
+                                quiet_NaN();
+
+                        double extra_backend_ms =
+                            0.0;
+                    };
+
+
+                    auto evaluateControlledE5SoftRefine =
+                        [&](const std::string &methodName,
+                            const std::vector<Eigen::MatrixX4d>
+                                &hPolys,
+                            const ControlledE2BackendEvaluation
+                                &nominal)
+                            -> ControlledE5SoftRefineEvaluation
+                        {
+                            ControlledE5SoftRefineEvaluation
+                                result;
+
+                            result.mapping_valid =
+                                nominal.mapping_valid;
+
+                            result.nominal_ready =
+                                nominal.mapping_valid &&
+                                nominal.backend
+                                    .setup_success &&
+                                nominal.backend
+                                    .optimize_success &&
+                                nominal.backend
+                                    .optimized_state_ready &&
+                                nominal.backend
+                                    .exact_certificate_valid &&
+                                nominal.trajectory_metrics
+                                    .valid;
+
+                            if (!result.nominal_ready)
+                            {
+                                ROS_INFO_STREAM(
+                                    "TF_SOFT_REFINE_E5 "
+                                    << "method="
+                                    << methodName
+                                    << " penalty_scale="
+                                    << controlledE5PenaltyScale
+                                    << " mapping_valid="
+                                    << result.mapping_valid
+                                    << " nominal_ready=0"
+                                    << " triggered=0"
+                                    << " refined_ready=0"
+                                    << " post_contained=0");
+
+                                return result;
+                            }
+
+                            result.triggered =
+                                !nominal.backend
+                                     .exact_contained;
+
+                            if (!result.triggered)
+                            {
+                                result.post_contained =
+                                    true;
+
+                                ROS_INFO_STREAM(
+                                    "TF_SOFT_REFINE_E5 "
+                                    << "method="
+                                    << methodName
+
+                                    << " penalty_scale="
+                                    << controlledE5PenaltyScale
+
+                                    << " mapping_valid="
+                                    << result.mapping_valid
+
+                                    << " faces="
+                                    << nominal.backend
+                                           .total_faces
+
+                                    << " nominal_ready=1"
+
+                                    << " nominal_exact_valid="
+                                    << nominal.backend
+                                           .exact_certificate_valid
+
+                                    << " nominal_contained="
+                                    << nominal.backend
+                                           .exact_contained
+
+                                    << " nominal_violation_m="
+                                    << nominal.backend
+                                           .exact_max_violation_m
+
+                                    << " nominal_jkin="
+                                    << nominal
+                                           .trajectory_metrics
+                                           .j_kin
+
+                                    << " nominal_length_m="
+                                    << nominal
+                                           .trajectory_metrics
+                                           .length_m
+
+                                    << " nominal_duration_s="
+                                    << nominal
+                                           .trajectory_metrics
+                                           .duration_s
+
+                                    << " nominal_opt_ms="
+                                    << nominal.backend
+                                           .optimize_ms
+
+                                    << " triggered=0"
+                                    << " refined_ready=0"
+                                    << " post_contained=1"
+
+                                    << " extra_backend_ms=0");
+
+                                return result;
+                            }
+
+                            result.refined_backend =
+                                runBackendAb(
+                                    hPolys,
+                                    controlledE5PenaltyScale);
+
+                            result.refined_metrics =
+                                evaluateBackendCleanMetrics(
+                                    result.refined_backend);
+
+                            result.refined_ready =
+                                result.refined_backend
+                                    .setup_success &&
+                                result.refined_backend
+                                    .optimize_success &&
+                                result.refined_backend
+                                    .optimized_state_ready &&
+                                result.refined_backend
+                                    .exact_certificate_valid &&
+                                result.refined_metrics
+                                    .valid;
+
+                            result.extra_backend_ms =
+                                result.refined_backend
+                                    .setup_ms +
+                                result.refined_backend
+                                    .optimize_ms +
+                                result.refined_backend
+                                    .exact_certificate_ms;
+
+                            if (result.refined_ready)
+                            {
+                                result.post_contained =
+                                    result.refined_backend
+                                        .exact_contained;
+
+                                result.delta_violation_m =
+                                    result.refined_backend
+                                        .exact_max_violation_m -
+                                    nominal.backend
+                                        .exact_max_violation_m;
+
+                                result.delta_j_kin =
+                                    result.refined_metrics
+                                        .j_kin -
+                                    nominal
+                                        .trajectory_metrics
+                                        .j_kin;
+
+                                result.delta_length_m =
+                                    result.refined_metrics
+                                        .length_m -
+                                    nominal
+                                        .trajectory_metrics
+                                        .length_m;
+
+                                result.delta_duration_s =
+                                    result.refined_metrics
+                                        .duration_s -
+                                    nominal
+                                        .trajectory_metrics
+                                        .duration_s;
+                            }
+
+                            ROS_INFO_STREAM(
+                                "TF_SOFT_REFINE_E5 "
+
+                                << "method="
+                                << methodName
+
+                                << " penalty_scale="
+                                << controlledE5PenaltyScale
+
+                                << " mapping_valid="
+                                << result.mapping_valid
+
+                                << " faces="
+                                << nominal.backend
+                                       .total_faces
+
+                                << " nominal_ready="
+                                << result.nominal_ready
+
+                                << " nominal_exact_valid="
+                                << nominal.backend
+                                       .exact_certificate_valid
+
+                                << " nominal_contained="
+                                << nominal.backend
+                                       .exact_contained
+
+                                << " nominal_violation_m="
+                                << nominal.backend
+                                       .exact_max_violation_m
+
+                                << " nominal_jkin="
+                                << nominal
+                                       .trajectory_metrics
+                                       .j_kin
+
+                                << " nominal_length_m="
+                                << nominal
+                                       .trajectory_metrics
+                                       .length_m
+
+                                << " nominal_duration_s="
+                                << nominal
+                                       .trajectory_metrics
+                                       .duration_s
+
+                                << " nominal_opt_ms="
+                                << nominal.backend
+                                       .optimize_ms
+
+                                << " triggered="
+                                << result.triggered
+
+                                << " refined_ready="
+                                << result.refined_ready
+
+                                << " refined_exact_valid="
+                                << result.refined_backend
+                                       .exact_certificate_valid
+
+                                << " refined_contained="
+                                << result.refined_backend
+                                       .exact_contained
+
+                                << " refined_violation_m="
+                                << result.refined_backend
+                                       .exact_max_violation_m
+
+                                << " refined_jkin="
+                                << result.refined_metrics
+                                       .j_kin
+
+                                << " refined_length_m="
+                                << result.refined_metrics
+                                       .length_m
+
+                                << " refined_duration_s="
+                                << result.refined_metrics
+                                       .duration_s
+
+                                << " refined_setup_ms="
+                                << result.refined_backend
+                                       .setup_ms
+
+                                << " refined_opt_ms="
+                                << result.refined_backend
+                                       .optimize_ms
+
+                                << " refined_cert_ms="
+                                << result.refined_backend
+                                       .exact_certificate_ms
+
+                                << " extra_backend_ms="
+                                << result.extra_backend_ms
+
+                                << " delta_violation_m="
+                                << result.delta_violation_m
+
+                                << " delta_jkin="
+                                << result.delta_j_kin
+
+                                << " delta_length_m="
+                                << result.delta_length_m
+
+                                << " delta_duration_s="
+                                << result.delta_duration_s
+
+                                << " post_contained="
+                                << result.post_contained);
+
+                            return result;
+                        };
+
+
+                    // ========================================================
+                    // Fixed E5 execution order.
+                    // Must remain identical across all paper experiments.
+                    // ========================================================
+
+                    const auto
+                        controlledE5Proposed =
+                            evaluateControlledE5SoftRefine(
+                                "proposed",
+                                controlledCsgnHPolys,
+                                controlledE2Proposed);
+
+
+                    const auto
+                        controlledE5Identity =
+                            evaluateControlledE5SoftRefine(
+                                "identity",
+                                controlledIdentityHPolys,
+                                controlledE2Identity);
+
+
+                    const auto
+                        controlledE5Firi =
+                            evaluateControlledE5SoftRefine(
+                                "firi",
+                                controlledFiriHPolys,
+                                controlledE2Firi);
+
+
+                    const auto
+                        controlledE5Rils =
+                            evaluateControlledE5SoftRefine(
+                                "rils",
+                                controlledRilsBuild.hpolys,
+                                controlledE2Rils);
+
+
+                    ROS_INFO_STREAM(
+                        "TF_SOFT_REFINE_E5_SUMMARY "
+
+                        << "penalty_scale="
+                        << controlledE5PenaltyScale
+
+                        << " methods=4"
+
+                        << " nominal_ready="
+                        << (
+                            (controlledE5Proposed
+                                 .nominal_ready ? 1 : 0) +
+                            (controlledE5Identity
+                                 .nominal_ready ? 1 : 0) +
+                            (controlledE5Firi
+                                 .nominal_ready ? 1 : 0) +
+                            (controlledE5Rils
+                                 .nominal_ready ? 1 : 0))
+
+                        << " triggered="
+                        << (
+                            (controlledE5Proposed
+                                 .triggered ? 1 : 0) +
+                            (controlledE5Identity
+                                 .triggered ? 1 : 0) +
+                            (controlledE5Firi
+                                 .triggered ? 1 : 0) +
+                            (controlledE5Rils
+                                 .triggered ? 1 : 0))
+
+                        << " post_contained="
+                        << (
+                            (controlledE5Proposed
+                                 .post_contained ? 1 : 0) +
+                            (controlledE5Identity
+                                 .post_contained ? 1 : 0) +
+                            (controlledE5Firi
+                                 .post_contained ? 1 : 0) +
+                            (controlledE5Rils
+                                 .post_contained ? 1 : 0)));
+// ========================================================
                     // Proposed replay / determinism cross-check.
                     //
                     // The Controlled Proposed H-polytopes have already been
