@@ -3163,6 +3163,406 @@ public:
                     }
                 }
 
+                // ========================================================
+                // One-step Lazy Bernstein hard-projection diagnostic.
+                //
+                // IMPORTANT:
+                //   - does NOT replace the existing Exact-Hard output;
+                //   - does NOT modify the final benchmark trajectory;
+                //   - uses only the current global exact worst witness;
+                //   - adaptively refines ONE dyadic Bernstein leaf;
+                //   - solves at most six local hard inequalities.
+                // ========================================================
+                if (bernsteinAffineValid &&
+                    activeGuideBackendResult
+                        .exact_certificate_valid &&
+                    !activeGuideBackendResult
+                         .exact_contained &&
+                    activeGuideBackendResult
+                        .exact_worst_piece >= 0 &&
+                    activeGuideBackendResult
+                        .exact_worst_face >= 0)
+                {
+                    const double
+                        bernsteinClosureToleranceM =
+                            1.0e-6;
+
+                    const int
+                        bernsteinMaxAdaptiveDepth =
+                            16;
+
+                    int selectedDepth =
+                        -1;
+
+                    double selectedBoundM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double selectedBoundGapM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    for (int depth = 0;
+                         depth <=
+                             bernsteinMaxAdaptiveDepth;
+                         ++depth)
+                    {
+                        double boundM =
+                            -std::numeric_limits<double>::
+                                infinity();
+
+                        int leafId =
+                            -1;
+
+                        double intervalBegin =
+                            0.0;
+
+                        double intervalEnd =
+                            1.0;
+
+                        const bool boundValid =
+                            traj_relevant::
+                                evaluateLocalBernsteinFaceBoundM(
+                                    bernsteinAffineMap,
+                                    activeGuideHPolys,
+                                    activeGuideBackendResult
+                                        .optimized_points,
+                                    activeGuideBackendResult
+                                        .exact_worst_piece,
+                                    activeGuideBackendResult
+                                        .exact_worst_face,
+                                    activeGuideBackendResult
+                                        .exact_worst_tau,
+                                    depth,
+                                    boundM,
+                                    leafId,
+                                    intervalBegin,
+                                    intervalEnd);
+
+                        if (!boundValid)
+                        {
+                            break;
+                        }
+
+                        const double boundGapM =
+                            boundM -
+                            activeGuideBackendResult
+                                .exact_max_violation_m;
+
+                        selectedDepth =
+                            depth;
+
+                        selectedBoundM =
+                            boundM;
+
+                        selectedBoundGapM =
+                            boundGapM;
+
+                        if (boundGapM <=
+                            bernsteinClosureToleranceM)
+                        {
+                            break;
+                        }
+                    }
+
+                    const auto localCut =
+                        traj_relevant::
+                            buildLocalBernsteinCut(
+                                bernsteinAffineMap,
+                                activeGuideHPolys,
+                                activeGuideBackendResult
+                                    .exact_worst_piece,
+                                activeGuideBackendResult
+                                    .exact_worst_face,
+                                activeGuideBackendResult
+                                    .exact_worst_tau,
+                                selectedDepth);
+
+                    bool qpAttempted =
+                        false;
+
+                    bool qpSuccess =
+                        false;
+
+                    int qpSweeps =
+                        0;
+
+                    double qpMaxPrimal =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double qpMaxDualChange =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double qpMs =
+                        0.0;
+
+                    double correctionL2M =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    double maxWaypointDispM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    bool rebuiltValid =
+                        false;
+
+                    bool afterCertValid =
+                        false;
+
+                    bool afterContained =
+                        false;
+
+                    double afterViolationM =
+                        std::numeric_limits<double>::
+                            infinity();
+
+                    int afterWorstPiece =
+                        -1;
+
+                    int afterWorstFace =
+                        -1;
+
+                    double afterWorstTau =
+                        0.0;
+
+                    if (selectedDepth >= 0 &&
+                        localCut.valid &&
+                        !localCut.fixed_infeasible &&
+                        localCut.A.rows() > 0 &&
+                        localCut.A.rows() <= 6)
+                    {
+                        const Eigen::VectorXd z0 =
+                            traj_relevant::
+                                flattenMincoWaypoints(
+                                    activeGuideBackendResult
+                                        .optimized_points);
+
+                        std::vector<Eigen::VectorXd>
+                            qpRows;
+
+                        std::vector<double>
+                            qpRhs;
+
+                        qpRows.reserve(
+                            localCut.A.rows());
+
+                        qpRhs.reserve(
+                            localCut.A.rows());
+
+                        for (int rowId = 0;
+                             rowId <
+                                 localCut.A.rows();
+                             ++rowId)
+                        {
+                            qpRows.push_back(
+                                localCut.A
+                                    .row(rowId)
+                                    .transpose());
+
+                            qpRhs.push_back(
+                                localCut.b(rowId));
+                        }
+
+                        qpAttempted =
+                            true;
+
+                        const auto qpStarted =
+                            std::chrono::
+                                steady_clock::now();
+
+                        const auto qp =
+                            traj_relevant::
+                                solveEuclideanHalfspaceProjection(
+                                    z0,
+                                    qpRows,
+                                    qpRhs,
+                                    1.0e-10,
+                                    1.0e-12,
+                                    20000);
+
+                        qpMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::
+                                        steady_clock::now() -
+                                    qpStarted)
+                                .count();
+
+                        qpSuccess =
+                            qp.success &&
+                            qp.solution.allFinite();
+
+                        qpSweeps =
+                            qp.sweeps;
+
+                        qpMaxPrimal =
+                            qp.max_primal_violation;
+
+                        qpMaxDualChange =
+                            qp.max_dual_change;
+
+                        if (qpSuccess)
+                        {
+                            correctionL2M =
+                                (qp.solution - z0)
+                                    .norm();
+
+                            Eigen::Matrix3Xd
+                                diagnosticPoints;
+
+                            if (traj_relevant::
+                                    unflattenMincoWaypoints(
+                                        qp.solution,
+                                        diagnosticPoints))
+                            {
+                                maxWaypointDispM =
+                                    0.0;
+
+                                for (int waypointId = 0;
+                                     waypointId <
+                                         diagnosticPoints.cols();
+                                     ++waypointId)
+                                {
+                                    maxWaypointDispM =
+                                        std::max(
+                                            maxWaypointDispM,
+                                            (diagnosticPoints
+                                                 .col(waypointId) -
+                                             activeGuideBackendResult
+                                                 .optimized_points
+                                                 .col(waypointId))
+                                                .norm());
+                                }
+
+                                minco::MINCO_S3NU
+                                    diagnosticMinco;
+
+                                diagnosticMinco
+                                    .setConditions(
+                                        iniState,
+                                        finState,
+                                        activeGuideBackendResult
+                                            .optimized_times
+                                            .size());
+
+                                diagnosticMinco
+                                    .setParameters(
+                                        diagnosticPoints,
+                                        activeGuideBackendResult
+                                            .optimized_times);
+
+                                Trajectory<5>
+                                    diagnosticTrajectory;
+
+                                diagnosticMinco
+                                    .getTrajectory(
+                                        diagnosticTrajectory);
+
+                                rebuiltValid =
+                                    diagnosticTrajectory
+                                        .getPieceNum() ==
+                                    static_cast<int>(
+                                        activeGuideHPolys
+                                            .size());
+
+                                if (rebuiltValid)
+                                {
+                                    const auto afterCert =
+                                        traj_relevant::
+                                            certifyMincoTrajectoryInCorridors(
+                                                diagnosticTrajectory,
+                                                activeGuideHPolys,
+                                                1.0e-6);
+
+                                    afterCertValid =
+                                        afterCert.valid;
+
+                                    afterContained =
+                                        afterCert.contained;
+
+                                    afterViolationM =
+                                        afterCert
+                                            .worst
+                                            .violation_m;
+
+                                    afterWorstPiece =
+                                        afterCert
+                                            .worst
+                                            .piece;
+
+                                    afterWorstFace =
+                                        afterCert
+                                            .worst
+                                            .face;
+
+                                    afterWorstTau =
+                                        afterCert
+                                            .worst
+                                            .normalized_time;
+                                }
+                            }
+                        }
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_BERNSTEIN_ONE_STEP_QP "
+                        << "selected_depth="
+                        << selectedDepth
+                        << " bound_m="
+                        << selectedBoundM
+                        << " bound_gap_m="
+                        << selectedBoundGapM
+                        << " piece="
+                        << localCut.piece
+                        << " face="
+                        << localCut.face
+                        << " leaf="
+                        << localCut.leaf
+                        << " interval_begin="
+                        << localCut.interval_begin
+                        << " interval_end="
+                        << localCut.interval_end
+                        << " constraints="
+                        << localCut.A.rows()
+                        << " qp_attempted="
+                        << qpAttempted
+                        << " qp_success="
+                        << qpSuccess
+                        << " qp_sweeps="
+                        << qpSweeps
+                        << " qp_max_primal="
+                        << qpMaxPrimal
+                        << " qp_max_dual_change="
+                        << qpMaxDualChange
+                        << " qp_ms="
+                        << qpMs
+                        << " correction_l2_m="
+                        << correctionL2M
+                        << " max_waypoint_disp_m="
+                        << maxWaypointDispM
+                        << " rebuilt_valid="
+                        << rebuiltValid
+                        << " before_violation_m="
+                        << activeGuideBackendResult
+                               .exact_max_violation_m
+                        << " after_cert_valid="
+                        << afterCertValid
+                        << " after_contained="
+                        << afterContained
+                        << " after_violation_m="
+                        << afterViolationM
+                        << " after_worst_piece="
+                        << afterWorstPiece
+                        << " after_worst_face="
+                        << afterWorstFace
+                        << " after_worst_tau="
+                        << afterWorstTau);
+                }
+
                 traj_relevant::
                     ExactSfcProjectionOptions
                         projectionOptions;
