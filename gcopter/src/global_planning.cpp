@@ -2611,6 +2611,293 @@ public:
                         activeGuideHPolys);
             }
 
+            // ============================================================
+            // Paper soft-refinement pilot.
+            //
+            // IMPORTANT:
+            //   1. nominal backend remains exactly the frozen 1x solve;
+            //   2. refinement is triggered only when the exact continuous-
+            //      time certificate is valid but not contained;
+            //   3. only the position/SFC penalty is multiplied;
+            //   4. exactly ONE extra optimization is allowed;
+            //   5. this diagnostic does NOT replace activeGuideBackendResult
+            //      and therefore does NOT modify frozen E1/E2 outputs.
+            // ============================================================
+            const double
+                softRefinePenaltyScale =
+                    5.0;
+
+            const bool
+                softRefineTriggered =
+                    activeGuideSuccess &&
+                    activeGuideBackendResult
+                        .setup_success &&
+                    activeGuideBackendResult
+                        .optimize_success &&
+                    activeGuideBackendResult
+                        .optimized_state_ready &&
+                    activeGuideBackendResult
+                        .exact_certificate_valid &&
+                    !activeGuideBackendResult
+                         .exact_contained;
+
+            BackendAbResult
+                activeGuideRefinedBackendResult;
+
+            if (softRefineTriggered)
+            {
+                activeGuideRefinedBackendResult =
+                    runBackendAb(
+                        activeGuideHPolys,
+                        softRefinePenaltyScale);
+            }
+
+            // ------------------------------------------------------------
+            // Rebuild a BackendAbResult into the SAME clean trajectory
+            // metrics used by the paper:
+            //
+            //     J_kin = E_smooth + rho_T * T
+            //
+            // No corridor / feasibility penalty is included.
+            // ------------------------------------------------------------
+            auto evaluateBackendCleanMetrics =
+                [&](const BackendAbResult &backend)
+                    -> gcopter_benchmark::
+                           FinalTrajectoryMetrics
+                {
+                    gcopter_benchmark::
+                        FinalTrajectoryMetrics
+                            metrics;
+
+                    if (!backend
+                             .optimized_state_ready ||
+                        backend.optimized_times
+                            .size() <= 0)
+                    {
+                        return metrics;
+                    }
+
+                    minco::MINCO_S3NU
+                        metricMinco;
+
+                    metricMinco.setConditions(
+                        iniState,
+                        finState,
+                        backend.optimized_times
+                            .size());
+
+                    metricMinco.setParameters(
+                        backend.optimized_points,
+                        backend.optimized_times);
+
+                    Trajectory<5>
+                        metricTrajectory;
+
+                    metricMinco.getTrajectory(
+                        metricTrajectory);
+
+                    if (metricTrajectory
+                            .getPieceNum() !=
+                        backend.optimized_times
+                            .size())
+                    {
+                        return metrics;
+                    }
+
+                    double smoothnessEnergy =
+                        std::numeric_limits<double>::
+                            quiet_NaN();
+
+                    metricMinco.getEnergy(
+                        smoothnessEnergy);
+
+                    if (!std::isfinite(
+                            smoothnessEnergy))
+                    {
+                        return metrics;
+                    }
+
+                    return
+                        gcopter_benchmark::
+                            evaluateFinalTrajectoryMetrics(
+                                metricTrajectory,
+                                smoothnessEnergy,
+                                config.weightT,
+                                config.vehicleMass,
+                                config.gravAcc,
+                                config.horizDrag,
+                                config.vertDrag,
+                                config.parasDrag,
+                                config.speedEps,
+                                1.0e-3);
+                };
+
+            const auto
+                softNominalMetrics =
+                    evaluateBackendCleanMetrics(
+                        activeGuideBackendResult);
+
+            const auto
+                softRefinedMetrics =
+                    evaluateBackendCleanMetrics(
+                        activeGuideRefinedBackendResult);
+
+            const bool
+                softRefineResultReady =
+                    softRefineTriggered &&
+                    activeGuideRefinedBackendResult
+                        .setup_success &&
+                    activeGuideRefinedBackendResult
+                        .optimize_success &&
+                    activeGuideRefinedBackendResult
+                        .optimized_state_ready &&
+                    activeGuideRefinedBackendResult
+                        .exact_certificate_valid &&
+                    softRefinedMetrics.valid;
+
+            const double
+                softRefineViolationDeltaM =
+                    softRefineResultReady &&
+                    activeGuideBackendResult
+                        .exact_certificate_valid
+                        ? activeGuideRefinedBackendResult
+                              .exact_max_violation_m -
+                          activeGuideBackendResult
+                              .exact_max_violation_m
+                        : std::numeric_limits<double>::
+                              quiet_NaN();
+
+            const double
+                softRefineJkinDelta =
+                    softRefineResultReady &&
+                    softNominalMetrics.valid
+                        ? softRefinedMetrics.j_kin -
+                          softNominalMetrics.j_kin
+                        : std::numeric_limits<double>::
+                              quiet_NaN();
+
+            const double
+                softRefineLengthDeltaM =
+                    softRefineResultReady &&
+                    softNominalMetrics.valid
+                        ? softRefinedMetrics.length_m -
+                          softNominalMetrics.length_m
+                        : std::numeric_limits<double>::
+                              quiet_NaN();
+
+            const double
+                softRefineDurationDeltaS =
+                    softRefineResultReady &&
+                    softNominalMetrics.valid
+                        ? softRefinedMetrics.duration_s -
+                          softNominalMetrics.duration_s
+                        : std::numeric_limits<double>::
+                              quiet_NaN();
+
+            ROS_INFO_STREAM(
+                "TF_SOFT_REFINE_PROPOSED "
+
+                << "triggered="
+                << softRefineTriggered
+
+                << " penalty_scale="
+                << softRefinePenaltyScale
+
+                << " nominal_setup_success="
+                << activeGuideBackendResult
+                       .setup_success
+
+                << " nominal_opt_success="
+                << activeGuideBackendResult
+                       .optimize_success
+
+                << " nominal_exact_valid="
+                << activeGuideBackendResult
+                       .exact_certificate_valid
+
+                << " nominal_contained="
+                << activeGuideBackendResult
+                       .exact_contained
+
+                << " nominal_violation_m="
+                << activeGuideBackendResult
+                       .exact_max_violation_m
+
+                << " nominal_opt_ms="
+                << activeGuideBackendResult
+                       .optimize_ms
+
+                << " nominal_metrics_valid="
+                << softNominalMetrics.valid
+
+                << " nominal_jkin="
+                << softNominalMetrics.j_kin
+
+                << " nominal_length_m="
+                << softNominalMetrics.length_m
+
+                << " nominal_duration_s="
+                << softNominalMetrics.duration_s
+
+                << " nominal_smoothness="
+                << softNominalMetrics
+                       .smoothness_energy
+
+                << " refined_ready="
+                << softRefineResultReady
+
+                << " refined_setup_success="
+                << activeGuideRefinedBackendResult
+                       .setup_success
+
+                << " refined_opt_success="
+                << activeGuideRefinedBackendResult
+                       .optimize_success
+
+                << " refined_exact_valid="
+                << activeGuideRefinedBackendResult
+                       .exact_certificate_valid
+
+                << " refined_contained="
+                << activeGuideRefinedBackendResult
+                       .exact_contained
+
+                << " refined_violation_m="
+                << activeGuideRefinedBackendResult
+                       .exact_max_violation_m
+
+                << " refined_opt_ms="
+                << activeGuideRefinedBackendResult
+                       .optimize_ms
+
+                << " refined_metrics_valid="
+                << softRefinedMetrics.valid
+
+                << " refined_jkin="
+                << softRefinedMetrics.j_kin
+
+                << " refined_length_m="
+                << softRefinedMetrics.length_m
+
+                << " refined_duration_s="
+                << softRefinedMetrics.duration_s
+
+                << " refined_smoothness="
+                << softRefinedMetrics
+                       .smoothness_energy
+
+                << " delta_violation_m="
+                << softRefineViolationDeltaM
+
+                << " delta_jkin="
+                << softRefineJkinDelta
+
+                << " delta_length_m="
+                << softRefineLengthDeltaM
+
+                << " delta_duration_s="
+                << softRefineDurationDeltaS);
+
             // ------------------------------------------------------------
             // Exact continuous-time hard SFC closure.
             //
