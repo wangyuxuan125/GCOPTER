@@ -4,6 +4,7 @@
 #include "gcopter/minco_affine_map.hpp"
 
 #include <Eigen/Eigen>
+#include <algorithm>
 #include <array>
 
 #include <chrono>
@@ -27,6 +28,26 @@ using BernsteinAffineControlPolygon =
     std::array<
         BernsteinAffineControlPoint,
         6>;
+
+
+struct LocalBernsteinCut
+{
+    bool valid = false;
+
+    bool fixed_infeasible = false;
+
+    int piece = -1;
+    int face = -1;
+    int depth = 0;
+    int leaf = -1;
+
+    double interval_begin = 0.0;
+    double interval_end = 1.0;
+
+    Eigen::MatrixXd A;
+    Eigen::VectorXd b;
+};
+
 
 inline bool
 buildBernsteinAffineControlPolygon(
@@ -157,6 +178,305 @@ splitBernsteinAffineControlPolygonHalf(
 
     return true;
 }
+
+inline int
+bernsteinLeafForNormalizedTime(
+    const double normalizedTime,
+    const int depth)
+{
+    if (!std::isfinite(normalizedTime) ||
+        depth < 0 ||
+        depth > 20)
+    {
+        return -1;
+    }
+
+    const double tau =
+        std::max(
+            0.0,
+            std::min(
+                1.0,
+                normalizedTime));
+
+    const int leafCount =
+        1 << depth;
+
+    if (tau >= 1.0)
+    {
+        return leafCount - 1;
+    }
+
+    return std::min(
+        static_cast<int>(
+            std::floor(
+                tau *
+                static_cast<double>(
+                    leafCount))),
+        leafCount - 1);
+}
+
+
+inline bool
+extractBernsteinAffineLeaf(
+    const BernsteinAffineControlPolygon &whole,
+    const int depth,
+    const int leafId,
+    BernsteinAffineControlPolygon &leaf)
+{
+    if (depth < 0 ||
+        depth > 20)
+    {
+        return false;
+    }
+
+    const int leafCount =
+        1 << depth;
+
+    if (leafId < 0 ||
+        leafId >= leafCount)
+    {
+        return false;
+    }
+
+    BernsteinAffineControlPolygon current =
+        whole;
+
+    for (int level = 0;
+         level < depth;
+         ++level)
+    {
+        BernsteinAffineControlPolygon left;
+        BernsteinAffineControlPolygon right;
+
+        if (!splitBernsteinAffineControlPolygonHalf(
+                current,
+                left,
+                right))
+        {
+            return false;
+        }
+
+        // Binary representation of leafId selects
+        // left/right from the most significant level
+        // to the least significant level.
+        const int bit =
+            (leafId >>
+             (depth - 1 - level)) &
+            1;
+
+        current =
+            bit == 0
+                ? left
+                : right;
+    }
+
+    leaf =
+        current;
+
+    return true;
+}
+
+
+inline LocalBernsteinCut
+buildLocalBernsteinCut(
+    const MincoWaypointAffineMap &affineMap,
+    const std::vector<Eigen::MatrixX4d> &corridors,
+    const int pieceId,
+    const int faceId,
+    const double normalizedTime,
+    const int subdivisionDepth)
+{
+    LocalBernsteinCut result;
+
+    if (!affineMap.valid() ||
+        pieceId < 0 ||
+        pieceId >= affineMap.pieceCount() ||
+        pieceId >=
+            static_cast<int>(corridors.size()) ||
+        subdivisionDepth < 0)
+    {
+        return result;
+    }
+
+    const auto &poly =
+        corridors[pieceId];
+
+    if (poly.cols() != 4 ||
+        faceId < 0 ||
+        faceId >= poly.rows() ||
+        !poly.allFinite())
+    {
+        return result;
+    }
+
+    const int leafId =
+        bernsteinLeafForNormalizedTime(
+            normalizedTime,
+            subdivisionDepth);
+
+    if (leafId < 0)
+    {
+        return result;
+    }
+
+    BernsteinAffineControlPolygon whole;
+
+    if (!buildBernsteinAffineControlPolygon(
+            affineMap,
+            pieceId,
+            whole))
+    {
+        return result;
+    }
+
+    BernsteinAffineControlPolygon leaf;
+
+    if (!extractBernsteinAffineLeaf(
+            whole,
+            subdivisionDepth,
+            leafId,
+            leaf))
+    {
+        return result;
+    }
+
+    const Eigen::Vector3d normal =
+        poly.block<1, 3>(
+                faceId,
+                0)
+            .transpose();
+
+    const double planeOffset =
+        poly(faceId, 3);
+
+    if (!normal.allFinite() ||
+        !std::isfinite(planeOffset) ||
+        normal.norm() <= 1.0e-12)
+    {
+        return result;
+    }
+
+    const int variableDimension =
+        affineMap.variableDimension();
+
+    std::vector<Eigen::VectorXd>
+        rows;
+
+    std::vector<double>
+        rhsValues;
+
+    rows.reserve(6);
+    rhsValues.reserve(6);
+
+    for (int controlId = 0;
+         controlId < 6;
+         ++controlId)
+    {
+        Eigen::VectorXd row =
+            Eigen::VectorXd::Zero(
+                variableDimension);
+
+        for (int waypointId = 0;
+             waypointId <
+                 leaf[controlId]
+                     .beta.size();
+             ++waypointId)
+        {
+            row.segment<3>(
+                3 * waypointId) =
+                leaf[controlId]
+                    .beta(waypointId) *
+                normal;
+        }
+
+        double rhs =
+            -planeOffset -
+            normal.dot(
+                leaf[controlId]
+                    .offset);
+
+        const double rowNorm =
+            row.norm();
+
+        if (!std::isfinite(rowNorm) ||
+            !std::isfinite(rhs))
+        {
+            return result;
+        }
+
+        if (rowNorm <= 1.0e-12)
+        {
+            if (rhs < -1.0e-10)
+            {
+                result.fixed_infeasible =
+                    true;
+
+                return result;
+            }
+
+            continue;
+        }
+
+        row /= rowNorm;
+        rhs /= rowNorm;
+
+        rows.push_back(row);
+        rhsValues.push_back(rhs);
+    }
+
+    result.A.resize(
+        static_cast<int>(rows.size()),
+        variableDimension);
+
+    result.b.resize(
+        static_cast<int>(rows.size()));
+
+    for (int i = 0;
+         i < static_cast<int>(
+             rows.size());
+         ++i)
+    {
+        result.A.row(i) =
+            rows[i].transpose();
+
+        result.b(i) =
+            rhsValues[i];
+    }
+
+    const int leafCount =
+        1 << subdivisionDepth;
+
+    result.piece =
+        pieceId;
+
+    result.face =
+        faceId;
+
+    result.depth =
+        subdivisionDepth;
+
+    result.leaf =
+        leafId;
+
+    result.interval_begin =
+        static_cast<double>(
+            leafId) /
+        static_cast<double>(
+            leafCount);
+
+    result.interval_end =
+        static_cast<double>(
+            leafId + 1) /
+        static_cast<double>(
+            leafCount);
+
+    result.valid =
+        result.A.allFinite() &&
+        result.b.allFinite();
+
+    return result;
+}
+
 
 inline bool
 subdivideBernsteinAffineControlPolygon(
