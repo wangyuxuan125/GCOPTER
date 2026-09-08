@@ -43,7 +43,7 @@ struct ExactSfcProjectionOptions
     // true : dense active-set Euclidean projection.
     bool use_active_set_qp =
         false;
-    
+
     // Experimental separation mode.
     //
     // false:
@@ -887,120 +887,178 @@ projectMincoToExactSfc(
                  .max_exchange_iterations;
          ++exchangeId)
     {
-        if (!certificate.worst.valid ||
-            certificate.worst.piece < 0 ||
-            certificate.worst.face < 0)
+        std::vector<ExactSfcWitness>
+            roundWitnesses;
+
+        if (options.batch_all_violated_faces)
         {
-            return result;
-        }
-
-        const int pieceId =
-            certificate.worst.piece;
-
-        const int faceId =
-            certificate.worst.face;
-
-        const auto &hPoly =
-            corridors[
-                pieceId];
-
-        if (faceId >=
-            hPoly.rows())
-        {
-            return result;
-        }
-
-        const Eigen::Vector3d normal =
-            hPoly.block<1, 3>(
-                    faceId,
-                    0)
-                .transpose();
-
-        const double planeOffset =
-            hPoly(
-                faceId,
-                3);
-
-        Eigen::VectorXd row;
-
-        double rhs =
-            0.0;
-
-        if (!affineMap
-                 .buildHalfspaceConstraintRow(
-                     pieceId,
-                     certificate.worst
-                         .normalized_time,
-                     normal,
-                     planeOffset,
-                     row,
-                     rhs))
-        {
-            return result;
-        }
-
-        const double rowNorm =
-            row.norm();
-
-        // A zero row means this location is fully determined by
-        // fixed boundary conditions. If it is violated, the
-        // fixed-time projection problem itself is infeasible.
-        if (!std::isfinite(rowNorm) ||
-            rowNorm <= 1.0e-12)
-        {
-            return result;
-        }
-
-        row /=
-            rowNorm;
-
-        rhs /=
-            rowNorm;
-
-        // Numerical duplicate suppression only.
-        bool duplicate =
-            false;
-
-        for (int constraintId = 0;
-             constraintId <
-                 static_cast<int>(
-                     activeRows.size());
-             ++constraintId)
-        {
-            if ((activeRows[
-                     constraintId] -
-                 row)
-                        .norm() <=
-                    1.0e-10 &&
-                std::abs(
-                    activeRhs[
-                        constraintId] -
-                    rhs) <=
-                    1.0e-10)
+            if (!collectViolatedExactSfcWitnesses(
+                    currentTrajectory,
+                    corridors,
+                    options
+                        .containment_tolerance_m,
+                    roundWitnesses))
             {
-                duplicate =
-                    true;
+                return result;
+            }
+
+            if (roundWitnesses.empty())
+            {
+                // Certificate and batch separator must agree.
+                if (!certificate.contained)
+                {
+                    return result;
+                }
 
                 break;
             }
         }
-
-        if (duplicate)
+        else
         {
-            ++result
-                  .duplicate_witness_count;
+            if (!certificate.worst.valid ||
+                certificate.worst.piece < 0 ||
+                certificate.worst.face < 0)
+            {
+                return result;
+            }
 
-            // A genuinely violated duplicate after a converged QP
-            // indicates numerical inconsistency. Do not hide it by
-            // adding a safety margin.
-            return result;
+            roundWitnesses.push_back(
+                certificate.worst);
         }
 
-        activeRows.push_back(
-            row);
+        result.max_batch_size =
+            std::max(
+                result.max_batch_size,
+                static_cast<int>(
+                    roundWitnesses.size()));
 
-        activeRhs.push_back(
-            rhs);
+        int rowsAddedThisRound =
+            0;
+
+        for (const auto &witness :
+             roundWitnesses)
+        {
+            const int pieceId =
+                witness.piece;
+
+            const int faceId =
+                witness.face;
+
+            if (pieceId < 0 ||
+                pieceId >=
+                    static_cast<int>(
+                        corridors.size()))
+            {
+                return result;
+            }
+
+            const auto &hPoly =
+                corridors[pieceId];
+
+            if (faceId < 0 ||
+                faceId >=
+                    hPoly.rows())
+            {
+                return result;
+            }
+
+            const Eigen::Vector3d normal =
+                hPoly.block<1, 3>(
+                        faceId,
+                        0)
+                    .transpose();
+
+            const double planeOffset =
+                hPoly(
+                    faceId,
+                    3);
+
+            Eigen::VectorXd row;
+
+            double rhs =
+                0.0;
+
+            if (!affineMap
+                     .buildHalfspaceConstraintRow(
+                         pieceId,
+                         witness
+                             .normalized_time,
+                         normal,
+                         planeOffset,
+                         row,
+                         rhs))
+            {
+                return result;
+            }
+
+            const double rowNorm =
+                row.norm();
+
+            if (!std::isfinite(rowNorm) ||
+                rowNorm <= 1.0e-12)
+            {
+                return result;
+            }
+
+            row /=
+                rowNorm;
+
+            rhs /=
+                rowNorm;
+
+            bool duplicate =
+                false;
+
+            for (int constraintId = 0;
+                 constraintId <
+                     static_cast<int>(
+                         activeRows.size());
+                 ++constraintId)
+            {
+                if ((activeRows[
+                         constraintId] -
+                     row)
+                            .norm() <=
+                        1.0e-10 &&
+                    std::abs(
+                        activeRhs[
+                            constraintId] -
+                        rhs) <=
+                        1.0e-10)
+                {
+                    duplicate =
+                        true;
+
+                    break;
+                }
+            }
+
+            if (duplicate)
+            {
+                ++result
+                      .duplicate_witness_count;
+
+                continue;
+            }
+
+            activeRows.push_back(
+                row);
+
+            activeRhs.push_back(
+                rhs);
+
+            ++rowsAddedThisRound;
+            ++result
+                  .total_witnesses_added;
+        }
+
+        // If every currently violated separator was already present,
+        // but the exact certificate still says infeasible, there is
+        // a numerical inconsistency.
+        if (rowsAddedThisRound <= 0)
+        {
+            return result;
+        }
 
         const auto qpStarted =
             std::chrono::
