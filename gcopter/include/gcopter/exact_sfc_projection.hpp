@@ -185,6 +185,15 @@ struct ExactSfcProjectionResult
     int last_qp_working_set_size =
         0;
 
+    int last_qp_working_set_rank =
+        0;
+
+    int total_qp_rank_compressions =
+        0;
+
+    int total_qp_dependent_rows_dropped =
+        0;
+
     double initial_max_violation_m =
         std::numeric_limits<double>::
             infinity();
@@ -1128,6 +1137,15 @@ projectMincoToExactSfc(
 
             result.last_qp_working_set_size =
                 qp.working_set_size;
+
+            result.last_qp_working_set_rank =
+                qp.last_working_set_rank;
+
+            result.total_qp_rank_compressions +=
+                qp.rank_compression_count;
+
+            result.total_qp_dependent_rows_dropped +=
+                qp.dropped_dependent_constraints;
 
             result.qp_ms +=
                 std::chrono::duration<

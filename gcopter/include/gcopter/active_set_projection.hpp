@@ -43,6 +43,13 @@ struct ActiveSetProjectionResult
     double equality_residual =
         std::numeric_limits<double>::infinity();
 
+    // Rank-revealing working-set diagnostics.
+    int rank_compression_count = 0;
+
+    int dropped_dependent_constraints = 0;
+
+    int last_working_set_rank = 0;
+
     Eigen::VectorXd solution;
 };
 
@@ -211,6 +218,114 @@ solveEuclideanHalfspaceProjectionActiveSet(
                 bw(activeId) =
                     b(
                         workingSet[activeId]);
+            }
+
+            // --------------------------------------------------------
+            // Rank-revealing compression of the active equality set.
+            //
+            // A valid Euclidean-projection optimum only requires a
+            // linearly independent basis of binding inequalities.
+            //
+            // If Aw is row-rank deficient, forcing every dependent
+            // row to equality can create an inconsistent least-squares
+            // system even though the original inequality QP remains
+            // feasible.
+            //
+            // Keep a pivoted independent basis and return all dependent
+            // rows to the inactive inequality pool. If any dropped row
+            // is genuinely needed, the global violation search can
+            // activate it again later.
+            // --------------------------------------------------------
+            Eigen::ColPivHouseholderQR<
+                Eigen::MatrixXd>
+                    rankQr(
+                        Aw.transpose());
+
+            const int activeRank =
+                rankQr.rank();
+
+            result.last_working_set_rank =
+                activeRank;
+
+            if (activeRank <
+                activeCount)
+            {
+                const auto permutation =
+                    rankQr
+                        .colsPermutation()
+                        .indices();
+
+                std::vector<bool> keep(
+                    activeCount,
+                    false);
+
+                for (int basisId = 0;
+                     basisId < activeRank;
+                     ++basisId)
+                {
+                    const int activePosition =
+                        permutation(
+                            basisId);
+
+                    if (activePosition < 0 ||
+                        activePosition >=
+                            activeCount)
+                    {
+                        result.failure_reason =
+                            1;
+
+                        return result;
+                    }
+
+                    keep[
+                        activePosition] =
+                            true;
+                }
+
+                std::vector<int>
+                    reducedWorkingSet;
+
+                reducedWorkingSet.reserve(
+                    activeRank);
+
+                for (int activeId = 0;
+                     activeId <
+                         activeCount;
+                     ++activeId)
+                {
+                    const int constraintId =
+                        workingSet[
+                            activeId];
+
+                    if (keep[
+                            activeId])
+                    {
+                        reducedWorkingSet
+                            .push_back(
+                                constraintId);
+                    }
+                    else
+                    {
+                        isActive[
+                            constraintId] =
+                                false;
+                    }
+                }
+
+                ++result
+                      .rank_compression_count;
+
+                result
+                    .dropped_dependent_constraints +=
+                        activeCount -
+                        activeRank;
+
+                workingSet.swap(
+                    reducedWorkingSet);
+
+                // Rebuild Aw/bw and solve the equality projection
+                // using the compressed independent basis.
+                continue;
             }
 
             const Eigen::MatrixXd gram =

@@ -3970,7 +3970,19 @@ public:
                            .last_qp_iterations
                     << " last_qp_working_set="
                     << exactBatchResult
-                           .last_qp_working_set_size);
+                           .last_qp_working_set_size
+
+                    << " last_qp_rank="
+                    << exactBatchResult
+                           .last_qp_working_set_rank
+
+                    << " rank_compressions="
+                    << exactBatchResult
+                           .total_qp_rank_compressions
+
+                    << " dependent_rows_dropped="
+                    << exactBatchResult
+                           .total_qp_dependent_rows_dropped);
 
                 hardProjectionResult =
                     traj_relevant::
