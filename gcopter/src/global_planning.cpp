@@ -35,6 +35,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <string>
 #include <vector>
@@ -11421,6 +11423,244 @@ public:
                             controlledV3RilsMappingValid);
                         
                         
+                    // ========================================================
+                    // P2a: Controlled-E2 optimized-state export.
+                    //
+                    // IMPORTANT:
+                    //
+                    //   - all four Controlled-E2 backend solves have already
+                    //     completed before this block executes;
+                    //   - no optimizer is called here;
+                    //   - no corridor or trajectory state is modified;
+                    //   - the exported MINCO inner points and piece times are
+                    //     sufficient to reconstruct the optimized soft
+                    //     trajectories offline using the common route-end
+                    //     zero-velocity / zero-acceleration boundary states.
+                    //
+                    // This file is measurement provenance for the independent
+                    // obstacle-clearance experiment.  It is NOT part of the
+                    // frozen benchmark_e2_v1.csv schema.
+                    // ========================================================
+
+                    bool controlledE2StateExportLogSuccess =
+                        false;
+
+                    bool controlledE2StateExportSchemaValid =
+                        false;
+
+                    int controlledE2StateExportRows =
+                        0;
+
+                    if (benchmarkRunReady)
+                    {
+                        const std::string
+                            controlledE2StateExportPath =
+                                config.experimentLogDirectory +
+                                "/benchmark_e2_state_v1.csv";
+
+                        std::ofstream
+                            controlledE2StateOutput(
+                                controlledE2StateExportPath.c_str(),
+                                std::ios::out |
+                                std::ios::trunc);
+
+                        if (controlledE2StateOutput)
+                        {
+                            controlledE2StateOutput
+                                << std::setprecision(17);
+
+                            controlledE2StateOutput
+                                << "schema_version,"
+                                << "case_id,"
+                                << "route_fingerprint,"
+                                << "method,"
+                                << "variant,"
+                                << "mapping_valid,"
+                                << "backend_attempted,"
+                                << "setup_success,"
+                                << "optimize_success,"
+                                << "optimized_state_ready,"
+                                << "piece_count,"
+                                << "inner_point_count,"
+                                << "times_s,"
+                                << "inner_points_xyz"
+                                << '\n';
+
+                            auto writeControlledE2StateRow =
+                                [&](
+                                    const std::string &methodName,
+                                    const std::string &variantName,
+                                    const ControlledE2BackendEvaluation
+                                        &evaluation)
+                            {
+                                const bool stateReady =
+                                    evaluation.backend
+                                        .optimized_state_ready;
+
+                                const int pieceCount =
+                                    stateReady
+                                        ? static_cast<int>(
+                                              evaluation.backend
+                                                  .optimized_times
+                                                  .size())
+                                        : 0;
+
+                                const int innerPointCount =
+                                    stateReady &&
+                                            evaluation.backend
+                                                    .optimized_points
+                                                    .rows() ==
+                                                3
+                                        ? static_cast<int>(
+                                              evaluation.backend
+                                                  .optimized_points
+                                                  .cols())
+                                        : 0;
+
+                                controlledE2StateOutput
+                                    << 1
+                                    << ','
+                                    << effectiveCaseId
+                                    << ','
+                                    << routeFingerprint
+                                    << ','
+                                    << methodName
+                                    << ','
+                                    << variantName
+                                    << ','
+                                    << (evaluation.mapping_valid
+                                            ? 1
+                                            : 0)
+                                    << ','
+                                    << (evaluation.backend_attempted
+                                            ? 1
+                                            : 0)
+                                    << ','
+                                    << (evaluation.backend.setup_success
+                                            ? 1
+                                            : 0)
+                                    << ','
+                                    << (evaluation.backend.optimize_success
+                                            ? 1
+                                            : 0)
+                                    << ','
+                                    << (stateReady
+                                            ? 1
+                                            : 0)
+                                    << ','
+                                    << pieceCount
+                                    << ','
+                                    << innerPointCount
+                                    << ',';
+
+                                if (stateReady)
+                                {
+                                    for (int pieceId = 0;
+                                         pieceId <
+                                             evaluation.backend
+                                                 .optimized_times
+                                                 .size();
+                                         ++pieceId)
+                                    {
+                                        if (pieceId > 0)
+                                        {
+                                            controlledE2StateOutput
+                                                << ';';
+                                        }
+
+                                        controlledE2StateOutput
+                                            << evaluation.backend
+                                                   .optimized_times(
+                                                       pieceId);
+                                    }
+                                }
+
+                                controlledE2StateOutput
+                                    << ',';
+
+                                if (stateReady)
+                                {
+                                    bool firstCoordinate =
+                                        true;
+
+                                    for (int pointId = 0;
+                                         pointId <
+                                             evaluation.backend
+                                                 .optimized_points
+                                                 .cols();
+                                         ++pointId)
+                                    {
+                                        for (int axis = 0;
+                                             axis < 3;
+                                             ++axis)
+                                        {
+                                            if (!firstCoordinate)
+                                            {
+                                                controlledE2StateOutput
+                                                    << ';';
+                                            }
+
+                                            controlledE2StateOutput
+                                                << evaluation.backend
+                                                       .optimized_points(
+                                                           axis,
+                                                           pointId);
+
+                                            firstCoordinate =
+                                                false;
+                                        }
+                                    }
+                                }
+
+                                controlledE2StateOutput
+                                    << '\n';
+
+                                ++controlledE2StateExportRows;
+                            };
+
+                            writeControlledE2StateRow(
+                                "proposed",
+                                "csgn_active_controlled",
+                                controlledE2Proposed);
+
+                            writeControlledE2StateRow(
+                                "identity",
+                                "identity_active_controlled",
+                                controlledE2Identity);
+
+                            writeControlledE2StateRow(
+                                "firi",
+                                "standard_firi_controlled",
+                                controlledE2Firi);
+
+                            writeControlledE2StateRow(
+                                "rils",
+                                "liu_rils_controlled",
+                                controlledE2Rils);
+
+                            controlledE2StateOutput.flush();
+
+                            controlledE2StateExportLogSuccess =
+                                static_cast<bool>(
+                                    controlledE2StateOutput);
+
+                            controlledE2StateExportSchemaValid =
+                                controlledE2StateExportRows ==
+                                    4;
+                        }
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_E2_STATE_EXPORT "
+                        << "schema_valid="
+                        << controlledE2StateExportSchemaValid
+                        << " rows="
+                        << controlledE2StateExportRows
+                        << " log_success="
+                        << controlledE2StateExportLogSuccess
+                        << " file=benchmark_e2_state_v1.csv");
+
+
                     // ========================================================
                     // Proposed replay / determinism cross-check.
                     //
