@@ -450,6 +450,35 @@ struct BenchmarkControlledE2Record
     int trajectory_piece_count =
         0;
 
+    // ========================================================
+    // Optimizer workload instrumentation.
+    //
+    // These fields are serialized ONLY to
+    // benchmark_e2_workload_v1.csv.
+    //
+    // benchmark_e2_v1.csv remains schema-1 and unchanged.
+    // ========================================================
+    int temporal_variable_dim =
+        0;
+
+    int spatial_variable_dim =
+        0;
+
+    int optimizer_variable_dim =
+        0;
+
+    int quadrature_nodes_per_piece =
+        0;
+
+    std::int64_t objective_evaluation_count =
+        0;
+
+    std::int64_t geometric_face_evaluations_per_objective =
+        0;
+
+    std::int64_t total_geometric_face_evaluations =
+        0;
+
     double setup_ms =
         std::numeric_limits<double>::
             quiet_NaN();
@@ -1891,6 +1920,128 @@ public:
                 << record.soft_exact_min_margin_m << ','
                 << record.soft_exact_certificate_ms
 
+                << '\n';
+        }
+
+        return static_cast<bool>(
+            output);
+    }
+
+
+    // ========================================================
+    // P1: downstream optimizer workload instrumentation.
+    //
+    // Separate file by design:
+    //
+    //   benchmark_e2_v1.csv
+    //
+    // remains frozen and backward-compatible.
+    // ========================================================
+    inline bool
+    logControlledE2Workload(
+        const std::vector<
+            BenchmarkControlledE2Record> &records)
+    {
+        if (!enabled_ ||
+            records.empty())
+        {
+            return true;
+        }
+
+        std::lock_guard<std::mutex>
+            lock(
+                mutex_);
+
+        if (!ensureDirectory())
+        {
+            return false;
+        }
+
+        const std::string path =
+            directory_ +
+            "/benchmark_e2_workload_v1.csv";
+
+        const bool header =
+            fileNeedsHeader(
+                path);
+
+        std::ofstream output(
+            path,
+            std::ios::out |
+                std::ios::app);
+
+        if (!output)
+        {
+            return false;
+        }
+
+        if (header)
+        {
+            output
+                << "schema_version,"
+                << "case_id,"
+                << "route_fingerprint,"
+                << "method,"
+                << "variant,"
+                << "repeat_id,"
+                << "timestamp_s,"
+                << "protocol,"
+                << "mapping_valid,"
+                << "backend_attempted,"
+                << "setup_success,"
+                << "optimize_success,"
+                << "corridor_count,"
+                << "raw_face_count,"
+                << "trajectory_piece_count,"
+                << "temporal_variable_dim,"
+                << "spatial_variable_dim,"
+                << "optimizer_variable_dim,"
+                << "quadrature_nodes_per_piece,"
+                << "objective_evaluation_count,"
+                << "geometric_face_evaluations_per_objective,"
+                << "total_geometric_face_evaluations,"
+                << "setup_ms,"
+                << "optimize_ms,"
+                << "optimizer_cost\n";
+        }
+
+        output <<
+            std::setprecision(17);
+
+        for (const auto &record :
+             records)
+        {
+            output
+                << 1 << ','
+                << csv(record.case_id) << ','
+                << csv(record.route_fingerprint) << ','
+                << csv(record.method) << ','
+                << csv(record.variant) << ','
+                << record.repeat_id << ','
+                << record.timestamp_s << ','
+                << csv(record.protocol) << ','
+
+                << record.mapping_valid << ','
+                << record.backend_attempted << ','
+                << record.setup_success << ','
+                << record.optimize_success << ','
+
+                << record.corridor_count << ','
+                << record.raw_face_count << ','
+                << record.trajectory_piece_count << ','
+
+                << record.temporal_variable_dim << ','
+                << record.spatial_variable_dim << ','
+                << record.optimizer_variable_dim << ','
+                << record.quadrature_nodes_per_piece << ','
+
+                << record.objective_evaluation_count << ','
+                << record.geometric_face_evaluations_per_objective << ','
+                << record.total_geometric_face_evaluations << ','
+
+                << record.setup_ms << ','
+                << record.optimize_ms << ','
+                << record.optimizer_cost
                 << '\n';
         }
 

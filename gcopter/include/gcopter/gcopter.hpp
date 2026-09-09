@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cfloat>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -310,6 +311,25 @@ namespace gcopter
         Eigen::VectorXd optimizedTimes;
         double optimizedCost = INFINITY;
         bool optimizedStateValid = false;
+
+        // ------------------------------------------------------------
+        // Paper workload instrumentation.
+        //
+        // These counters are observational only. They do not alter the
+        // optimization objective, gradient, stopping criteria, or state.
+        //
+        // objectiveEvaluationCount:
+        //     number of costFunctional() calls during the latest optimize().
+        //
+        // geometricFaceEvaluationsPerObjective:
+        //     number of H-plane residual evaluations performed by one
+        //     objective/gradient evaluation:
+        //
+        //       sum_i (integralRes + 1) * faces(hPolyIdx(i)).
+        // ------------------------------------------------------------
+        std::int64_t objectiveEvaluationCount = 0;
+
+        std::int64_t geometricFaceEvaluationsPerObjective = 0;
 
         CorridorDiagnostics initialCorridorDiagnostics;
         CorridorDiagnostics finalCorridorDiagnostics;
@@ -777,6 +797,9 @@ namespace gcopter
                                             Eigen::VectorXd &g)
         {
             GCOPTER_PolytopeSFC &obj = *(GCOPTER_PolytopeSFC *)ptr;
+
+            ++obj.objectiveEvaluationCount;
+
             const int dimTau = obj.temporalDim;
             const int dimXi = obj.spatialDim;
             const double weightT = obj.rho;
@@ -3864,6 +3887,9 @@ namespace gcopter
             optimizedStateValid = false;
             optimizedCost = INFINITY;
             optimizedX.resize(0);
+
+            objectiveEvaluationCount = 0;
+            geometricFaceEvaluationsPerObjective = 0;
             optimizedPoints.resize(3, 0);
             optimizedTimes.resize(0);
 
@@ -4000,6 +4026,39 @@ namespace gcopter
                 }
             }
 
+            // ------------------------------------------------------------
+            // Exact geometric H-face workload of one costFunctional().
+            //
+            // attachPenaltyFunctional() evaluates every assigned corridor
+            // face at every quadrature node, regardless of whether that
+            // face is currently violated.
+            // ------------------------------------------------------------
+            geometricFaceEvaluationsPerObjective = 0;
+
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const int corridorId =
+                    hPolyIdx(pieceId);
+
+                if (corridorId < 0 ||
+                    corridorId >=
+                        static_cast<int>(
+                            hPolytopes.size()))
+                {
+                    return false;
+                }
+
+                geometricFaceEvaluationsPerObjective +=
+                    static_cast<std::int64_t>(
+                        integralRes + 1) *
+                    static_cast<std::int64_t>(
+                        hPolytopes[
+                            corridorId]
+                            .rows());
+            }
+
             // Setup for MINCO_S3NU, FlatnessMap, and L-BFGS solver
             minco.setConditions(headPVA, tailPVA, pieceN);
             flatmap.reset(physicalPm(0), physicalPm(1), physicalPm(2),
@@ -4021,6 +4080,8 @@ namespace gcopter
         {
             optimizedStateValid = false;
             optimizedCost = INFINITY;
+
+            objectiveEvaluationCount = 0;
 
             Eigen::VectorXd x(temporalDim + spatialDim);
             Eigen::Map<Eigen::VectorXd> tau(x.data(), temporalDim);
@@ -4537,6 +4598,46 @@ namespace gcopter
         inline int getPieceNum() const
         {
             return pieceN;
+        }
+
+        inline int getTemporalVariableDim() const
+        {
+            return temporalDim;
+        }
+
+        inline int getSpatialVariableDim() const
+        {
+            return spatialDim;
+        }
+
+        inline int getOptimizerVariableDim() const
+        {
+            return temporalDim + spatialDim;
+        }
+
+        inline int getQuadratureNodesPerPiece() const
+        {
+            return integralRes + 1;
+        }
+
+        inline std::int64_t
+        getObjectiveEvaluationCount() const
+        {
+            return objectiveEvaluationCount;
+        }
+
+        inline std::int64_t
+        getGeometricFaceEvaluationsPerObjective() const
+        {
+            return geometricFaceEvaluationsPerObjective;
+        }
+
+        inline std::int64_t
+        getTotalGeometricFaceEvaluations() const
+        {
+            return
+                objectiveEvaluationCount *
+                geometricFaceEvaluationsPerObjective;
         }
 
         inline const CorridorDiagnostics &getInitialCorridorDiagnostics() const

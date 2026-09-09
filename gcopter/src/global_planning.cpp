@@ -1853,6 +1853,36 @@ public:
                 
                     int constrained_pieces =
                         0;
+
+                    // --------------------------------------------------------
+                    // P1 downstream optimizer workload instrumentation.
+                    //
+                    // Observational only: these fields do not change any
+                    // optimizer parameter, objective, gradient, or state.
+                    // --------------------------------------------------------
+                    int temporal_variable_dim =
+                        0;
+
+                    int spatial_variable_dim =
+                        0;
+
+                    int optimizer_variable_dim =
+                        0;
+
+                    int quadrature_nodes_per_piece =
+                        0;
+
+                    std::int64_t objective_evaluation_count =
+                        0;
+
+                    std::int64_t
+                        geometric_face_evaluations_per_objective =
+                            0;
+
+                    std::int64_t
+                        total_geometric_face_evaluations =
+                            0;
+
                 
                     double setup_ms =
                         0.0;
@@ -1976,6 +2006,33 @@ public:
                     {
                         return result;
                     }
+
+                    // --------------------------------------------------------
+                    // Setup has fixed the GCOPTER parameterization and the
+                    // piece-to-corridor mapping. Read workload quantities
+                    // without changing optimizer state.
+                    // --------------------------------------------------------
+                    result.temporal_variable_dim =
+                        backendOptimizer
+                            .getTemporalVariableDim();
+
+                    result.spatial_variable_dim =
+                        backendOptimizer
+                            .getSpatialVariableDim();
+
+                    result.optimizer_variable_dim =
+                        backendOptimizer
+                            .getOptimizerVariableDim();
+
+                    result.quadrature_nodes_per_piece =
+                        backendOptimizer
+                            .getQuadratureNodesPerPiece();
+
+                    result
+                        .geometric_face_evaluations_per_objective =
+                            backendOptimizer
+                                .getGeometricFaceEvaluationsPerObjective();
+
                 
                     const auto optimizeStarted =
                         std::chrono::steady_clock::now();
@@ -1993,7 +2050,15 @@ public:
                                 optimizeStarted)
                             .count();
                             
-                    const auto &initialDiagnostics =
+                                        result.objective_evaluation_count =
+                        backendOptimizer
+                            .getObjectiveEvaluationCount();
+
+                    result.total_geometric_face_evaluations =
+                        backendOptimizer
+                            .getTotalGeometricFaceEvaluations();
+
+const auto &initialDiagnostics =
                         backendOptimizer
                             .getInitialCorridorDiagnostics();
                             
@@ -11892,6 +11957,36 @@ public:
                         record.trajectory_piece_count =
                             evaluation.backend
                                 .trajectory_pieces;
+
+                        record.temporal_variable_dim =
+                            evaluation.backend
+                                .temporal_variable_dim;
+
+                        record.spatial_variable_dim =
+                            evaluation.backend
+                                .spatial_variable_dim;
+
+                        record.optimizer_variable_dim =
+                            evaluation.backend
+                                .optimizer_variable_dim;
+
+                        record.quadrature_nodes_per_piece =
+                            evaluation.backend
+                                .quadrature_nodes_per_piece;
+
+                        record.objective_evaluation_count =
+                            evaluation.backend
+                                .objective_evaluation_count;
+
+                        record
+                            .geometric_face_evaluations_per_objective =
+                                evaluation.backend
+                                    .geometric_face_evaluations_per_objective;
+
+                        record
+                            .total_geometric_face_evaluations =
+                                evaluation.backend
+                                    .total_geometric_face_evaluations;
                     
                     
                         record.setup_ms =
@@ -12084,6 +12179,41 @@ public:
                         << benchmarkControlledE2LogSuccess
                     
                         << " file=benchmark_e2_v1.csv");
+
+                    // ========================================================
+                    // P1: E2 downstream optimizer workload logging.
+                    //
+                    // This serializes already-computed workload counters only.
+                    // No optimizer is executed here.
+                    // benchmark_e2_v1.csv remains unchanged.
+                    // ========================================================
+                    bool benchmarkControlledE2WorkloadLogSuccess =
+                        true;
+
+                    if (benchmarkRunReady)
+                    {
+                        benchmarkControlledE2WorkloadLogSuccess =
+                            benchmarkRunLogger
+                                .logControlledE2Workload(
+                                    benchmarkControlledE2Records);
+
+                        if (!benchmarkControlledE2WorkloadLogSuccess)
+                        {
+                            ROS_ERROR(
+                                "Failed to append "
+                                "benchmark_e2_workload_v1.csv.");
+                        }
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_E2_WORKLOAD "
+                        << "schema_valid="
+                        << controlledE2CsvSchemaValid
+                        << " rows="
+                        << benchmarkControlledE2Records.size()
+                        << " log_success="
+                        << benchmarkControlledE2WorkloadLogSuccess
+                        << " file=benchmark_e2_workload_v1.csv");
 
                     bool benchmarkCorridorLogSuccess =
                         true;  
