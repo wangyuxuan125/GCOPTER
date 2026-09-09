@@ -4,6 +4,7 @@
 #include <Eigen/Eigen>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 
 namespace lbfgs
 {
@@ -437,7 +438,8 @@ namespace lbfgs
                               lbfgs_stepbound_t proc_stepbound,
                               lbfgs_progress_t proc_progress,
                               void *instance,
-                              const lbfgs_parameter_t &param)
+                              const lbfgs_parameter_t &param,
+                              std::int64_t *evaluation_count = nullptr)
     {
         int ret, i, j, k, ls, end, bound;
         double step, step_min, step_max, fx, ys, yy;
@@ -517,6 +519,11 @@ namespace lbfgs
         /* Evaluate the function value and its gradient. */
         fx = cd.proc_evaluate(cd.instance, x, g);
 
+        if (evaluation_count)
+        {
+            *evaluation_count = 1;
+        }
+
         /* Store the initial value of the cost function. */
         pf(0) = fx;
 
@@ -566,6 +573,12 @@ namespace lbfgs
 
                 /* Search for an optimal step. */
                 ls = line_search_lewisoverton(x, fx, g, step, d, xp, gp, step_min, step_max, cd, param);
+
+                if (evaluation_count && ls >= 0)
+                {
+                    *evaluation_count +=
+                        static_cast<std::int64_t>(ls);
+                }
 
                 if (ls < 0)
                 {

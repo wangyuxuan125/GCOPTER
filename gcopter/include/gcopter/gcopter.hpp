@@ -4043,13 +4043,16 @@ namespace gcopter
             lbfgs_params.g_epsilon = 0.0;
             lbfgs_params.delta = relCostTol;
 
+            std::int64_t objective_evaluations = 0;
+
             int ret = lbfgs::lbfgs_optimize(x,
                                             minCostFunctional,
                                             &GCOPTER_PolytopeSFC::costFunctional,
                                             nullptr,
                                             nullptr,
                                             this,
-                                            lbfgs_params);
+                                            lbfgs_params,
+                                            &objective_evaluations);
 
             if (ret >= 0)
             {
