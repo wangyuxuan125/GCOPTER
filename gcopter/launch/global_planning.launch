@@ -42,6 +42,9 @@
   <arg name="benchmark_method" default="proposed"/>
   <arg name="benchmark_variant" default="csgn_active_exact"/>
 
+  <!-- Visualization only: proposed / identity / firi / rils -->
+  <arg name="benchmark_visualization_method" default=""/>
+
   <arg name="benchmark_route_replay_enabled" default="false"/>
   <arg name="benchmark_route_replay_file" default=""/>
 
@@ -127,6 +130,9 @@
   <param name="Benchmark/Enabled" value="$(arg benchmark_enabled)" type="bool"/>
   <param name="Benchmark/Method" value="$(arg benchmark_method)" type="string"/>
   <param name="Benchmark/Variant" value="$(arg benchmark_variant)" type="string"/>
+  <param name="Benchmark/VisualizationMethod"
+         value="$(arg benchmark_visualization_method)"
+         type="string"/>
   </node>
 
 </launch>

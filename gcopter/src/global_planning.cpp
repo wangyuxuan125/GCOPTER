@@ -79,6 +79,7 @@ struct Config
     bool benchmarkEnabled;
     std::string benchmarkMethod;
     std::string benchmarkVariant;
+    std::string benchmarkVisualizationMethod;
     bool benchmarkRouteReplayEnabled;
     std::string benchmarkRouteReplayFile;
     bool benchmarkRouteSaveEnabled;
@@ -173,6 +174,12 @@ struct Config
             "Benchmark/Variant",
             benchmarkVariant,
             "csgn_active_exact");
+
+        nh_priv.param<std::string>(
+            "Benchmark/VisualizationMethod",
+            benchmarkVisualizationMethod,
+            "proposed");
+
         nh_priv.param(
             "Benchmark/RouteReplayEnabled",
             benchmarkRouteReplayEnabled,
@@ -9177,6 +9184,72 @@ public:
                                .effective_faces);
                     
                     // ========================================================
+                    // Fig. 3 visualization-only selector.
+                    //
+                    // IMPORTANT:
+                    //   - all Controlled corridor constructions are complete;
+                    //   - this block only publishes an already-built H-polytope;
+                    //   - no corridor, metric, optimizer, or CSV is modified;
+                    //   - runs using this selector are visualization-only and
+                    //     are not used for paper quantitative results.
+                    // ========================================================
+                    if (!config.benchmarkVisualizationMethod.empty())
+                    {
+                        const std::vector<Eigen::MatrixX4d>
+                            *visualizationHPolys =
+                                nullptr;
+
+                        if (config.benchmarkVisualizationMethod ==
+                            "proposed")
+                        {
+                            visualizationHPolys =
+                                &controlledCsgnHPolys;
+                        }
+                        else if (
+                            config.benchmarkVisualizationMethod ==
+                            "identity")
+                        {
+                            visualizationHPolys =
+                                &controlledIdentityHPolys;
+                        }
+                        else if (
+                            config.benchmarkVisualizationMethod ==
+                            "firi")
+                        {
+                            visualizationHPolys =
+                                &controlledFiriHPolys;
+                        }
+                        else if (
+                            config.benchmarkVisualizationMethod ==
+                            "rils")
+                        {
+                            visualizationHPolys =
+                                &controlledRilsBuild.hpolys;
+                        }
+                        else
+                        {
+                            ROS_WARN_STREAM(
+                                "Unknown Benchmark/VisualizationMethod: "
+                                << config.benchmarkVisualizationMethod);
+                        }
+
+                        if (visualizationHPolys != nullptr &&
+                            !visualizationHPolys->empty())
+                        {
+                            visualizer.visualizePolytope(
+                                *visualizationHPolys);
+
+                            ROS_INFO_STREAM(
+                                "TF_FIG3_CORRIDOR_VIS "
+                                << "method="
+                                << config.benchmarkVisualizationMethod
+                                << " corridors="
+                                << visualizationHPolys->size());
+                        }
+                    }
+
+
+                    // ========================================================
                     // D1d-1: Common independent corridor safety measurement.
                     //
                     // Measurement only.
@@ -12266,8 +12339,14 @@ public:
 
                     emitBenchmarkRun();
                         
-                    visualizer.visualizePolytope(
-                        activeGuideHPolys);
+                    // Fig.3 visualization mode already published the
+                    // selected Controlled corridor.  Do not overwrite it
+                    // with the native Proposed corridor.
+                    if (config.benchmarkVisualizationMethod.empty())
+                    {
+                        visualizer.visualizePolytope(
+                            activeGuideHPolys);
+                    }
 
                     ROS_INFO_STREAM(
                         "TF_BENCHMARK_FINAL_TRAJ "
@@ -12994,8 +13073,14 @@ public:
             }
 
             {
-                visualizer.visualizePolytope(
-                    hPolys);
+                // Fig.3 visualization mode already published the selected
+                // Controlled corridor.  Preserve that visualization instead
+                // of publishing the legacy/native corridor here.
+                if (config.benchmarkVisualizationMethod.empty())
+                {
+                    visualizer.visualizePolytope(
+                        hPolys);
+                }
 
                 gcopter::GCOPTER_PolytopeSFC
                     gcopter;
