@@ -35,6 +35,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <string>
 #include <vector>
@@ -80,6 +82,7 @@ struct Config
     std::string benchmarkMethod;
     std::string benchmarkVariant;
     std::string benchmarkVisualizationMethod;
+    bool benchmarkCsgnValidationEnabled;
     bool benchmarkRouteReplayEnabled;
     std::string benchmarkRouteReplayFile;
     bool benchmarkRouteSaveEnabled;
@@ -179,6 +182,11 @@ struct Config
             "Benchmark/VisualizationMethod",
             benchmarkVisualizationMethod,
             "");
+
+        nh_priv.param(
+            "Benchmark/CsgnValidationEnabled",
+            benchmarkCsgnValidationEnabled,
+            false);
 
         nh_priv.param(
             "Benchmark/RouteReplayEnabled",
@@ -2312,6 +2320,320 @@ public:
 
                         << " metric_ms="
                         << guideMetricMs);
+
+                    // ========================================================
+                    // CSGN finite-deformation validation.
+                    //
+                    // This block runs AFTER guideMetricMs has already been
+                    // measured, so it cannot contaminate reported CSGN timing.
+                    //
+                    // For each valid CSGN piece:
+                    //   rank 0 = easy
+                    //   rank 1 = middle
+                    //   rank 2 = hard
+                    //
+                    // because stiffness eigenvalues are ascending.
+                    // ========================================================
+                    if (config.benchmarkCsgnValidationEnabled &&
+                        config.experimentLogEnabled &&
+                        guideMetricSuccess)
+                    {
+                        const std::string validationPath =
+                            config.experimentLogDirectory +
+                            "/csgn_validation_v1.csv";
+
+                        if (!gcopter_benchmark::ensureDirectory(
+                                config.experimentLogDirectory))
+                        {
+                            ROS_ERROR(
+                                "Failed to create CSGN validation directory.");
+                        }
+                        else
+                        {
+                            std::ifstream existingFile(
+                                validationPath);
+
+                            const bool writeHeader =
+                                !existingFile.good() ||
+                                existingFile.peek() ==
+                                    std::ifstream::traits_type::eof();
+
+                            existingFile.close();
+
+                            std::ofstream validationOutput(
+                                validationPath,
+                                std::ios::out |
+                                    std::ios::app);
+
+                            if (!validationOutput)
+                            {
+                                ROS_ERROR_STREAM(
+                                    "Failed to open CSGN validation CSV: "
+                                    << validationPath);
+                            }
+                            else
+                            {
+                                if (writeHeader)
+                                {
+                                    validationOutput
+                                        << "case_id,"
+                                        << "route_fingerprint,"
+                                        << "piece_id,"
+                                        << "direction_rank,"
+                                        << "direction_label,"
+                                        << "stiffness_eig,"
+                                        << "utility_eig,"
+                                        << "corridor_utility_eig,"
+                                        << "metric_anisotropy,"
+                                        << "corridor_anisotropy,"
+                                        << "principal_gap,"
+                                        << "delta_m,"
+                                        << "nominal_peak_util,"
+                                        << "plus_peak_util,"
+                                        << "minus_peak_util,"
+                                        << "peak_response,"
+                                        << "nominal_energy,"
+                                        << "plus_energy,"
+                                        << "minus_energy,"
+                                        << "energy_response,"
+                                        << "nominal_vel_ratio,"
+                                        << "nominal_body_rate_ratio,"
+                                        << "nominal_tilt_ratio,"
+                                        << "nominal_thrust_ratio,"
+                                        << "plus_vel_ratio,"
+                                        << "plus_body_rate_ratio,"
+                                        << "plus_tilt_ratio,"
+                                        << "plus_thrust_ratio,"
+                                        << "minus_vel_ratio,"
+                                        << "minus_body_rate_ratio,"
+                                        << "minus_tilt_ratio,"
+                                        << "minus_thrust_ratio\n";
+                                }
+
+                                const double validationDeltas[] =
+                                {
+                                    0.05,
+                                    0.10,
+                                    0.20
+                                };
+
+                                const char *directionLabels[] =
+                                {
+                                    "easy",
+                                    "mid",
+                                    "hard"
+                                };
+
+                                int validationRows =
+                                    0;
+
+                                int validValidationRows =
+                                    0;
+
+                                for (int pieceId = 0;
+                                     pieceId <
+                                         static_cast<int>(
+                                             guideMetrics.size());
+                                     ++pieceId)
+                                {
+                                    const auto &metric =
+                                        guideMetrics[
+                                            pieceId];
+
+                                    if (!metric.valid)
+                                    {
+                                        continue;
+                                    }
+
+                                    Eigen::SelfAdjointEigenSolver<
+                                        Eigen::Matrix3d>
+                                        eigensolver(
+                                            metric.stiffness);
+
+                                    if (eigensolver.info() !=
+                                        Eigen::Success)
+                                    {
+                                        continue;
+                                    }
+
+                                    // stiffness eigenvalues are:
+                                    //
+                                    // lambda0 <= lambda1 <= lambda2
+                                    //
+                                    // therefore:
+                                    //
+                                    // u0 = easy
+                                    // u1 = middle
+                                    // u2 = hard
+                                    for (int rank = 0;
+                                         rank < 3;
+                                         ++rank)
+                                    {
+                                        const Eigen::Vector3d direction =
+                                            eigensolver
+                                                .eigenvectors()
+                                                .col(rank);
+
+                                        for (const double delta :
+                                             validationDeltas)
+                                        {
+                                            ++validationRows;
+
+                                            gcopter::
+                                                GCOPTER_PolytopeSFC::
+                                                GaussNewtonFiniteDeformationResponse
+                                                    nominalResponse;
+
+                                            gcopter::
+                                                GCOPTER_PolytopeSFC::
+                                                GaussNewtonFiniteDeformationResponse
+                                                    plusResponse;
+
+                                            gcopter::
+                                                GCOPTER_PolytopeSFC::
+                                                GaussNewtonFiniteDeformationResponse
+                                                    minusResponse;
+
+                                            const bool valid =
+                                                guideMetricEvaluator
+                                                    .evaluateGaussNewtonFiniteDeformation(
+                                                        pieceId,
+                                                        direction,
+                                                        delta,
+                                                        nominalResponse,
+                                                        plusResponse,
+                                                        minusResponse);
+
+                                            if (!valid)
+                                            {
+                                                continue;
+                                            }
+
+                                            ++validValidationRows;
+
+                                            const double peakResponse =
+                                                0.5 *
+                                                (
+                                                    std::abs(
+                                                        plusResponse
+                                                            .peakUtilization -
+                                                        nominalResponse
+                                                            .peakUtilization) +
+                                                    std::abs(
+                                                        minusResponse
+                                                            .peakUtilization -
+                                                        nominalResponse
+                                                            .peakUtilization)
+                                                );
+
+                                            const double energyResponse =
+                                                0.5 *
+                                                (
+                                                    std::abs(
+                                                        plusResponse
+                                                            .smoothnessEnergy -
+                                                        nominalResponse
+                                                            .smoothnessEnergy) +
+                                                    std::abs(
+                                                        minusResponse
+                                                            .smoothnessEnergy -
+                                                        nominalResponse
+                                                            .smoothnessEnergy)
+                                                );
+
+                                            validationOutput
+                                                << std::setprecision(17)
+
+                                                << effectiveCaseId << ','
+                                                << routeFingerprint << ','
+                                                << pieceId << ','
+                                                << rank << ','
+                                                << directionLabels[rank] << ','
+
+                                                << metric
+                                                       .stiffnessEigenvalues(
+                                                           rank) << ','
+
+                                                << metric
+                                                       .utilityEigenvalues(
+                                                           rank) << ','
+
+                                                << metric
+                                                       .corridorUtilityEigenvalues(
+                                                           rank) << ','
+
+                                                << metric.anisotropy << ','
+                                                << metric.corridorAnisotropy << ','
+                                                << metric.principalGap << ','
+                                                << delta << ','
+
+                                                << nominalResponse
+                                                       .peakUtilization << ','
+
+                                                << plusResponse
+                                                       .peakUtilization << ','
+
+                                                << minusResponse
+                                                       .peakUtilization << ','
+
+                                                << peakResponse << ','
+
+                                                << nominalResponse
+                                                       .smoothnessEnergy << ','
+
+                                                << plusResponse
+                                                       .smoothnessEnergy << ','
+
+                                                << minusResponse
+                                                       .smoothnessEnergy << ','
+
+                                                << energyResponse << ','
+
+                                                << nominalResponse
+                                                       .peakRatios(0) << ','
+                                                << nominalResponse
+                                                       .peakRatios(1) << ','
+                                                << nominalResponse
+                                                       .peakRatios(2) << ','
+                                                << nominalResponse
+                                                       .peakRatios(3) << ','
+
+                                                << plusResponse
+                                                       .peakRatios(0) << ','
+                                                << plusResponse
+                                                       .peakRatios(1) << ','
+                                                << plusResponse
+                                                       .peakRatios(2) << ','
+                                                << plusResponse
+                                                       .peakRatios(3) << ','
+
+                                                << minusResponse
+                                                       .peakRatios(0) << ','
+                                                << minusResponse
+                                                       .peakRatios(1) << ','
+                                                << minusResponse
+                                                       .peakRatios(2) << ','
+                                                << minusResponse
+                                                       .peakRatios(3)
+
+                                                << '\n';
+                                        }
+                                    }
+                                }
+
+                                ROS_INFO_STREAM(
+                                    "TF_CSGN_VALIDATION "
+                                    << "attempted_rows="
+                                    << validationRows
+
+                                    << " valid_rows="
+                                    << validValidationRows
+
+                                    << " file="
+                                    << validationPath);
+                            }
+                        }
+                    }
                 }
 
             std::vector<Eigen::MatrixX4d> hPolys;

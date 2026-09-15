@@ -45,6 +45,9 @@
   <!-- Visualization only: proposed / identity / firi / rils -->
   <arg name="benchmark_visualization_method" default=""/>
 
+  <!-- Offline paper validation only -->
+  <arg name="benchmark_csgn_validation_enabled" default="false"/>
+
   <arg name="benchmark_route_replay_enabled" default="false"/>
   <arg name="benchmark_route_replay_file" default=""/>
 
@@ -133,6 +136,9 @@
   <param name="Benchmark/VisualizationMethod"
          value="$(arg benchmark_visualization_method)"
          type="string"/>
+  <param name="Benchmark/CsgnValidationEnabled"
+         value="$(arg benchmark_csgn_validation_enabled)"
+         type="bool"/>
   </node>
 
 </launch>

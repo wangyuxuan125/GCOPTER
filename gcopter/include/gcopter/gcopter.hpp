@@ -260,6 +260,33 @@ namespace gcopter
                 GaussNewtonDeformationMetric>>
             GaussNewtonDeformationMetrics;
 
+        struct GaussNewtonFiniteDeformationResponse
+        {
+            bool valid =
+                false;
+
+            // Maximum normalized utilization over the complete
+            // reconstructed MINCO trajectory.
+            //
+            // Components:
+            //   0 velocity
+            //   1 body rate
+            //   2 tilt
+            //   3 thrust
+            Eigen::Vector4d peakRatios =
+                Eigen::Vector4d::Zero();
+
+            double peakUtilization =
+                INFINITY;
+
+            // MINCO smoothness energy with fixed piece times.
+            // This quantity is NOT used to construct the CSGN metric.
+            double smoothnessEnergy =
+                INFINITY;
+
+            EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        };
+
     private:
         minco::MINCO_S3NU minco;
         flatness::FlatnessMap flatmap;
@@ -1129,6 +1156,206 @@ namespace gcopter
             }
         
             return deformedPoints.allFinite();
+        }
+
+        inline bool evaluateFiniteDeformationResponseAtPoints(
+            const Eigen::Matrix3Xd &testPoints,
+            GaussNewtonFiniteDeformationResponse &response)
+        {
+            response =
+                GaussNewtonFiniteDeformationResponse();
+
+            if (!optimizedStateValid ||
+                pieceN <= 0 ||
+                integralRes <= 0 ||
+                testPoints.rows() != 3 ||
+                testPoints.cols() != pieceN - 1 ||
+                optimizedTimes.size() != pieceN ||
+                magnitudeBd.size() < 5)
+            {
+                return false;
+            }
+
+            const double velocityScale =
+                std::max(
+                    std::abs(magnitudeBd(0)),
+                    1.0e-6);
+
+            const double bodyRateScale =
+                std::max(
+                    std::abs(magnitudeBd(1)),
+                    1.0e-6);
+
+            const double thetaMax =
+                std::max(
+                    std::abs(magnitudeBd(2)),
+                    1.0e-6);
+
+            const double tiltScale =
+                std::max(
+                    std::sin(0.5 * thetaMax),
+                    1.0e-6);
+
+            const double thrustMean =
+                0.5 *
+                (magnitudeBd(3) +
+                 magnitudeBd(4));
+
+            const double thrustRadius =
+                std::max(
+                    0.5 *
+                        std::abs(
+                            magnitudeBd(4) -
+                            magnitudeBd(3)),
+                    1.0e-6);
+
+            // Fixed durations: only spatial waypoint deformation changes.
+            minco.setParameters(
+                testPoints,
+                optimizedTimes);
+
+            Trajectory<5>
+                testTrajectory;
+
+            minco.getTrajectory(
+                testTrajectory);
+
+            if (testTrajectory.getPieceNum() !=
+                pieceN)
+            {
+                return false;
+            }
+
+            double energy =
+                INFINITY;
+
+            minco.getEnergy(
+                energy);
+
+            if (!std::isfinite(energy))
+            {
+                return false;
+            }
+
+            Eigen::Vector4d peakRatios =
+                Eigen::Vector4d::Zero();
+
+            for (int pieceId = 0;
+                 pieceId < pieceN;
+                 ++pieceId)
+            {
+                const double duration =
+                    optimizedTimes(pieceId);
+
+                if (!std::isfinite(duration) ||
+                    duration <= 0.0)
+                {
+                    return false;
+                }
+
+                const auto &piece =
+                    testTrajectory[pieceId];
+
+                for (int sampleId = 0;
+                     sampleId <= integralRes;
+                     ++sampleId)
+                {
+                    const double alpha =
+                        static_cast<double>(
+                            sampleId) /
+                        static_cast<double>(
+                            integralRes);
+
+                    const double localTime =
+                        alpha * duration;
+
+                    const Eigen::Vector3d vel =
+                        piece.getVel(localTime);
+
+                    const Eigen::Vector3d acc =
+                        piece.getAcc(localTime);
+
+                    const Eigen::Vector3d jer =
+                        piece.getJer(localTime);
+
+                    double thrust =
+                        0.0;
+
+                    Eigen::Vector4d quat =
+                        Eigen::Vector4d::Zero();
+
+                    Eigen::Vector3d bodyRate =
+                        Eigen::Vector3d::Zero();
+
+                    flatmap.forward(
+                        vel,
+                        acc,
+                        jer,
+                        0.0,
+                        0.0,
+                        thrust,
+                        quat,
+                        bodyRate);
+
+                    if (!vel.allFinite() ||
+                        !acc.allFinite() ||
+                        !jer.allFinite() ||
+                        !std::isfinite(thrust) ||
+                        !quat.allFinite() ||
+                        !bodyRate.allFinite())
+                    {
+                        return false;
+                    }
+
+                    Eigen::Vector4d ratios;
+
+                    ratios(0) =
+                        vel.norm() /
+                        velocityScale;
+
+                    ratios(1) =
+                        bodyRate.norm() /
+                        bodyRateScale;
+
+                    ratios(2) =
+                        std::sqrt(
+                            quat(1) * quat(1) +
+                            quat(2) * quat(2)) /
+                        tiltScale;
+
+                    ratios(3) =
+                        std::abs(
+                            thrust -
+                            thrustMean) /
+                        thrustRadius;
+
+                    if (!ratios.allFinite())
+                    {
+                        return false;
+                    }
+
+                    peakRatios =
+                        peakRatios.cwiseMax(
+                            ratios);
+                }
+            }
+
+            response.peakRatios =
+                peakRatios;
+
+            response.peakUtilization =
+                peakRatios.maxCoeff();
+
+            response.smoothnessEnergy =
+                energy;
+
+            response.valid =
+                std::isfinite(
+                    response.peakUtilization) &&
+                std::isfinite(
+                    response.smoothnessEnergy);
+
+            return response.valid;
         }
 
         inline bool evaluateDynamicsFeatureVector(
@@ -4504,6 +4731,79 @@ namespace gcopter
                 optimizedTimes);
             
             return allValid;
+        }
+
+        inline bool evaluateGaussNewtonFiniteDeformation(
+            const int pieceId,
+            const Eigen::Vector3d &direction,
+            const double displacement,
+            GaussNewtonFiniteDeformationResponse &nominal,
+            GaussNewtonFiniteDeformationResponse &plus,
+            GaussNewtonFiniteDeformationResponse &minus)
+        {
+            nominal =
+                GaussNewtonFiniteDeformationResponse();
+
+            plus =
+                GaussNewtonFiniteDeformationResponse();
+
+            minus =
+                GaussNewtonFiniteDeformationResponse();
+
+            if (!optimizedStateValid ||
+                pieceId < 0 ||
+                pieceId >= pieceN ||
+                !direction.allFinite() ||
+                direction.norm() <= 1.0e-12 ||
+                !std::isfinite(displacement) ||
+                displacement <= 0.0)
+            {
+                return false;
+            }
+
+            const Eigen::Vector3d unitDirection =
+                direction.normalized();
+
+            Eigen::Matrix3Xd plusPoints;
+            Eigen::Matrix3Xd minusPoints;
+
+            if (!buildDeformedPointsForPiece(
+                    pieceId,
+                    displacement *
+                        unitDirection,
+                    plusPoints) ||
+                !buildDeformedPointsForPiece(
+                    pieceId,
+                    -displacement *
+                        unitDirection,
+                    minusPoints))
+            {
+                return false;
+            }
+
+            const bool nominalValid =
+                evaluateFiniteDeformationResponseAtPoints(
+                    optimizedPoints,
+                    nominal);
+
+            const bool plusValid =
+                evaluateFiniteDeformationResponseAtPoints(
+                    plusPoints,
+                    plus);
+
+            const bool minusValid =
+                evaluateFiniteDeformationResponseAtPoints(
+                    minusPoints,
+                    minus);
+
+            // Restore nominal MINCO parameters.
+            minco.setParameters(
+                optimizedPoints,
+                optimizedTimes);
+
+            return nominalValid &&
+                   plusValid &&
+                   minusValid;
         }
 
         inline bool hasOptimizedState() const
