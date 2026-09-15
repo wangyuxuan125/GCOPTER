@@ -186,6 +186,16 @@ struct BenchmarkRunRecord
     double corridor_ms =
         0.0;
 
+    // Complete DAC-SFC preprocessing cost after the
+    // front-end route has been obtained:
+    //
+    // preprocess_ms = guide_ms + csgn_ms + corridor_ms
+    //
+    // This deliberately excludes GCOPTER setup/optimization
+    // and all debug-only diagnostics.
+    double preprocess_ms =
+        0.0;
+
     double setup_ms =
         0.0;
 
@@ -1578,6 +1588,7 @@ public:
                 << "guide_ms,"
                 << "csgn_ms,"
                 << "corridor_ms,"
+                << "preprocess_ms,"
                 << "setup_ms,"
                 << "optimize_ms,"
                 << "hard_projection_ms,"
@@ -1673,6 +1684,7 @@ public:
             << record.guide_ms << ','
             << record.csgn_ms << ','
             << record.corridor_ms << ','
+            << record.preprocess_ms << ','
             << record.setup_ms << ','
             << record.optimize_ms << ','
             << record.hard_projection_ms << ','

@@ -178,7 +178,7 @@ struct Config
         nh_priv.param<std::string>(
             "Benchmark/VisualizationMethod",
             benchmarkVisualizationMethod,
-            "proposed");
+            "");
 
         nh_priv.param(
             "Benchmark/RouteReplayEnabled",
@@ -3065,6 +3065,25 @@ public:
 
                     benchmarkRun.corridor_ms =
                         activeGuideMs;
+
+                    benchmarkRun.preprocess_ms =
+                        routeMincoGuideBuildMs +
+                        guideMetricMs +
+                        activeGuideMs;
+
+                    ROS_INFO_STREAM(
+                        "TF_DACSFC_PREPROCESS_TIMING "
+                        << "probe_ms="
+                        << benchmarkRun.guide_ms
+
+                        << " csgn_ms="
+                        << benchmarkRun.csgn_ms
+
+                        << " corridor_ms="
+                        << benchmarkRun.corridor_ms
+
+                        << " preprocess_ms="
+                        << benchmarkRun.preprocess_ms);
 
                     benchmarkRun.setup_ms =
                         activeGuideBackendResult
