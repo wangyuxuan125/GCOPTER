@@ -5606,19 +5606,65 @@ public:
                     };
 
 
-                    const bool controlledCsgnSuccess =
-                        guideSegmentMetricsReady &&
-                        buildControlledCompactCover(
-                            true,
-                            controlledCsgnHPolys,
-                            controlledCsgnInfos);
-                        
-                    const bool controlledIdentitySuccess =
-                        guideSegmentMetricsReady &&
-                        buildControlledCompactCover(
-                            false,
-                            controlledIdentityHPolys,
-                            controlledIdentityInfos);
+                    // ========================================================
+                    // Four-method runtime replay:
+                    // Controlled DAC-SFC / Identity corridor construction.
+                    //
+                    // Timing scope contains ONLY the actual controlled corridor
+                    // constructor.  All subsequent geometry/safety/volume
+                    // diagnostics remain outside these timers.
+                    // ========================================================
+
+                    double controlledCsgnGenerationMs =
+                        std::numeric_limits<double>::quiet_NaN();
+
+                    double controlledIdentityGenerationMs =
+                        std::numeric_limits<double>::quiet_NaN();
+
+                    bool controlledCsgnSuccess =
+                        false;
+
+                    bool controlledIdentitySuccess =
+                        false;
+
+
+                    if (guideSegmentMetricsReady)
+                    {
+                        const auto controlledCsgnStarted =
+                            std::chrono::steady_clock::now();
+
+                        controlledCsgnSuccess =
+                            buildControlledCompactCover(
+                                true,
+                                controlledCsgnHPolys,
+                                controlledCsgnInfos);
+
+                        controlledCsgnGenerationMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    controlledCsgnStarted)
+                                .count();
+
+
+                        const auto controlledIdentityStarted =
+                            std::chrono::steady_clock::now();
+
+                        controlledIdentitySuccess =
+                            buildControlledCompactCover(
+                                false,
+                                controlledIdentityHPolys,
+                                controlledIdentityInfos);
+
+                        controlledIdentityGenerationMs =
+                            std::chrono::duration<
+                                double,
+                                std::milli>(
+                                    std::chrono::steady_clock::now() -
+                                    controlledIdentityStarted)
+                                .count();
+                    }
                         
                     const bool controlledPairMappingValid =
                         controlledCsgnSuccess &&
@@ -8346,6 +8392,9 @@ public:
                         controlledFiriRangeM;
                                             
                                             
+                    const auto controlledRilsStarted =
+                        std::chrono::steady_clock::now();
+
                     const auto controlledRilsBuild =
                         gcopter_benchmark::
                             buildControlledRilsCorridors(
@@ -8354,6 +8403,14 @@ public:
                                 voxelMap.getOrigin(),
                                 voxelMap.getCorner(),
                                 controlledRilsRangeM);
+
+                    const double controlledRilsGenerationMs =
+                        std::chrono::duration<
+                            double,
+                            std::milli>(
+                                std::chrono::steady_clock::now() -
+                                controlledRilsStarted)
+                            .count();
                             
                             
                     int controlledRilsValidCount =
@@ -11833,8 +11890,231 @@ public:
                             "rils",
                             controlledRilsBuild.hpolys,
                             controlledV3RilsMappingValid);
-                        
-                        
+
+
+                    // ========================================================
+                    // Four-method post-route runtime table.
+                    //
+                    // All timing components below were measured around the
+                    // actual construction/backend calls.  No new optimizer is
+                    // executed here.
+                    // ========================================================
+
+                    std::vector<
+                        gcopter_benchmark::BenchmarkRuntimeRecord>
+                        runtimeRecords;
+
+                    runtimeRecords.reserve(4);
+
+                    const double runtimeTimestampS =
+                        ros::Time::now().toSec();
+
+
+                    auto appendRuntimeRecord =
+                        [&](const std::string &methodName,
+                            const std::string &variantName,
+                            const bool probeApplicable,
+                            const bool metricApplicable,
+                            const double probeMs,
+                            const double metricMs,
+                            const double corridorMs,
+                            const bool corridorSuccess,
+                            const ControlledE2BackendEvaluation &evaluation)
+                    {
+                        gcopter_benchmark::
+                            BenchmarkRuntimeRecord record;
+
+                        record.case_id =
+                            effectiveCaseId;
+
+                        record.route_fingerprint =
+                            routeFingerprint;
+
+                        record.environment_family =
+                            config.benchmarkEnvironmentFamily;
+
+                        record.difficulty =
+                            config.benchmarkDifficulty;
+
+                        record.method =
+                            methodName;
+
+                        record.variant =
+                            variantName;
+
+                        record.repeat_id =
+                            config.benchmarkRepeatId;
+
+                        record.timestamp_s =
+                            runtimeTimestampS;
+
+                        record.route_segment_count =
+                            controlledSegmentCount;
+
+                        record.probe_applicable =
+                            probeApplicable;
+
+                        record.metric_applicable =
+                            metricApplicable;
+
+                        record.probe_ms =
+                            probeMs;
+
+                        record.metric_ms =
+                            metricMs;
+
+                        record.corridor_ms =
+                            corridorMs;
+
+                        record.setup_ms =
+                            evaluation.backend.setup_ms;
+
+                        record.optimize_ms =
+                            evaluation.backend.optimize_ms;
+
+                        record.gcopter_ms =
+                            evaluation.backend.setup_ms +
+                            evaluation.backend.optimize_ms;
+
+                        record.post_route_total_ms =
+                            record.probe_ms +
+                            record.metric_ms +
+                            record.corridor_ms +
+                            record.gcopter_ms;
+
+                        record.corridor_success =
+                            corridorSuccess;
+
+                        record.setup_success =
+                            evaluation.backend.setup_success;
+
+                        record.optimize_success =
+                            evaluation.backend.optimize_success;
+
+                        record.runtime_valid =
+                            corridorSuccess &&
+                            evaluation.mapping_valid &&
+                            evaluation.backend.setup_success &&
+                            evaluation.backend.optimize_success &&
+                            std::isfinite(record.corridor_ms) &&
+                            std::isfinite(record.setup_ms) &&
+                            std::isfinite(record.optimize_ms) &&
+                            std::isfinite(record.post_route_total_ms);
+
+                        record.corridor_count =
+                            evaluation.backend.corridor_count;
+
+                        record.raw_face_count =
+                            evaluation.backend.total_faces;
+
+                        record.trajectory_piece_count =
+                            evaluation.backend.trajectory_pieces;
+
+                        runtimeRecords.push_back(
+                            record);
+                    };
+
+
+                    appendRuntimeRecord(
+                        "proposed",
+                        "csgn_active_controlled",
+                        true,
+                        true,
+                        routeMincoGuideBuildMs,
+                        guideMetricMs,
+                        controlledCsgnGenerationMs,
+                        controlledCsgnSuccess,
+                        controlledE2Proposed);
+
+
+                    appendRuntimeRecord(
+                        "identity",
+                        "identity_active_controlled",
+                        false,
+                        false,
+                        0.0,
+                        0.0,
+                        controlledIdentityGenerationMs,
+                        controlledIdentitySuccess,
+                        controlledE2Identity);
+
+
+                    appendRuntimeRecord(
+                        "firi",
+                        "standard_firi_controlled",
+                        false,
+                        false,
+                        0.0,
+                        0.0,
+                        controlledFiriGenerationMs,
+                        controlledFiriSuccess,
+                        controlledE2Firi);
+
+
+                    appendRuntimeRecord(
+                        "rils",
+                        "liu_rils_controlled",
+                        false,
+                        false,
+                        0.0,
+                        0.0,
+                        controlledRilsGenerationMs,
+                        controlledRilsBuild.success,
+                        controlledE2Rils);
+
+                    const bool runtimeLogSuccess =
+                        benchmarkRunLogger.logRuntime(
+                            runtimeRecords);
+
+                    if (!runtimeLogSuccess)
+                    {
+                        ROS_ERROR(
+                            "Failed to append "
+                            "benchmark_runtime_v1.csv.");
+                    }
+
+                    int runtimeValidCount =
+                        0;
+
+                    for (const auto &runtimeRecord :
+                         runtimeRecords)
+                    {
+                        if (runtimeRecord.runtime_valid)
+                        {
+                            ++runtimeValidCount;
+                        }
+                    }
+
+                    ROS_INFO_STREAM(
+                        "TF_BENCHMARK_RUNTIME_V1 "
+                        << "rows="
+                        << runtimeRecords.size()
+
+                        << " valid="
+                        << runtimeValidCount
+
+                        << " proposed_total_ms="
+                        << runtimeRecords[0]
+                               .post_route_total_ms
+
+                        << " identity_total_ms="
+                        << runtimeRecords[1]
+                               .post_route_total_ms
+
+                        << " firi_total_ms="
+                        << runtimeRecords[2]
+                               .post_route_total_ms
+
+                        << " rils_total_ms="
+                        << runtimeRecords[3]
+                               .post_route_total_ms
+
+                        << " log_success="
+                        << runtimeLogSuccess
+
+                        << " file=benchmark_runtime_v1.csv");
+
+
                     // ========================================================
                     // Proposed replay / determinism cross-check.
                     //

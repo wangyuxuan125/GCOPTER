@@ -395,6 +395,116 @@ struct BenchmarkRunRecord
             quiet_NaN();
 };
 
+struct BenchmarkRuntimeRecord
+{
+    // ========================================================
+    // Provenance
+    // ========================================================
+    std::string case_id;
+
+    std::string route_fingerprint;
+
+    std::string environment_family =
+        "unknown";
+
+    std::string difficulty =
+        "unknown";
+
+    std::string method =
+        "unknown";
+
+    std::string variant =
+        "unknown";
+
+    int repeat_id =
+        0;
+
+    double timestamp_s =
+        0.0;
+
+    int route_segment_count =
+        0;
+
+
+    // ========================================================
+    // Stage applicability
+    // ========================================================
+    bool probe_applicable =
+        false;
+
+    bool metric_applicable =
+        false;
+
+
+    // ========================================================
+    // Post-route stage timing [ms]
+    //
+    // post_route_total_ms is a non-overlapping stage sum:
+    //
+    // probe + metric + corridor + setup + optimize
+    //
+    // It excludes:
+    //   route search/replay
+    //   geometry diagnostics
+    //   volume/effective-face analysis
+    //   trajectory reconstruction
+    //   exact continuous-time certification
+    //   exact-hard projection
+    //   CSV/logging
+    // ========================================================
+    double probe_ms =
+        0.0;
+
+    double metric_ms =
+        0.0;
+
+    double corridor_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double setup_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double optimize_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double gcopter_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+    double post_route_total_ms =
+        std::numeric_limits<double>::
+            quiet_NaN();
+
+
+    // ========================================================
+    // Status / structural workload
+    // ========================================================
+    bool corridor_success =
+        false;
+
+    bool setup_success =
+        false;
+
+    bool optimize_success =
+        false;
+
+    bool runtime_valid =
+        false;
+
+    int corridor_count =
+        0;
+
+    int raw_face_count =
+        0;
+
+    int trajectory_piece_count =
+        0;
+};
+
+
 struct BenchmarkControlledE2Record
 {
     // ========================================================
@@ -1748,6 +1858,123 @@ public:
         return static_cast<bool>(
             output);
     }
+
+    inline bool
+    logRuntime(
+        const std::vector<
+            BenchmarkRuntimeRecord> &records)
+    {
+        if (!enabled_ ||
+            records.empty())
+        {
+            return true;
+        }
+
+        std::lock_guard<std::mutex>
+            lock(mutex_);
+
+        if (!ensureDirectory())
+        {
+            return false;
+        }
+
+        const std::string path =
+            directory_ +
+            "/benchmark_runtime_v1.csv";
+
+        const bool header =
+            fileNeedsHeader(path);
+
+        std::ofstream output(
+            path,
+            std::ios::out |
+                std::ios::app);
+
+        if (!output)
+        {
+            return false;
+        }
+
+        if (header)
+        {
+            output
+                << "schema_version,"
+                << "case_id,"
+                << "route_fingerprint,"
+                << "environment_family,"
+                << "difficulty,"
+                << "method,"
+                << "variant,"
+                << "repeat_id,"
+                << "timestamp_s,"
+                << "route_segment_count,"
+
+                << "probe_applicable,"
+                << "metric_applicable,"
+
+                << "probe_ms,"
+                << "metric_ms,"
+                << "corridor_ms,"
+                << "setup_ms,"
+                << "optimize_ms,"
+                << "gcopter_ms,"
+                << "post_route_total_ms,"
+
+                << "corridor_success,"
+                << "setup_success,"
+                << "optimize_success,"
+                << "runtime_valid,"
+
+                << "corridor_count,"
+                << "raw_face_count,"
+                << "trajectory_piece_count\n";
+        }
+
+        output <<
+            std::setprecision(17);
+
+        for (const auto &record :
+             records)
+        {
+            output
+                << 1 << ','
+
+                << csv(record.case_id) << ','
+                << csv(record.route_fingerprint) << ','
+                << csv(record.environment_family) << ','
+                << csv(record.difficulty) << ','
+                << csv(record.method) << ','
+                << csv(record.variant) << ','
+                << record.repeat_id << ','
+                << record.timestamp_s << ','
+                << record.route_segment_count << ','
+
+                << record.probe_applicable << ','
+                << record.metric_applicable << ','
+
+                << record.probe_ms << ','
+                << record.metric_ms << ','
+                << record.corridor_ms << ','
+                << record.setup_ms << ','
+                << record.optimize_ms << ','
+                << record.gcopter_ms << ','
+                << record.post_route_total_ms << ','
+
+                << record.corridor_success << ','
+                << record.setup_success << ','
+                << record.optimize_success << ','
+                << record.runtime_valid << ','
+
+                << record.corridor_count << ','
+                << record.raw_face_count << ','
+                << record.trajectory_piece_count
+                << '\n';
+        }
+
+        return static_cast<bool>(
+            output);
+    }
+
 
     inline bool
     logControlledE2(
