@@ -169,7 +169,7 @@ Visualization Manager:
         trajectory: true
       Queue Size: 100
       Value: true
-    - Class: rviz/MarkerArray
+    - Class: rviz/Marker
       Enabled: true
       Marker Topic: /visualizer/drone
       Name: Drone
