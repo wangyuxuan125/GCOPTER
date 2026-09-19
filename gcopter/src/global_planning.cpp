@@ -84,6 +84,7 @@ struct Config
     std::string benchmarkVariant;
     std::string benchmarkVisualizationMethod;
     std::string benchmarkTrajectoryVisualizationMethod;
+    double visualizationPlaybackDelayS;
     bool benchmarkCsgnValidationEnabled;
     bool benchmarkRouteReplayEnabled;
     std::string benchmarkRouteReplayFile;
@@ -188,6 +189,10 @@ struct Config
             "Benchmark/TrajectoryVisualizationMethod",
             benchmarkTrajectoryVisualizationMethod,
             "");
+        nh_priv.param(
+            "Visualization/PlaybackDelayS",
+            visualizationPlaybackDelayS,
+            5.0);
 
         nh_priv.param(
             "Benchmark/CsgnValidationEnabled",
@@ -367,6 +372,7 @@ public:
         if (startGoal.size() == 2)
         {
             visualizationTraj.clear();
+            droneYaw = 0.0;
             lastDroneTfStamp = ros::Time(0);
             const auto totalStarted = std::chrono::steady_clock::now();
             gcopter_experiment::RunRecord record;
@@ -13060,9 +13066,6 @@ public:
                         finalTrajectoryEvaluation
                             .length_m;
 
-                    trajStamp =
-                        ros::Time::now().toSec();
-
                     visualizationTraj = traj;
                     visualizer.visualize(
                         traj,
@@ -13171,6 +13174,14 @@ public:
                     finishRecord(
                         "success",
                         true);
+
+                    const double playbackDelayS =
+                        std::max(0.0, config.visualizationPlaybackDelayS);
+                    trajStamp =
+                        ros::Time::now().toSec() + playbackDelayS;
+                    ROS_INFO_STREAM(
+                        "TF_TRAJ_PLAYBACK_WAIT delay_s="
+                        << playbackDelayS);
 
                     return;
                 }
@@ -18172,10 +18183,16 @@ public:
                         record.trajectory_length_m += (current - previous).norm();
                         previous = current;
                     }
-                    trajStamp = ros::Time::now().toSec();
                     visualizer.visualize(traj, route);
                     visualizationTraj = traj;
                     finishRecord("success", true);
+                    const double playbackDelayS =
+                        std::max(0.0, config.visualizationPlaybackDelayS);
+                    trajStamp =
+                        ros::Time::now().toSec() + playbackDelayS;
+                    ROS_INFO_STREAM(
+                        "TF_TRAJ_PLAYBACK_WAIT delay_s="
+                        << playbackDelayS);
                     return;
                 }
                 finishRecord("empty_trajectory", false);
@@ -18233,11 +18250,13 @@ public:
         {
             const ros::Time now = ros::Time::now();
             const double delta = now.toSec() - trajStamp;
-            if (delta >= 0.0)
+            if (std::isfinite(delta))
             {
                 const double duration =
                     visualizationTraj.getTotalDuration();
-                const double t = std::min(delta, duration);
+                // Hold the model at the start while RViz loads the map.
+                const double t =
+                    std::min(std::max(delta, 0.0), duration);
                 const Eigen::Vector3d position =
                     visualizationTraj.getPos(t);
                 const Eigen::Vector3d velocity =
