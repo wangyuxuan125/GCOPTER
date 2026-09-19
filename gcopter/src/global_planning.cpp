@@ -306,7 +306,6 @@ public:
 
         targetSub = nh.subscribe(config.targetTopic, 1, &GlobalPlanner::targetCallBack, this,
                                  ros::TransportHints().tcpNoDelay());
-        visualizer.visualizeDrone();
     }
 
     inline void mapCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg)
@@ -18260,6 +18259,7 @@ public:
                     pose.setRotation(orientation);
                     droneTf.sendTransform(tf::StampedTransform(
                         pose, now, "odom", "gcopter_drone"));
+                    visualizer.visualizeDrone(position, droneYaw);
                     lastDroneTfStamp = now;
                 }
 

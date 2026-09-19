@@ -61,11 +61,14 @@ public:
         bdrPub = nh.advertise<std_msgs::Float64>("/visualizer/body_rate", 1000);
     }
 
-    // A compact four-rotor model fixed to the moving visualization frame.
-    // Publishing one latched MarkerArray also works when RViz starts late.
-    inline void visualizeDrone()
+    // Publish the moving model in odom so marker rendering never waits for
+    // the camera's gcopter_drone transform.
+    inline void visualizeDrone(
+        const Eigen::Vector3d &center, const double heading)
     {
         visualization_msgs::MarkerArray model;
+        const double cosHeading = std::cos(heading);
+        const double sinHeading = std::sin(heading);
         auto addPart = [&](const int id,
                            const int type,
                            const Eigen::Vector3d &position,
@@ -74,18 +77,21 @@ public:
                            const double yaw = 0.0)
         {
             visualization_msgs::Marker marker;
-            marker.header.frame_id = "gcopter_drone";
-            marker.header.stamp = ros::Time(0);
-            marker.frame_locked = true;
+            marker.header.frame_id = "odom";
+            marker.header.stamp = ros::Time::now();
             marker.ns = "drone";
             marker.id = id;
             marker.type = type;
             marker.action = visualization_msgs::Marker::ADD;
-            marker.pose.position.x = position.x();
-            marker.pose.position.y = position.y();
-            marker.pose.position.z = position.z();
-            marker.pose.orientation.z = std::sin(yaw / 2.0);
-            marker.pose.orientation.w = std::cos(yaw / 2.0);
+            marker.pose.position.x =
+                center.x() + cosHeading * position.x() -
+                sinHeading * position.y();
+            marker.pose.position.y =
+                center.y() + sinHeading * position.x() +
+                cosHeading * position.y();
+            marker.pose.position.z = center.z() + position.z();
+            marker.pose.orientation.z = std::sin((heading + yaw) / 2.0);
+            marker.pose.orientation.w = std::cos((heading + yaw) / 2.0);
             marker.scale.x = scale.x();
             marker.scale.y = scale.y();
             marker.scale.z = scale.z();
@@ -96,18 +102,16 @@ public:
             model.markers.push_back(marker);
         };
 
-        const Eigen::Vector3d navy(0.04, 0.12, 0.28);
-        const Eigen::Vector3d blue(0.0, 0.35, 0.9);
-        const Eigen::Vector3d cyan(0.0, 0.8, 1.0);
+        const Eigen::Vector3d black(0.03, 0.03, 0.03);
         addPart(0, visualization_msgs::Marker::CUBE,
                 Eigen::Vector3d::Zero(), Eigen::Vector3d(0.38, 0.25, 0.13),
-                blue);
+                black);
         addPart(1, visualization_msgs::Marker::CUBE,
                 Eigen::Vector3d::Zero(), Eigen::Vector3d(1.18, 0.07, 0.07),
-                navy, 0.7853981633974483);
+                black, 0.7853981633974483);
         addPart(2, visualization_msgs::Marker::CUBE,
                 Eigen::Vector3d::Zero(), Eigen::Vector3d(1.18, 0.07, 0.07),
-                navy, -0.7853981633974483);
+                black, -0.7853981633974483);
         int id = 3;
         for (const double x : {-0.42, 0.42})
         {
@@ -115,13 +119,13 @@ public:
             {
                 addPart(id++, visualization_msgs::Marker::CYLINDER,
                         Eigen::Vector3d(x, y, 0.06),
-                        Eigen::Vector3d(0.33, 0.33, 0.025), navy);
+                        Eigen::Vector3d(0.33, 0.33, 0.025), black);
             }
         }
-        // Bright nose makes the forward (+X) direction visible.
+        // The nose extension indicates the forward (+X) direction.
         addPart(7, visualization_msgs::Marker::CUBE,
                 Eigen::Vector3d(0.23, 0.0, 0.02),
-                Eigen::Vector3d(0.12, 0.16, 0.08), cyan);
+                Eigen::Vector3d(0.12, 0.16, 0.08), black);
         dronePub.publish(model);
     }
 
