@@ -13070,6 +13070,7 @@ public:
                     {
                         const ControlledE2BackendEvaluation *visEval =
                             nullptr;
+                        Eigen::Vector3d visColor(0.0, 0.5, 1.0);
 
                         if (config.benchmarkTrajectoryVisualizationMethod ==
                             "proposed")
@@ -13081,18 +13082,21 @@ public:
                             "identity")
                         {
                             visEval = &controlledE2Identity;
+                            visColor = Eigen::Vector3d(1.0, 0.55, 0.0);
                         }
                         else if (
                             config.benchmarkTrajectoryVisualizationMethod ==
                             "firi")
                         {
                             visEval = &controlledE2Firi;
+                            visColor = Eigen::Vector3d(0.0, 0.8, 0.2);
                         }
                         else if (
                             config.benchmarkTrajectoryVisualizationMethod ==
                             "rils")
                         {
                             visEval = &controlledE2Rils;
+                            visColor = Eigen::Vector3d(1.0, 0.1, 0.1);
                         }
                         else
                         {
@@ -13138,7 +13142,8 @@ public:
                                 {
                                     // The later latched trajectory marker is
                                     // the one RViz retains for this run.
-                                    visualizer.visualize(visTraj, route);
+                                    visualizer.visualize(
+                                        visTraj, route, visColor);
 
                                     ROS_INFO_STREAM(
                                         "TF_FIG_TRAJ_VIS "

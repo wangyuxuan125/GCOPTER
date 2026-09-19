@@ -61,8 +61,11 @@ public:
 
     // Visualize the trajectory and its front-end path
     template <int D>
-    inline void visualize(const Trajectory<D> &traj,
-                          const std::vector<Eigen::Vector3d> &route)
+    inline void visualize(
+        const Trajectory<D> &traj,
+        const std::vector<Eigen::Vector3d> &route,
+        const Eigen::Vector3d &trajectoryColor =
+            Eigen::Vector3d(0.0, 0.5, 1.0))
     {
         visualization_msgs::Marker routeMarker, wayPointsMarker, trajMarker;
 
@@ -94,9 +97,9 @@ public:
         trajMarker.header.frame_id = "odom";
         trajMarker.id = 0;
         trajMarker.ns = "trajectory";
-        trajMarker.color.r = 0.00;
-        trajMarker.color.g = 0.50;
-        trajMarker.color.b = 1.00;
+        trajMarker.color.r = trajectoryColor.x();
+        trajMarker.color.g = trajectoryColor.y();
+        trajMarker.color.b = trajectoryColor.z();
         trajMarker.scale.x = 0.30;
 
         if (route.size() > 0)
