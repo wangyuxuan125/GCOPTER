@@ -156,6 +156,41 @@ using CandidateFaces =
         Eigen::aligned_allocator<
             CandidateFace>>;
 
+// Optional observation of one actual Active-Witness construction. Never
+// consumed by the constructor: enabling it does not change face selection.
+struct ActiveWitnessTraceStep
+{
+    Eigen::Vector3d witness = Eigen::Vector3d::Zero();
+    Eigen::Vector3d projection = Eigen::Vector3d::Zero();
+    Eigen::Vector4d plane = Eigen::Vector4d::Zero();
+    std::vector<int> excluded_obstacle_ids;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+struct CompactCorridorTrace
+{
+    Eigen::Vector3d a = Eigen::Vector3d::Zero();
+    Eigen::Vector3d b = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d eigenvectors = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d eigenvalues = Eigen::Vector3d::Ones(); // ascending
+    Eigen::Vector3d extra_radii = Eigen::Vector3d::Zero();
+    Eigen::Vector3d half_widths = Eigen::Vector3d::Zero();
+    double overlap_radius = 0.0;
+    bool metric_valid = false;
+    bool anisotropic_domain = false;
+    bool success = false;
+    Eigen::MatrixX4d domain_planes;
+    Eigen::MatrixX4d final_polytope;
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
+        local_obstacles;
+    std::vector<ActiveWitnessTraceStep,
+                Eigen::aligned_allocator<ActiveWitnessTraceStep>> steps;
+    std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d>>
+        candidate_planes;
+    std::vector<int> removed_candidate_ids;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
 // ================================================================
 // Trajectory-relevant compact polytope for one seed segment [a,b].
 //
@@ -186,9 +221,16 @@ inline bool buildCompactSegmentPolytope(
     const CompactCorridorOptions &options =
         CompactCorridorOptions(),
     CompactCorridorDiagnostics *diagnostics =
-        nullptr)
+        nullptr,
+    CompactCorridorTrace *trace = nullptr)
 {
     CompactCorridorDiagnostics localDiagnostics;
+    if (trace != nullptr)
+    {
+        *trace = CompactCorridorTrace();
+        trace->a = a;
+        trace->b = b;
+    }
 
     localDiagnostics.input_obstacle_count =
         static_cast<int>(
@@ -355,6 +397,16 @@ inline bool buildCompactSegmentPolytope(
     localDiagnostics.extra_radii =
         extraRadii;
 
+    if (trace != nullptr)
+    {
+        trace->eigenvectors = eigenvectors;
+        trace->eigenvalues = eigenvalues;
+        trace->extra_radii = extraRadii;
+        trace->overlap_radius = overlapRadius;
+        trace->metric_valid = localDiagnostics.metric_valid;
+        trace->anisotropic_domain = localDiagnostics.anisotropic_domain;
+    }
+
     // ------------------------------------------------------------
     // Build the CSGN-aligned finite domain.
     //
@@ -506,6 +558,11 @@ inline bool buildCompactSegmentPolytope(
         static_cast<int>(
             fixedPlanes.size());
 
+    if (trace != nullptr)
+    {
+        trace->half_widths = halfWidths;
+    }
+
     Eigen::MatrixX4d fixedH(
         fixedPlanes.size(),
         4);
@@ -519,6 +576,11 @@ inline bool buildCompactSegmentPolytope(
         fixedH.row(faceId) =
             fixedPlanes[faceId]
                 .transpose();
+    }
+
+    if (trace != nullptr)
+    {
+        trace->domain_planes = fixedH;
     }
 
     // ------------------------------------------------------------
@@ -562,6 +624,11 @@ inline bool buildCompactSegmentPolytope(
     localDiagnostics.local_obstacle_count =
         obstacleCount;
 
+    if (trace != nullptr)
+    {
+        trace->local_obstacles = localObstacles;
+    }
+
     if (obstacleCount == 0)
     {
         hPoly =
@@ -576,6 +643,12 @@ inline bool buildCompactSegmentPolytope(
 
         localDiagnostics.safety_verified =
             true;
+
+        if (trace != nullptr)
+        {
+            trace->final_polytope = hPoly;
+            trace->success = true;
+        }
 
         if (diagnostics != nullptr)
         {
@@ -1287,6 +1360,17 @@ inline bool buildCompactSegmentPolytope(
                 std::move(
                     candidate));
 
+            if (trace != nullptr)
+            {
+                const CandidateFace &chosen = candidates.back();
+                ActiveWitnessTraceStep step;
+                step.witness = witness;
+                step.projection = projection;
+                step.plane = chosen.plane;
+                step.excluded_obstacle_ids = chosen.covered_obstacles;
+                trace->steps.push_back(std::move(step));
+            }
+
             selectedCandidateIds
                 .push_back(
                     static_cast<int>(
@@ -1390,6 +1474,15 @@ inline bool buildCompactSegmentPolytope(
         removalOrder =
             selectedCandidateIds;
 
+    if (trace != nullptr)
+    {
+        trace->candidate_planes.reserve(candidates.size());
+        for (const auto &candidate : candidates)
+        {
+            trace->candidate_planes.push_back(candidate.plane);
+        }
+    }
+
     std::sort(
         removalOrder.begin(),
         removalOrder.end(),
@@ -1459,6 +1552,11 @@ inline bool buildCompactSegmentPolytope(
         selected[
             candidateId] =
             0;
+
+        if (trace != nullptr)
+        {
+            trace->removed_candidate_ids.push_back(candidateId);
+        }
 
         ++localDiagnostics
               .redundancy_removed;
@@ -1670,6 +1768,12 @@ inline bool buildCompactSegmentPolytope(
 
     localDiagnostics.safety_verified =
         true;
+
+    if (trace != nullptr)
+    {
+        trace->final_polytope = hPoly;
+        trace->success = true;
+    }
 
     if (diagnostics != nullptr)
     {

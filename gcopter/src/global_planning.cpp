@@ -11,6 +11,7 @@
 #include "gcopter/route_replay.hpp"
 #include "gcopter/benchmark_logger.hpp"
 #include "gcopter/trajectory_metrics.hpp"
+#include "gcopter/dac_sfc_video_trace.hpp"
 #include "gcopter/corridor_metrics.hpp"
 #include "gcopter/effective_face_metrics.hpp"
 #include "gcopter/corridor_safety_metrics.hpp"
@@ -85,6 +86,9 @@ struct Config
     std::string benchmarkVisualizationMethod;
     std::string benchmarkTrajectoryVisualizationMethod;
     double visualizationPlaybackDelayS;
+    bool videoTraceEnabled;
+    int videoSegmentId;
+    std::string videoTraceFile;
     bool benchmarkCsgnValidationEnabled;
     bool benchmarkRouteReplayEnabled;
     std::string benchmarkRouteReplayFile;
@@ -193,6 +197,10 @@ struct Config
             "Visualization/PlaybackDelayS",
             visualizationPlaybackDelayS,
             5.0);
+        nh_priv.param("Video/TraceEnabled", videoTraceEnabled, false);
+        nh_priv.param("Video/SegmentId", videoSegmentId, -1);
+        nh_priv.param<std::string>("Video/TraceFile", videoTraceFile,
+                                   "/tmp/dac_sfc_video.json");
 
         nh_priv.param(
             "Benchmark/CsgnValidationEnabled",
@@ -13070,6 +13078,7 @@ public:
                     visualizer.visualize(
                         traj,
                         route);
+                    std::string displayedTrajectoryMethod = "proposed";
 
                     // ============================================================
                     // Paper trajectory visualization selector.
@@ -13157,6 +13166,8 @@ public:
                                     visualizer.visualize(
                                         visTraj, route, visColor);
                                     visualizationTraj = visTraj;
+                                    displayedTrajectoryMethod =
+                                        config.benchmarkTrajectoryVisualizationMethod;
 
                                     ROS_INFO_STREAM(
                                         "TF_FIG_TRAJ_VIS "
@@ -13174,6 +13185,76 @@ public:
                     finishRecord(
                         "success",
                         true);
+
+                    // Video-only replay data: reconstruct ONE deterministic
+                    // segment after finishRecord(). Benchmark timings and the
+                    // already optimized trajectory remain untouched.
+                    if (config.videoTraceEnabled && benchmarkProposedMode &&
+                        guideSegmentMetricsReady && activeGuideSuccess)
+                    {
+                        int chosen = config.videoSegmentId;
+                        if (chosen == -1)
+                        {
+                            double bestRatio = -1.0;
+                            for (int i = 0; i < guideRawSegmentCount; ++i)
+                            {
+                                const auto &metric = guideSegmentMetrics[i];
+                                if (!metric.valid) continue;
+                                Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>
+                                    solver(metric.utility);
+                                if (solver.info() != Eigen::Success ||
+                                    solver.eigenvalues().minCoeff() <= 0.0)
+                                    continue;
+                                const double ratio =
+                                    solver.eigenvalues().maxCoeff() /
+                                    solver.eigenvalues().minCoeff();
+                                if (ratio > bestRatio)
+                                {
+                                    bestRatio = ratio;
+                                    chosen = i;
+                                }
+                            }
+                        }
+                        if (chosen >= 0 && chosen < guideRawSegmentCount &&
+                            guideSegmentMetrics[chosen].valid)
+                        {
+                            auto traceOptions = activeGuideOptions;
+                            traceOptions.metric_enabled = true;
+                            traceOptions.deformation_utility =
+                                guideSegmentMetrics[chosen].utility;
+                            traj_relevant::CompactCorridorTrace videoTrace;
+                            traj_relevant::CompactCorridorDiagnostics videoInfo;
+                            Eigen::MatrixX4d videoPoly;
+                            const bool traced =
+                                traj_relevant::buildCompactSegmentPolytope(
+                                    pc, voxelMap.getOrigin(),
+                                    voxelMap.getCorner(), route[chosen],
+                                    route[chosen + 1], videoPoly,
+                                    traceOptions, &videoInfo, &videoTrace);
+                            if (traced && dac_sfc_video::write(
+                                    config.videoTraceFile, config.mapSeed,
+                                    config.routeSeed, chosen, route,
+                                    routeMincoGuide, visualizationTraj,
+                                    displayedTrajectoryMethod, videoTrace,
+                                    activeGuideHPolys))
+                            {
+                                ROS_INFO_STREAM("DAC_SFC_VIDEO_TRACE file="
+                                    << config.videoTraceFile << " segment="
+                                    << chosen << " witnesses="
+                                    << videoTrace.steps.size() << " pruned="
+                                    << videoTrace.removed_candidate_ids.size());
+                            }
+                            else
+                            {
+                                ROS_WARN("DAC-SFC video trace failed; no video file written.");
+                            }
+                        }
+                        else
+                        {
+                            ROS_WARN_STREAM("Video/SegmentId invalid or without a CSGN metric: "
+                                            << chosen);
+                        }
+                    }
 
                     const double playbackDelayS =
                         std::max(0.0, config.visualizationPlaybackDelayS);

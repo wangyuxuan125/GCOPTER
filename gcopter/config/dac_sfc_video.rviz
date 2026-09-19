@@ -1,0 +1,45 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 245; 245; 245
+    Fixed Frame: odom
+    Frame Rate: 30
+  Displays:
+    - Class: rviz/PointCloud2
+      Name: GlobalMap
+      Topic: /voxel_map
+      Enabled: true
+      Style: Boxes
+      Size (m): 0.25
+      Alpha: 0.45
+      Color Transformer: AxisColor
+      Axis: Z
+      Queue Size: 10
+    - Class: rviz/MarkerArray
+      Name: DAC-SFC stages
+      Marker Topic: /dac_sfc_video/markers
+      Enabled: true
+      Queue Size: 20
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Name: Selected segment
+      Target Frame: dac_sfc_focus
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Distance: 13
+      Pitch: 0.57
+      Yaw: 0.75
+      Near Clip Distance: 0.01
+      Field of View: 0.785398

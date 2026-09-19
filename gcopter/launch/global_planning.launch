@@ -46,6 +46,10 @@
   <arg name="benchmark_visualization_method" default=""/>
   <arg name="benchmark_trajectory_visualization_method" default=""/>
   <arg name="visualization_playback_delay_s" default="5.0"/>
+  <!-- Record one real DAC-SFC segment for the separate video replay launch. -->
+  <arg name="video_trace_enabled" default="false"/>
+  <arg name="video_segment_id" default="-1"/>
+  <arg name="video_trace_file" default="/tmp/dac_sfc_video.json"/>
 
   <!-- Offline paper validation only -->
   <arg name="benchmark_csgn_validation_enabled" default="false"/>
@@ -144,6 +148,9 @@
   <param name="Visualization/PlaybackDelayS"
          value="$(arg visualization_playback_delay_s)"
          type="double"/>
+  <param name="Video/TraceEnabled" value="$(arg video_trace_enabled)" type="bool"/>
+  <param name="Video/SegmentId" value="$(arg video_segment_id)" type="int"/>
+  <param name="Video/TraceFile" value="$(arg video_trace_file)" type="string"/>
   <param name="Benchmark/CsgnValidationEnabled"
          value="$(arg benchmark_csgn_validation_enabled)"
          type="bool"/>

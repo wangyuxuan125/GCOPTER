@@ -1,0 +1,81 @@
+# DAC-SFC 论文视频：真实计算数据的 RViz 回放
+
+视频分为两个镜头：在 `dac_sfc_video.launch` 的固定 Orbit 视角展示方法，然后用原有
+`global_planning.launch` 的 ThirdPersonFollower 录飞行镜头。屏幕固定字幕在剪辑时叠加。
+回放节点只绘图，不调用规划器或优化器。
+
+## 相对原方案的修正
+
+- 固定坐标系是本工程实际使用的 `odom`，镜头目标 `dac_sfc_focus` 由回放节点发布。
+- Eigen 的特征值按**升序**排列。原始 `U.col(2)` 是 Easy、`U.col(1)` 是 Middle、
+  `U.col(0)` 是 Hard；方向预算直接取算法算出的 `extra_radii`，不使用虚构长度。
+- construction domain 是按真实半宽画的旋转盒；全局地图裁切由实际 `domain_planes`
+  定义。可能发生裁切，因此不要把盒子称为最终安全多面体。左手系特征向量转 RViz
+  四元数前须翻转一轴，几何不变。
+- Active-Witness 显示**真实**局部障碍、选中见证、度量投影、生成的平面及其当轮排除的
+  障碍索引；后续逆序删除按真实 `removed_candidate_ids`，只有实际删面才会显示删面。
+  场景中没有见证或删面时，直接略过相应动画，不虚构步骤。
+- 平面采用存储的 `n·x+d=0`，从路段中点沿法向投影求绘制中心；不能直接把 `d*n`
+  当作世界坐标。
+- 单个路段的真实原始多面体 (`selected_raw_polytope`) 与整条路径**最终保留**的走廊
+  (`retained_corridors`) 分开绘制：全局路径捷径可能略过这一原始路段，不能混称。
+- 自动挑选特征值比值最大的有效路段仅是默认选取策略，并不保证那段有障碍或删面。
+  想挑更有代表性的段，录好一次后检查日志中的 `segment=` 与 `witnesses=`，再传
+  `video_segment_id:=整数` 重新录取。
+- 视频记录在 benchmark 写入完成后调用同一确定性路段构造函数**额外重建一个路段**，
+  只读取已有地图、路线、CSGN 和优化轨迹。不会重跑优化器，也不计入 benchmark
+  时间；录像模式多花的墙钟时间不应用作性能指标。
+
+## 时间线
+
+| 时间（默认速度） | 画面 |
+| --- | --- |
+| 0–4 s | 地图和碰撞自由路线 |
+| 4–8 s | 真实 direct-MINCO probe |
+| 8–12 s | 高亮所选路段 |
+| 12–18 s | Easy / Middle / Hard 双向特征向量 |
+| 18–23 s | 箭头按真实方向扩展预算长度显示 |
+| 23–30 s | 真实半宽的 oriented construction box 逐渐展开 |
+| 30–34 s | 域内障碍点 |
+| 随后，每轮 3 s | 最多三个真实 Active-Witness 轮次：选点、投影、平面与排除集合 |
+| 随后，每面 3 s | 最多两次真实 reverse-delete，未逐个播放的面直接展示结果 |
+| 最后 | 原始路段多面体、最终保留走廊与所选最终轨迹，画面保持 |
+
+`speed:=1.5` 可缩短回放；图中 `stage_label` 是三维参考文字，正式字幕可在后期添加。
+
+## 录制数据（例：固定路线和地图）
+
+先在 `~/ICRA2027/GCOPTER` 完成编译并 `source devel/setup.bash`，执行：
+
+```bash
+roslaunch gcopter global_planning.launch \
+  map_seed:=42 route_seed:=3 \
+  fixed_start_goal_enabled:=true \
+  fixed_start_x:=6.4372711181640625 \
+  fixed_start_y:=23.116613388061523 fixed_start_z:=0.5 \
+  fixed_goal_x:=-4.582256317138672 \
+  fixed_goal_y:=-17.233434677124023 \
+  fixed_goal_z:=3.494147776291897 \
+  benchmark_enabled:=true benchmark_method:=proposed \
+  benchmark_variant:=csgn_active_exact \
+  benchmark_route_replay_enabled:=true \
+  benchmark_route_replay_file:=/home/wyx/tf_route_bank/development/mockamap/dev_mockamap_m42_r3.route \
+  benchmark_route_save_enabled:=false \
+  benchmark_trajectory_visualization_method:=proposed \
+  video_trace_enabled:=true video_segment_id:=-1 \
+  video_trace_file:=/tmp/dac_sfc_video.json \
+  experiment_log_enabled:=false enable_rviz:=false enable_rqt_plot:=false
+```
+
+看到 `DAC_SFC_VIDEO_TRACE file=... segment=... witnesses=... pruned=...` 后，结束第一条
+`roslaunch`，再启动以下**独立回放**：
+
+```bash
+roslaunch gcopter dac_sfc_video.launch \
+  map_seed:=42 trace_file:=/tmp/dac_sfc_video.json \
+  start_delay_s:=5 speed:=1.0
+```
+
+回放启动会校验 trace 的 map seed。一定要用同一次录制对应的 mockamap 配置；
+该文件记录路径、probe、走廊、选中轨迹和每轮算法数据，不包含点云本体。
+若需要飞行跟随镜头，仍按原先的 `global_planning.launch` 命令单独运行录制。
