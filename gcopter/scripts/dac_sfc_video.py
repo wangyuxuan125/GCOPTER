@@ -148,8 +148,9 @@ class Replay:
 
     def caption(self, label):
         m = self.marker('stage_label', 0, Marker.TEXT_VIEW_FACING,
-                        (0.08, 0.08, 0.12, 0.95), 0.55)
-        m.pose.position = point(add(self.center, [0, 0, 3.0]))
+                        (0.04, 0.04, 0.07, 1.0), 0.75)
+        # 3-D RViz text is depth-tested, so keep this caption above the map.
+        m.pose.position = point(add(self.center, [0, 0, 4.0]))
         m.text = label
 
     def mesh(self, ns, number, faces, color):
@@ -191,9 +192,9 @@ class Replay:
     def draw_axes(self, budget=False):
         vectors = self.data['eigenvectors_columns_ascending']
         radii = self.data['extra_radii_ascending']
-        palette = {2: (0.08, 0.7, 0.25, 0.95),
-                   1: (1.0, 0.6, 0.03, 0.95),
-                   0: (0.72, 0.16, 0.7, 0.95)}
+        palette = {2: (0.02, 0.55, 0.14, 1.0),
+                   1: (0.78, 0.39, 0.0, 1.0),
+                   0: (0.54, 0.06, 0.53, 1.0)}
         for index in (2, 1, 0):
             axis = vectors[index]
             length = radii[index] if budget else 1.2
@@ -205,10 +206,13 @@ class Replay:
                 m.points = [point(self.center),
                             point(add(self.center, mul(axis, side * length)))]
             m = self.marker('direction_labels', index, Marker.TEXT_VIEW_FACING,
-                            palette[index], 0.42)
+                            palette[index], 0.55)
             m.pose.position = point(add(self.center,
-                                        mul(axis, length + 0.25)))
-            m.text = {2: 'Easy', 1: 'Middle', 0: 'Hard'}[index]
+                                        add(mul(axis, length + 0.45),
+                                            [0, 0, 0.35])))
+            m.text = {2: 'Easy to deform',
+                      1: 'Middle',
+                      0: 'Hard to deform'}[index]
 
     def domain(self, elapsed):
         m = self.marker('construction_box', 0, Marker.CUBE,
@@ -266,10 +270,10 @@ class Replay:
         if 12 <= elapsed < 23:
             self.draw_axes(elapsed >= 18)
             label = ('5  Measured directional budgets' if elapsed >= 18 else
-                     '4  CSGN eigenvectors: large eigenvalue = Easy')
+                     '4  Relative MINCO deformation directions')
         if 23 <= elapsed < self.final_start:
             self.domain(elapsed)
-            label = '6  CSGN-aligned construction domain'
+            label = '6  Easy deformation gets more spatial budget'
         if 30 <= elapsed < self.final_start:
             self.witnesses()
             label = '7  Obstacles within the construction domain'

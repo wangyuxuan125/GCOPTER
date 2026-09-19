@@ -15,8 +15,9 @@ Visualization Manager:
       Topic: /voxel_map
       Enabled: true
       Style: Boxes
-      Size (m): 0.25
-      Alpha: 0.45
+      Size (m): 0.23
+      Alpha: 1
+      Decay Time: 0
       Color Transformer: AxisColor
       Axis: Z
       Queue Size: 10
