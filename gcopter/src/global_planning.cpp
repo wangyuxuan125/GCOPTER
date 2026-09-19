@@ -44,6 +44,7 @@
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <random>
 
@@ -380,6 +381,12 @@ public:
         if (startGoal.size() == 2)
         {
             visualizationTraj.clear();
+            if (config.videoTraceEnabled && !config.videoTraceFile.empty())
+            {
+                // A failed new run must never leave an older recording that
+                // looks like the result of this map/route/benchmark case.
+                std::remove(config.videoTraceFile.c_str());
+            }
             droneYaw = 0.0;
             lastDroneTfStamp = ros::Time(0);
             const auto totalStarted = std::chrono::steady_clock::now();
