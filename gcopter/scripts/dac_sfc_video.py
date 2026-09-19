@@ -116,9 +116,15 @@ def direction_label_layout(center, label_z, vectors, lengths):
         layout = {}
         cost = 0.0
         for index, offset in zip(ranked, assignment):
-            anchor = [center[0] + offset, center[1], label_z - 0.3]
+            # Terminate the leader BELOW both the name and value rows.
+            anchor = [center[0] + offset, center[1], label_z - 0.9]
             tips = [add(center, mul(vectors[index], side * lengths[index]))
                     for side in (-1, 1)]
+            # Eigenvectors are axes: either end is valid. Choose an end
+            # below the legend so the leader cannot run through its text.
+            lower_tips = [p for p in tips if p[2] <= label_z - 0.75]
+            if lower_tips:
+                tips = lower_tips
             tip = min(tips, key=lambda p: dot(sub(p, anchor),
                                               sub(p, anchor)))
             cost += dot(sub(tip, anchor), sub(tip, anchor))
@@ -255,11 +261,10 @@ class Replay:
                                          self.center[1], self.label_z - 0.45])
             value.text = ('extra={:.2f}m'.format(radii[index]) if budget else
                           'mu={:.3g}'.format(eigenvalues[index]))
-            # A thin colored leader associates the raised label with its
-            # actual eigenvector; the label remains visible above the voxels.
+            # Leaders end below both rows of text; never draw through a label.
             self.strip('direction_leaders', index,
                        [tip, [self.center[0] + x_offset,
-                              self.center[1], self.label_z - 0.3]],
+                              self.center[1], self.label_z - 0.9]],
                        palette[index], 0.025)
 
     def domain(self, elapsed):
@@ -314,11 +319,10 @@ class Replay:
         if elapsed < 4:
             label = '1  Collision-free route'
         else:
-            if elapsed < 12:
-                # The probe may overshoot well above the voxel map. Never
-                # leave its curve on screen as a fake "Easy" direction arrow.
-                self.strip('probe', 0, d['probe'],
-                           (0.0, 0.65, 0.78, 0.9), 0.075)
+            # Keep the paper's original green probe visible through the
+            # remaining stages; it is the nominal trajectory, not an axis.
+            self.strip('probe', 0, d['probe'],
+                       (0.06, 0.75, 0.29, 0.9), 0.075)
             label = '2  Route-conditioned MINCO probe'
         if elapsed >= 8:
             self.strip('selected_segment', 0, [d['a'], d['b']],
