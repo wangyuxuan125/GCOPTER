@@ -4,6 +4,8 @@
   <arg name="map_seed" default="42"/>
   <arg name="speed" default="1.0"/>
   <arg name="start_delay_s" default="5.0"/>
+  <!-- Upper z bound of the displayed map; labels sit above this height. -->
+  <arg name="map_top_z" default="5.0"/>
   <arg name="enable_rviz" default="true"/>
 
   <!-- Same deterministic mockamap configuration as global_planning.launch. -->
@@ -28,6 +30,7 @@
     <param name="map_seed" type="int" value="$(arg map_seed)"/>
     <param name="speed" type="double" value="$(arg speed)"/>
     <param name="start_delay_s" type="double" value="$(arg start_delay_s)"/>
+    <param name="map_top_z" type="double" value="$(arg map_top_z)"/>
   </node>
 
   <node if="$(arg enable_rviz)" name="rviz" pkg="rviz" type="rviz"

@@ -10,17 +10,38 @@ Visualization Manager:
     Fixed Frame: odom
     Frame Rate: 30
   Displays:
-    - Class: rviz/PointCloud2
-      Name: GlobalMap
-      Topic: /voxel_map
+    - Class: rviz/Group
+      Displays:
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 4.75
+            Min Value: 0
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: AxisColor
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Min Color: 0; 0; 0
+          Name: GlobalMap
+          Position Transformer: XYZ
+          Queue Size: 10
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.25
+          Style: Boxes
+          Topic: /voxel_map
+          Unreliable: true
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
       Enabled: true
-      Style: Boxes
-      Size (m): 0.23
-      Alpha: 1
-      Decay Time: 0
-      Color Transformer: AxisColor
-      Axis: Z
-      Queue Size: 10
+      Name: GlobalMap
     - Class: rviz/MarkerArray
       Name: DAC-SFC stages
       Marker Topic: /dac_sfc_video/markers
@@ -38,8 +59,8 @@ Visualization Manager:
       Focal Point:
         X: 0
         Y: 0
-        Z: 0
-      Distance: 13
+        Z: 1.5
+      Distance: 14
       Pitch: 0.57
       Yaw: 0.75
       Near Clip Distance: 0.01

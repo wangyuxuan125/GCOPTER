@@ -109,6 +109,10 @@ class Replay:
     def __init__(self, data):
         self.data = data
         self.center = mul(add(data['a'], data['b']), 0.5)
+        # The map is depth-tested in RViz. Keep direction names outside the
+        # voxel volume instead of placing them next to occluded arrow tips.
+        self.label_z = max(float(rospy.get_param('~map_top_z', 5.0)) + 0.6,
+                           self.center[2] + 2.0)
         self.steps = data['steps']
         self.pub = rospy.Publisher('/dac_sfc_video/markers', MarkerArray,
                                    queue_size=1, latch=True)
@@ -195,7 +199,7 @@ class Replay:
         palette = {2: (0.02, 0.55, 0.14, 1.0),
                    1: (0.78, 0.39, 0.0, 1.0),
                    0: (0.54, 0.06, 0.53, 1.0)}
-        for index in (2, 1, 0):
+        for index, x_offset in ((2, -3.4), (1, 0.0), (0, 3.4)):
             axis = vectors[index]
             length = radii[index] if budget else 1.2
             length = max(0.08, length)
@@ -206,13 +210,19 @@ class Replay:
                 m.points = [point(self.center),
                             point(add(self.center, mul(axis, side * length)))]
             m = self.marker('direction_labels', index, Marker.TEXT_VIEW_FACING,
-                            palette[index], 0.55)
-            m.pose.position = point(add(self.center,
-                                        add(mul(axis, length + 0.45),
-                                            [0, 0, 0.35])))
+                            palette[index], 0.47)
+            m.pose.position = point([self.center[0] + x_offset,
+                                     self.center[1], self.label_z])
             m.text = {2: 'Easy to deform',
                       1: 'Middle',
                       0: 'Hard to deform'}[index]
+            # A thin colored leader associates the raised label with its
+            # actual eigenvector; the label remains visible above the voxels.
+            tip = add(self.center, mul(axis, length))
+            self.strip('direction_leaders', index,
+                       [tip, [self.center[0] + x_offset,
+                              self.center[1], self.label_z - 0.3]],
+                       palette[index], 0.025)
 
     def domain(self, elapsed):
         m = self.marker('construction_box', 0, Marker.CUBE,
@@ -315,7 +325,10 @@ class Replay:
                          d['trajectory_method'], (0.0, 0.5, 1.0, 1.0))
             self.strip('optimized_trajectory', 0, d['trajectory'], color, 0.16)
             label = '10  Selected raw polytope and retained corridor'
-        self.caption(label)
+        # The direction legend replaces the world-space caption in this
+        # stage so the two text rows do not overlap in the camera view.
+        if not 12 <= elapsed < 23:
+            self.caption(label)
         current = set(self.markers)
         batch = MarkerArray()
         for ns, number in sorted(self.previous - current):
