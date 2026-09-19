@@ -44,6 +44,7 @@
 
   <!-- Visualization only: proposed / identity / firi / rils -->
   <arg name="benchmark_visualization_method" default=""/>
+  <arg name="benchmark_trajectory_visualization_method" default=""/>
 
   <!-- Offline paper validation only -->
   <arg name="benchmark_csgn_validation_enabled" default="false"/>
@@ -135,6 +136,9 @@
   <param name="Benchmark/Variant" value="$(arg benchmark_variant)" type="string"/>
   <param name="Benchmark/VisualizationMethod"
          value="$(arg benchmark_visualization_method)"
+         type="string"/>
+  <param name="Benchmark/TrajectoryVisualizationMethod"
+         value="$(arg benchmark_trajectory_visualization_method)"
          type="string"/>
   <param name="Benchmark/CsgnValidationEnabled"
          value="$(arg benchmark_csgn_validation_enabled)"

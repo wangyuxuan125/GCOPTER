@@ -82,6 +82,7 @@ struct Config
     std::string benchmarkMethod;
     std::string benchmarkVariant;
     std::string benchmarkVisualizationMethod;
+    std::string benchmarkTrajectoryVisualizationMethod;
     bool benchmarkCsgnValidationEnabled;
     bool benchmarkRouteReplayEnabled;
     std::string benchmarkRouteReplayFile;
@@ -181,6 +182,10 @@ struct Config
         nh_priv.param<std::string>(
             "Benchmark/VisualizationMethod",
             benchmarkVisualizationMethod,
+            "");
+        nh_priv.param<std::string>(
+            "Benchmark/TrajectoryVisualizationMethod",
+            benchmarkTrajectoryVisualizationMethod,
             "");
 
         nh_priv.param(
@@ -13053,6 +13058,100 @@ public:
                     visualizer.visualize(
                         traj,
                         route);
+
+                    // ============================================================
+                    // Paper trajectory visualization selector.
+                    //
+                    // Visualization only: proposed / identity / firi / rils.
+                    // Rebuilds the already-computed Controlled E2 optimized state.
+                    // Does not rerun the optimizer or modify benchmark results.
+                    // ============================================================
+                    if (!config.benchmarkTrajectoryVisualizationMethod.empty())
+                    {
+                        const ControlledE2BackendEvaluation *visEval =
+                            nullptr;
+
+                        if (config.benchmarkTrajectoryVisualizationMethod ==
+                            "proposed")
+                        {
+                            visEval = &controlledE2Proposed;
+                        }
+                        else if (
+                            config.benchmarkTrajectoryVisualizationMethod ==
+                            "identity")
+                        {
+                            visEval = &controlledE2Identity;
+                        }
+                        else if (
+                            config.benchmarkTrajectoryVisualizationMethod ==
+                            "firi")
+                        {
+                            visEval = &controlledE2Firi;
+                        }
+                        else if (
+                            config.benchmarkTrajectoryVisualizationMethod ==
+                            "rils")
+                        {
+                            visEval = &controlledE2Rils;
+                        }
+                        else
+                        {
+                            ROS_WARN_STREAM(
+                                "Unknown Benchmark/TrajectoryVisualizationMethod: "
+                                << config.benchmarkTrajectoryVisualizationMethod);
+                        }
+
+                        if (visEval != nullptr &&
+                            visEval->backend.optimized_state_ready)
+                        {
+                            const int visPieceCount =
+                                static_cast<int>(
+                                    visEval->backend.optimized_times.size());
+
+                            const bool visStateValid =
+                                visPieceCount > 0 &&
+                                visEval->backend.optimized_points.rows() == 3 &&
+                                visEval->backend.optimized_points.cols() ==
+                                    visPieceCount - 1 &&
+                                visEval->backend.optimized_points.allFinite() &&
+                                visEval->backend.optimized_times.allFinite() &&
+                                (visEval->backend.optimized_times.array() >
+                                 0.0).all();
+
+                            if (visStateValid)
+                            {
+                                minco::MINCO_S3NU visMinco;
+
+                                visMinco.setConditions(
+                                    iniState,
+                                    finState,
+                                    visPieceCount);
+
+                                visMinco.setParameters(
+                                    visEval->backend.optimized_points,
+                                    visEval->backend.optimized_times);
+
+                                Trajectory<5> visTraj;
+                                visMinco.getTrajectory(visTraj);
+
+                                if (visTraj.getPieceNum() == visPieceCount)
+                                {
+                                    // The later latched trajectory marker is
+                                    // the one RViz retains for this run.
+                                    visualizer.visualize(visTraj, route);
+
+                                    ROS_INFO_STREAM(
+                                        "TF_FIG_TRAJ_VIS "
+                                        << "method="
+                                        << config.benchmarkTrajectoryVisualizationMethod
+                                        << " pieces="
+                                        << visTraj.getPieceNum()
+                                        << " duration="
+                                        << visTraj.getTotalDuration());
+                                }
+                            }
+                        }
+                    }
 
                     finishRecord(
                         "success",
