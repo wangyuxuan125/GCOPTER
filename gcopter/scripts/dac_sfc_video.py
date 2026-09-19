@@ -2,6 +2,7 @@
 """Replay a recorded DAC-SFC segment; never invokes a planner or optimizer."""
 
 import json
+import itertools
 import math
 import os
 
@@ -105,6 +106,29 @@ def box_quaternion(columns):
     return q
 
 
+def direction_label_layout(center, label_z, vectors, lengths):
+    """Place each label above the nearest actual bidirectional axis tip."""
+    ranked = (2, 1, 0)  # descending utility: Easy, Middle, Hard
+    slots = (-3.4, 0.0, 3.4)
+    best_cost = float('inf')
+    best_layout = None
+    for assignment in itertools.permutations(slots):
+        layout = {}
+        cost = 0.0
+        for index, offset in zip(ranked, assignment):
+            anchor = [center[0] + offset, center[1], label_z - 0.3]
+            tips = [add(center, mul(vectors[index], side * lengths[index]))
+                    for side in (-1, 1)]
+            tip = min(tips, key=lambda p: dot(sub(p, anchor),
+                                              sub(p, anchor)))
+            cost += dot(sub(tip, anchor), sub(tip, anchor))
+            layout[index] = (offset, tip)
+        if cost < best_cost:
+            best_cost = cost
+            best_layout = layout
+    return best_layout
+
+
 class Replay:
     def __init__(self, data):
         self.data = data
@@ -196,13 +220,19 @@ class Replay:
     def draw_axes(self, budget=False):
         vectors = self.data['eigenvectors_columns_ascending']
         radii = self.data['extra_radii_ascending']
+        eigenvalues = self.data['eigenvalues_ascending']
         palette = {2: (0.02, 0.55, 0.14, 1.0),
                    1: (0.78, 0.39, 0.0, 1.0),
                    0: (0.54, 0.06, 0.53, 1.0)}
-        for index, x_offset in ((2, -3.4), (1, 0.0), (0, 3.4)):
+        lengths = [max(0.08, radii[i] if budget else 1.2)
+                   for i in range(3)]
+        layout = direction_label_layout(self.center, self.label_z,
+                                        vectors, lengths)
+        anisotropic = self.data['anisotropic_domain']
+        for index in (2, 1, 0):
+            x_offset, tip = layout[index]
             axis = vectors[index]
-            length = radii[index] if budget else 1.2
-            length = max(0.08, length)
+            length = lengths[index]
             for side in (-1, 1):
                 m = self.marker('directions', 2 * index + (side + 1) // 2,
                                 Marker.ARROW, palette[index], 0.055)
@@ -213,12 +243,20 @@ class Replay:
                             palette[index], 0.47)
             m.pose.position = point([self.center[0] + x_offset,
                                      self.center[1], self.label_z])
-            m.text = {2: 'Easy to deform',
-                      1: 'Middle',
-                      0: 'Hard to deform'}[index]
+            if anisotropic:
+                m.text = {2: 'Easy to deform',
+                          1: 'Middle',
+                          0: 'Hard to deform'}[index]
+            else:
+                m.text = 'Axis {}'.format(index + 1)
+            value = self.marker('direction_values', index,
+                                Marker.TEXT_VIEW_FACING, palette[index], 0.30)
+            value.pose.position = point([self.center[0] + x_offset,
+                                         self.center[1], self.label_z - 0.45])
+            value.text = ('extra={:.2f}m'.format(radii[index]) if budget else
+                          'mu={:.3g}'.format(eigenvalues[index]))
             # A thin colored leader associates the raised label with its
             # actual eigenvector; the label remains visible above the voxels.
-            tip = add(self.center, mul(axis, length))
             self.strip('direction_leaders', index,
                        [tip, [self.center[0] + x_offset,
                               self.center[1], self.label_z - 0.3]],
