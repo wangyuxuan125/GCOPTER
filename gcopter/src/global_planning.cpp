@@ -27,6 +27,7 @@
 
 #include <ros/ros.h>
 #include <ros/console.h>
+#include <tf/transform_broadcaster.h>
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -257,7 +258,11 @@ private:
     std::vector<Eigen::Vector3d> startGoal;
 
     Trajectory<5> traj;
+    Trajectory<5> visualizationTraj;
     double trajStamp;
+    double droneYaw;
+    ros::Time lastDroneTfStamp;
+    tf::TransformBroadcaster droneTf;
     gcopter_experiment::CsvLogger experimentLogger;
     gcopter_benchmark::CaseCsvLogger benchmarkCaseLogger;
     gcopter_benchmark::RunCsvLogger benchmarkRunLogger;
@@ -270,6 +275,7 @@ public:
           mapInitialized(false),
           fixedPlanTriggered(false),
           visualizer(nh),
+          droneYaw(0.0),
           experimentLogger(
               config.experimentLogEnabled,
               config.experimentLogDirectory,
@@ -300,6 +306,7 @@ public:
 
         targetSub = nh.subscribe(config.targetTopic, 1, &GlobalPlanner::targetCallBack, this,
                                  ros::TransportHints().tcpNoDelay());
+        visualizer.visualizeDrone();
     }
 
     inline void mapCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg)
@@ -360,6 +367,8 @@ public:
     {
         if (startGoal.size() == 2)
         {
+            visualizationTraj.clear();
+            lastDroneTfStamp = ros::Time(0);
             const auto totalStarted = std::chrono::steady_clock::now();
             gcopter_experiment::RunRecord record;
             std::vector<gcopter_experiment::CorridorRecord> corridorRecords;
@@ -13055,6 +13064,7 @@ public:
                     trajStamp =
                         ros::Time::now().toSec();
 
+                    visualizationTraj = traj;
                     visualizer.visualize(
                         traj,
                         route);
@@ -13144,6 +13154,7 @@ public:
                                     // the one RViz retains for this run.
                                     visualizer.visualize(
                                         visTraj, route, visColor);
+                                    visualizationTraj = visTraj;
 
                                     ROS_INFO_STREAM(
                                         "TF_FIG_TRAJ_VIS "
@@ -18164,6 +18175,7 @@ public:
                     }
                     trajStamp = ros::Time::now().toSec();
                     visualizer.visualize(traj, route);
+                    visualizationTraj = traj;
                     finishRecord("success", true);
                     return;
                 }
@@ -18218,35 +18230,63 @@ public:
         flatmap.reset(physicalParams(0), physicalParams(1), physicalParams(2),
                       physicalParams(3), physicalParams(4), physicalParams(5));
 
-        if (traj.getPieceNum() > 0)
+        if (visualizationTraj.getPieceNum() > 0)
         {
-            const double delta = ros::Time::now().toSec() - trajStamp;
-            if (delta > 0.0 && delta < traj.getTotalDuration())
+            const ros::Time now = ros::Time::now();
+            const double delta = now.toSec() - trajStamp;
+            if (delta >= 0.0)
             {
-                double thr;
-                Eigen::Vector4d quat;
-                Eigen::Vector3d omg;
+                const double duration =
+                    visualizationTraj.getTotalDuration();
+                const double t = std::min(delta, duration);
+                const Eigen::Vector3d position =
+                    visualizationTraj.getPos(t);
+                const Eigen::Vector3d velocity =
+                    visualizationTraj.getVel(t);
 
-                flatmap.forward(traj.getVel(delta),
-                                traj.getAcc(delta),
-                                traj.getJer(delta),
-                                0.0, 0.0,
-                                thr, quat, omg);
-                double speed = traj.getVel(delta).norm();
-                double bodyratemag = omg.norm();
-                double tiltangle = acos(1.0 - 2.0 * (quat(1) * quat(1) + quat(2) * quat(2)));
-                std_msgs::Float64 speedMsg, thrMsg, tiltMsg, bdrMsg;
-                speedMsg.data = speed;
-                thrMsg.data = thr;
-                tiltMsg.data = tiltangle;
-                bdrMsg.data = bodyratemag;
-                visualizer.speedPub.publish(speedMsg);
-                visualizer.thrPub.publish(thrMsg);
-                visualizer.tiltPub.publish(tiltMsg);
-                visualizer.bdrPub.publish(bdrMsg);
+                // Keep the model and the following camera pointed along
+                // the displayed flight path, even after playback ends.
+                if (velocity.head<2>().squaredNorm() > 1.0e-4)
+                {
+                    droneYaw = std::atan2(velocity.y(), velocity.x());
+                }
+                if ((now - lastDroneTfStamp).toSec() >= 1.0 / 60.0)
+                {
+                    tf::Transform pose;
+                    tf::Quaternion orientation;
+                    orientation.setRPY(0.0, 0.0, droneYaw);
+                    pose.setOrigin(tf::Vector3(
+                        position.x(), position.y(), position.z()));
+                    pose.setRotation(orientation);
+                    droneTf.sendTransform(tf::StampedTransform(
+                        pose, now, "odom", "gcopter_drone"));
+                    lastDroneTfStamp = now;
+                }
 
-                visualizer.visualizeSphere(traj.getPos(delta),
-                                           config.dilateRadius);
+                if (delta > 0.0 && delta < duration)
+                {
+                    double thr;
+                    Eigen::Vector4d quat;
+                    Eigen::Vector3d omg;
+
+                    flatmap.forward(visualizationTraj.getVel(delta),
+                                    visualizationTraj.getAcc(delta),
+                                    visualizationTraj.getJer(delta),
+                                    0.0, 0.0,
+                                    thr, quat, omg);
+                    double speed = velocity.norm();
+                    double bodyratemag = omg.norm();
+                    double tiltangle = acos(1.0 - 2.0 * (quat(1) * quat(1) + quat(2) * quat(2)));
+                    std_msgs::Float64 speedMsg, thrMsg, tiltMsg, bdrMsg;
+                    speedMsg.data = speed;
+                    thrMsg.data = thr;
+                    tiltMsg.data = tiltangle;
+                    bdrMsg.data = bodyratemag;
+                    visualizer.speedPub.publish(speedMsg);
+                    visualizer.thrPub.publish(thrMsg);
+                    visualizer.tiltPub.publish(tiltMsg);
+                    visualizer.bdrPub.publish(bdrMsg);
+                }
             }
         }
     }

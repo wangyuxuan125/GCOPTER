@@ -158,7 +158,7 @@ Visualization Manager:
       Marker Topic: /visualizer/spheres
       Name: Marker
       Namespaces:
-        spheres: true
+        spheres: false
       Queue Size: 100
       Value: true
     - Class: rviz/Marker
@@ -167,6 +167,14 @@ Visualization Manager:
       Name: Marker
       Namespaces:
         trajectory: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /visualizer/drone
+      Name: Drone
+      Namespaces:
+        drone: true
       Queue Size: 100
       Value: true
   Enabled: true
@@ -196,8 +204,8 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz/Orbit
-      Distance: 25.039560317993164
+      Class: rviz/ThirdPersonFollower
+      Distance: 4.0
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -205,17 +213,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 0.12457092851400375
-        Y: 8.735116958618164
-        Z: 4.9439263343811035
-      Focal Shape Fixed Size: false
+        X: 1.0
+        Y: 0.0
+        Z: 0.25
+      Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
-      Name: Current View
+      Name: Drone Follow
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.8247970342636108
-      Target Frame: drone1
-      Yaw: 2.301661252975464
+      Pitch: 0.25
+      Target Frame: gcopter_drone
+      Yaw: 3.141592653589793
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 4.048277378082275
@@ -235,7 +243,7 @@ Visualization Manager:
         Name: ThirdPersonFollower
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.15354639291763306
-        Target Frame: drone1
+        Target Frame: gcopter_drone
         Yaw: 3.1068692207336426
       - Class: rviz/Orbit
         Distance: 14.031325340270996
@@ -295,7 +303,7 @@ Visualization Manager:
         Name: ThirdPersonFollower
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.6947967410087585
-        Target Frame: drone1
+        Target Frame: gcopter_drone
         Yaw: 2.7186548709869385
       - Class: rviz/ThirdPersonFollower
         Distance: 22.49183464050293
@@ -315,7 +323,7 @@ Visualization Manager:
         Name: ThirdPersonFollower
         Near Clip Distance: 0.009999999776482582
         Pitch: 1.0247968435287476
-        Target Frame: drone1
+        Target Frame: gcopter_drone
         Yaw: 3.1827449798583984
       - Class: rviz/ThirdPersonFollower
         Distance: 22.4423770904541
@@ -335,7 +343,7 @@ Visualization Manager:
         Name: ThirdPersonFollower
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.8597970008850098
-        Target Frame: drone1
+        Target Frame: gcopter_drone
         Yaw: 3.265840530395508
 Window Geometry:
   Displays:

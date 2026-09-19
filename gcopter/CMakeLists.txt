@@ -26,6 +26,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   sensor_msgs
   visualization_msgs
+  tf
 )
 
 include_directories(
