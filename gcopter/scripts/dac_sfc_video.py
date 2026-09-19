@@ -272,9 +272,14 @@ class Replay:
         alpha = min(1.0, max(0.0, (elapsed - 23.0) / 3.0))
         ease = alpha * alpha * (3.0 - 2.0 * alpha)
         widths = self.data['half_widths_ascending']
-        m.scale.x, m.scale.y, m.scale.z = [2 * max(0.05, w) *
-                                            (0.12 + 0.88 * ease)
-                                            for w in widths]
+        extras = self.data['extra_radii_ascending']
+        # Actual half-width: half the route segment's projected span, plus
+        # the overlap radius, plus the allocated directional extra radius.
+        # Animate ONLY the extra radius; scaling the entire final box makes
+        # a long seed segment look like expansion in its aligned direction.
+        m.scale.x, m.scale.y, m.scale.z = [
+            2 * max(0.001, max(0.0, w - extra) + extra * ease)
+            for w, extra in zip(widths, extras)]
 
     def witnesses(self, highlighted=None):
         local = self.data['local_obstacles']
@@ -309,19 +314,24 @@ class Replay:
         if elapsed < 4:
             label = '1  Collision-free route'
         else:
-            self.strip('probe', 0, d['probe'], (0.06, 0.75, 0.29, 0.9), 0.075)
+            if elapsed < 12:
+                # The probe may overshoot well above the voxel map. Never
+                # leave its curve on screen as a fake "Easy" direction arrow.
+                self.strip('probe', 0, d['probe'],
+                           (0.0, 0.65, 0.78, 0.9), 0.075)
             label = '2  Route-conditioned MINCO probe'
         if elapsed >= 8:
             self.strip('selected_segment', 0, [d['a'], d['b']],
                        (1.0, 0.8, 0.04, 1.0), 0.2)
             label = '3  Selected route segment'
-        if 12 <= elapsed < 23:
+        if 12 <= elapsed < 30:
             self.draw_axes(elapsed >= 18)
-            label = ('5  Measured directional budgets' if elapsed >= 18 else
-                     '4  Relative MINCO deformation directions')
+            if elapsed < 23:
+                label = ('5  Measured directional budgets' if elapsed >= 18 else
+                         '4  Relative MINCO deformation directions')
         if 23 <= elapsed < self.final_start:
             self.domain(elapsed)
-            label = '6  Easy deformation gets more spatial budget'
+            label = '6  Box = segment span + overlap + directional extra'
         if 30 <= elapsed < self.final_start:
             self.witnesses()
             label = '7  Obstacles within the construction domain'
@@ -365,7 +375,7 @@ class Replay:
             label = '10  Selected raw polytope and retained corridor'
         # The direction legend replaces the world-space caption in this
         # stage so the two text rows do not overlap in the camera view.
-        if not 12 <= elapsed < 23:
+        if not 12 <= elapsed < 30:
             self.caption(label)
         current = set(self.markers)
         batch = MarkerArray()
@@ -404,6 +414,13 @@ def main():
                   'redundant faces=%s', data['segment_id'], len(data['steps']),
                   len(data['removed_candidate_ids']))
     replay = Replay(data)
+    for index, name in ((2, 'Easy'), (1, 'Middle'), (0, 'Hard')):
+        half_width = data['half_widths_ascending'][index]
+        extra = data['extra_radii_ascending'][index]
+        rospy.loginfo('DAC_SFC_AXIS %s mu=%.5g extra=%.3fm '
+                      'segment_span_and_overlap=%.3fm final_half_width=%.3fm',
+                      name, data['eigenvalues_ascending'][index], extra,
+                      max(0.0, half_width - extra), half_width)
     speed = max(0.05, float(rospy.get_param('~speed', 1.0)))
     delay = max(0.0, float(rospy.get_param('~start_delay_s', 5.0)))
     start = rospy.Time.now().to_sec() + delay
